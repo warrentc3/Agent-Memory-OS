@@ -1,6 +1,6 @@
 # AgentMemoryOS - Project History and Roadmap
 
-Last updated: 2026-06-05 10:46:13 CST (+0800)
+Last updated: 2026-06-05 11:04:59 CST (+0800)
 
 ## Purpose
 
@@ -199,6 +199,45 @@ effective_score = text_score
 ```
 
 ACL and expiry are hard filters, not soft multipliers.
+
+### Team collaboration route repair
+
+During AgentMemoryOS multi-agent dogfooding, Telegram collaboration routing exposed a Hermes Gateway authorization/session-state issue: team agents could mention each other, but bot-originated messages could still be rejected as unauthorized humans.
+
+Evidence:
+
+```text
+WARNING gateway.run: Unauthorized user: 8511600388 (小NEO) on telegram
+```
+
+Root cause:
+
+1. `gateway/run.py` had bot allowlist mappings for Discord and Feishu, but not Telegram. As a result, `TELEGRAM_ALLOW_BOTS` was not consulted in the runner-level authorization path.
+2. `gateway/session.py` did not preserve `SessionSource.is_bot` through `to_dict()` / `from_dict()`, so bot identity could be lost when session state was serialized and reconstructed.
+
+Fix contract:
+
+- Add `Platform.TELEGRAM: "TELEGRAM_ALLOW_BOTS"` to the gateway runner bot-allowance map.
+- Persist `SessionSource.is_bot` in session serialization.
+- Normalize team profiles to `telegram.allow_bots: mentions`, preserving mention-gated collaboration without enabling unrestricted bot echo loops.
+
+Verification snapshot:
+
+```bash
+cd /home/hermes/.hermes/hermes-agent
+python -m pytest tests/gateway/test_telegram_bot_auth_bypass.py tests/gateway/test_feishu_bot_auth_bypass.py -q
+# 12 passed
+```
+
+Runtime verification:
+
+- Restarted: `hermes-bastet.service`, `hermes-blue.service`, `hermes-bunny.service`, `hermes-feifei.service`, `hermes-mizuki.service`, `hermes-yuyu.service`.
+- Result: all restarted services reported `active`.
+- Post-start log scan after `2026-06-05 11:02:20` found no new `Unauthorized user` failures.
+
+Separate warning observed:
+
+- Telegram reported `Group migrated to supergroup. New chat id: -1003586375148` for one send attempt. This is a chat-id migration issue and not part of the bot authorization root cause.
 
 ## Authoritative engineering decisions
 

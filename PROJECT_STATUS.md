@@ -49,6 +49,21 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - First commit: `d02c22b feat: bootstrap AgentMemoryOS MVP`
 - GitLab URL: `https://gitlab.com/hermes-agent-bastet/agent-memory-os`
 
+## Team collaboration route repair snapshot
+
+Recorded at `2026-06-05 11:04:59 CST (+0800)` as operational context for multi-agent AgentMemoryOS dogfooding.
+
+- Incident: Telegram bot-to-bot collaboration routing intermittently rejected team agents with logs like `Unauthorized user: 8511600388 (小NEO) on telegram`.
+- Root cause: Hermes Gateway had two state/authorization gaps:
+  - `gateway/run.py` did not map `Platform.TELEGRAM` to `TELEGRAM_ALLOW_BOTS`, so Telegram bot identities could not bypass the human allowlist even when policy allowed bot mentions.
+  - `gateway/session.py` did not serialize/deserialize `SessionSource.is_bot`, so bot identity could be lost across session state boundaries.
+- Runtime policy: team profiles were normalized to `telegram.allow_bots: mentions` for Bastet, Blue, Bunny, Feifei, Mizuki, Yuyu, and Neo.
+- Verification:
+  - Hermes targeted tests: `python -m pytest tests/gateway/test_telegram_bot_auth_bypass.py tests/gateway/test_feishu_bot_auth_bypass.py -q` → `12 passed`.
+  - Services restarted via systemd: `hermes-bastet.service`, `hermes-blue.service`, `hermes-bunny.service`, `hermes-feifei.service`, `hermes-mizuki.service`, `hermes-yuyu.service` → all `active`.
+  - Post-start log scan after `2026-06-05 11:02:20` found no new `Unauthorized user` authorization failures.
+- Related non-root-cause warning: one Telegram `Group migrated to supergroup` send error was observed and should be treated as a separate chat-id migration issue, not as the bot authorization root cause.
+
 ## Architecture review notes before v0.2
 
 - Clarify which SPEC features are implemented versus planned, especially `visibility` ACL, `expires_at`, audit log, and MCP update/delete/consolidation tools.
