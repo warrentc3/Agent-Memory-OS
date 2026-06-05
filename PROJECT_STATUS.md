@@ -25,11 +25,19 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - Optional MCP server scaffold added.
 - Unit tests added.
 - First GitLab project created and pushed.
+- v0.2 ACL baseline implemented for requester-aware search/context-pack filtering:
+  - `visibility=["agent"]`: owner/requester isolation.
+  - `visibility=["global"]`: visible to any requester.
+  - `visibility=["agent:<id>"]`: explicit agent allowlist.
+  - `visibility=["team"]` or `visibility=["team:<id>"]`: team-aware access via requester team id.
+  - `expires_at` is excluded from search results when expired.
 
 ## Verification snapshot
 
 - Test command: `PYTHONPATH=src python3 -m pytest -q`
-- Result: `6 passed`
+- Result: `10 passed` at `2026-06-05 09:58:55 CST`
+- ACL targeted command: `PYTHONPATH=src python3 -m pytest tests/test_acl_visibility.py -q`
+- ACL targeted result: `4 passed`
 - First commit: `d02c22b feat: bootstrap AgentMemoryOS MVP`
 - GitLab URL: `https://gitlab.com/hermes-agent-bastet/agent-memory-os`
 

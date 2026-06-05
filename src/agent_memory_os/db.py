@@ -104,16 +104,41 @@ class MemoryStore:
         self.conn.commit()
         return cur.rowcount > 0
 
-    def search(self, query: str, *, owner: str | None = None, scope: str | None = None, limit: int = 10) -> list[SearchResult]:
+    def search(
+        self,
+        query: str,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 10,
+    ) -> list[SearchResult]:
         query = self._fts_query(query)
-        where = ["memories_fts MATCH ?"]
-        params: list[object] = [query]
+        where = ["memories_fts MATCH ?", "(m.expires_at IS NULL OR m.expires_at > ?)"]
+        params: list[object] = [query, utc_now()]
         if owner:
             where.append("m.owner = ?")
             params.append(owner)
         if scope:
             where.append("m.scope = ?")
             params.append(scope)
+        if requester_agent_id:
+            acl_clauses = [
+                "m.owner = ?",
+                "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = 'global')",
+                "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = ?)",
+            ]
+            params.extend([requester_agent_id, f"agent:{requester_agent_id}"])
+            if requester_team_id:
+                acl_clauses.extend(
+                    [
+                        "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = 'team' AND json_extract(m.source, '$.team_id') = ?)",
+                        "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = ?)",
+                    ]
+                )
+                params.extend([requester_team_id, f"team:{requester_team_id}"])
+            where.append("(" + " OR ".join(acl_clauses) + ")")
         params.append(limit)
         sql = f"""
           SELECT m.*, bm25(memories_fts) AS rank

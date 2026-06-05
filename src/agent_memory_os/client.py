@@ -25,21 +25,54 @@ class MemoryClient:
     def get(self, memory_id: str) -> MemoryRecord | None:
         return self.store.get(memory_id)
 
-    def search(self, query: str, *, owner: str | None = None, scope: str | None = None, limit: int = 10) -> list[SearchResult]:
-        key = ("search", query, owner, scope, limit)
+    def search(
+        self,
+        query: str,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 10,
+    ) -> list[SearchResult]:
+        key = ("search", query, owner, scope, requester_agent_id, requester_team_id, limit)
         cached = self.cache.get(key)
         if cached is not None:
             return cached  # type: ignore[return-value]
-        results = self.store.search(query, owner=owner, scope=scope, limit=limit)
+        results = self.store.search(
+            query,
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+        )
         self.cache.set(key, results)
         return results
 
-    def context_pack(self, query: str, *, owner: str | None = None, scope: str | None = None, limit: int = 12, max_tokens: int = 1200) -> str:
-        key = ("pack", query, owner, scope, limit, max_tokens)
+    def context_pack(
+        self,
+        query: str,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 12,
+        max_tokens: int = 1200,
+    ) -> str:
+        key = ("pack", query, owner, scope, requester_agent_id, requester_team_id, limit, max_tokens)
         cached = self.cache.get(key)
         if cached is not None:
             return cached  # type: ignore[return-value]
-        results = self.search(query, owner=owner, scope=scope, limit=limit)
+        results = self.search(
+            query,
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+        )
         pack = build_context_pack(results, max_tokens=max_tokens)
         self.cache.set(key, pack)
         return pack
