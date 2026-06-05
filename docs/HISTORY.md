@@ -1,6 +1,6 @@
 # AgentMemoryOS - Project History and Roadmap
 
-Last updated: 2026-06-05 11:59:20 CST (+0800)
+Last updated: 2026-06-05 14:34:42 CST (+0800)
 
 ## Purpose
 
@@ -45,6 +45,27 @@ AgentMemoryOS is designed to address several long-running AI agent pain points:
 5. Prompt context must be budgeted and explainable.
 
 Target compatibility includes Hermes, Claude Code / Claude Desktop style agents, OpenAI Agents, LangChain, CrewAI, AutoGen, and custom MCP clients.
+
+## Hermes activation status
+
+AgentMemoryOS v0.2.2 is currently **Development / Validation only** for Hermes integration.
+
+It is not approved as the default Hermes Agent memory engine. Production activation is blocked until the following are verified with recorded evidence:
+
+1. Version-downgrade compatibility.
+2. Lossless migration.
+3. Rollback safety.
+4. Hermes shadow integration.
+5. Multi-profile ACL validation.
+6. Mizuki/Product final subjective acceptance.
+
+Canonical gate document:
+
+- `docs/hermes-activation-gates.md`
+
+Downgrade verification plan:
+
+- `docs/plans/20260605_143442-version-downgrade-verification.md`
 
 ## Architecture summary
 
@@ -434,9 +455,14 @@ Completed:
 - [x] v0.2.2 selected/rejected decision reason metadata.
 - [x] v0.2.2 duplicate suppression and contradiction markers.
 - [x] Project-local history and stress-case documentation.
+- [x] Hermes activation gate documentation.
+- [x] Version-downgrade verification planning document.
 
 In progress / next:
 
+- [ ] Version-downgrade verification implementation and evidence capture.
+- [ ] Migration/rollback verification implementation and evidence capture.
+- [ ] Hermes shadow integration design and comparison harness.
 - [ ] v0.2.1 candidate-provider abstraction.
 - [ ] v0.2.2 richer requester-matrix noisy fixture.
 - [ ] v0.2.2 reserved budget buckets and contradiction severity.
@@ -459,9 +485,11 @@ When resuming this project from a new session:
 1. Read `README.md`.
 2. Read `PROJECT_STATUS.md`.
 3. Read this file: `docs/HISTORY.md`.
-4. Read `docs/stress-cases/case-01-noisy-truth.md`.
-5. Read `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`.
-6. Run:
+4. Read `docs/hermes-activation-gates.md` before any Hermes runtime integration or activation work.
+5. Read `docs/stress-cases/case-01-noisy-truth.md`.
+6. Read `docs/plans/20260605_143442-version-downgrade-verification.md` before migration/downgrade work.
+7. Read `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`.
+8. Run:
 
 ```bash
 cd /mnt/nas/Hermes-Gitlab/agent-memory-os
@@ -476,6 +504,8 @@ PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory
 - `README.md`
 - `SPEC.md`
 - `PROJECT_STATUS.md`
+- `docs/hermes-activation-gates.md`
+- `docs/plans/20260605_143442-version-downgrade-verification.md`
 - `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`
 - `docs/stress-cases/case-01-noisy-truth.md`
 - `docs/plans/20260605_100751-memory-decay-recency-v0.2.md`

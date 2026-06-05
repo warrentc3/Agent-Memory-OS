@@ -52,6 +52,24 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
   - Contradictory claim groups are marked with `CONFLICT` and `conflict_detected` decision reasons instead of being silently blended.
   - `MemoryClient.context_pack_report()` exposes the auditable context-pack path while preserving requester-aware ACL filtering from search.
 
+## Hermes activation status
+
+- AgentMemoryOS v0.2.2 is **not** approved as the default Hermes Agent memory engine.
+- Current deployment state: `Development / Validation only`.
+- Recommended runtime mode: `staging / shadow / experimental`.
+- Production Hermes memory backend remains unchanged until all activation gates are complete.
+- Canonical gate document: `docs/hermes-activation-gates.md`.
+- Downgrade verification plan: `docs/plans/20260605_143442-version-downgrade-verification.md`.
+
+Required gates before production activation:
+
+1. Version-downgrade verification proves older/stable readers or downgrade simulations can safely read/export newer data without weakening ACL.
+2. Lossless migration verifies row counts, stable `memory_id` values, deterministic defaults, and rebuildable indexes.
+3. Rollback safety verifies timestamped backup, restore, and post-restore index rebuild.
+4. Hermes shadow integration compares AgentMemoryOS outputs against the current Hermes memory path without injecting them into production prompts.
+5. Multi-profile ACL validation verifies Mizuki / LittleNEO / Guest visibility across search and context-pack paths.
+6. Mizuki/Product final subjective acceptance reviews the evidence bundle before any default switch.
+
 ## Verification snapshot
 
 - Test command: `PYTHONPATH=src python3 -m pytest -q`
@@ -81,13 +99,15 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 
 ## Next engineering decisions
 
-1. Refactor v0.2.1 baseline into explicit candidate-provider classes (`FTS5CandidateProvider`, `PinnedRecentFallbackProvider`) while keeping the green tests.
-2. Expand v0.2.2 Truth Arbitration beyond the baseline allocator: richer near-duplicate detection, contradiction severity, reserved budget buckets, and requester-matrix stress fixtures.
-3. Choose vector backend for v0.3: `sqlite-vec`, `fastembed`, or Qdrant.
-4. Define exact Hermes provider/MCP integration point.
-5. Add memory dedupe/consolidation flow.
-6. Add importers for Hermes `MEMORY.md` / `USER.md` and Mem0 export/API.
-7. Decide whether the default deployment mode is embedded library, local daemon, or both.
+1. Complete version-downgrade verification before any Hermes default-backend discussion.
+2. Define and test migration/rollback scripts with row-count and `memory_id` preservation evidence.
+3. Refactor v0.2.1 baseline into explicit candidate-provider classes (`FTS5CandidateProvider`, `PinnedRecentFallbackProvider`) while keeping the green tests.
+4. Expand v0.2.2 Truth Arbitration beyond the baseline allocator: richer near-duplicate detection, contradiction severity, reserved budget buckets, and requester-matrix stress fixtures.
+5. Define exact Hermes provider/MCP integration point and run it first in shadow mode.
+6. Choose vector backend for v0.3: `sqlite-vec`, `fastembed`, or Qdrant.
+7. Add memory dedupe/consolidation flow.
+8. Add importers for Hermes `MEMORY.md` / `USER.md` and Mem0 export/API.
+9. Decide whether the default deployment mode is embedded library, local daemon, or both.
 
 ## Verification commands
 
@@ -102,5 +122,7 @@ git status --short --branch
 The project history and stress-case definitions are now documented inside this repository, not only in the external wiki:
 
 - `docs/HISTORY.md`: project journey, planning, completed work, pending work, decisions, code-level contracts, and recovery order.
+- `docs/hermes-activation-gates.md`: deployment status, non-default decision, production activation gates, shadow-mode rules, and evidence bundle requirements.
 - `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`: hybrid retrieval safety layer, source-of-truth contract, bounded fallback, index rebuild/no-data-loss contract, and TDD acceptance matrix.
+- `docs/plans/20260605_143442-version-downgrade-verification.md`: downgrade/compatibility test matrix, rollback expectations, and acceptance criteria before Hermes activation.
 - `docs/stress-cases/case-01-noisy-truth.md`: `[Mizuki/StressCase] Case 01: 喧囂中的真理`, fixture design, requester matrix, budget acceptance criteria, and suggested pytest tests.

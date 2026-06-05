@@ -18,6 +18,7 @@ v0.2.2 baseline is implemented and regression-tested in:
 
 - `src/agent_memory_os/context_pack.py`
 - `src/agent_memory_os/client.py`
+- `src/agent_memory_os/db.py`
 - `tests/test_truth_arbitration.py`
 
 Covered now:
@@ -26,7 +27,15 @@ Covered now:
 - low-confidence high-text-score noise is demoted;
 - duplicate clusters are suppressed with explicit rejection reasons;
 - contradictory claim groups are marked with `CONFLICT` and `conflict_detected`;
-- `MemoryClient.context_pack_report()` exposes selected/rejected decisions after requester-aware ACL filtering.
+- `MemoryClient.context_pack_report()` exposes selected/rejected decisions after requester-aware ACL filtering;
+- dual-track retrieval prevents retrieval vacuum by unioning lexical candidates with an authority track;
+- authority-track rows still pass the authoritative SQLite rejoin plus ACL and expiry hard gates;
+- core reserve protection keeps one selected core memory alive under extreme budget pressure.
+
+Current deployment note:
+
+- This stress case validates engine behavior, not Hermes production activation.
+- Hermes default memory activation remains blocked by `docs/hermes-activation-gates.md`.
 
 Still to expand:
 
@@ -243,6 +252,25 @@ Every considered memory should emit an auditable decision object.
 }
 ```
 
+## Dual-track retrieval regression
+
+Case 01 exposed a retrieval vacuum: lexical retrieval can drop the only authoritative truth before the Context Budget Allocator sees it. The current baseline therefore uses two candidate tracks:
+
+```text
+Track A: lexical / FTS5 candidates
+Track B: authority candidates where permanence=true and weight>=10
+```
+
+The authority track is not a permission bypass. Candidate rows are still rejoined through the authoritative SQLite `memories` table and then pass ACL and expiry hard gates before scoring or context packing.
+
+Suggested score fusion baseline:
+
+```text
+score = text_score * 0.3 + authority_weight * 0.7
+```
+
+This behavior is validated in `tests/test_truth_arbitration.py` and documented operationally in `docs/hermes-activation-gates.md`.
+
 ## Scoring contract
 
 ACL and expiry are hard gates:
@@ -308,7 +336,9 @@ def test_context_pack_emits_selected_and_rejected_reasons():
 
 ## Related project docs
 
-- `docs/PROJECT_HISTORY.md`
+- `docs/HISTORY.md`
 - `PROJECT_STATUS.md`
 - `SPEC.md`
+- `docs/hermes-activation-gates.md`
+- `docs/plans/20260605_143442-version-downgrade-verification.md`
 - `docs/plans/20260605_100751-memory-decay-recency-v0.2.md`

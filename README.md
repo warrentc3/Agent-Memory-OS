@@ -14,6 +14,16 @@ AgentMemoryOS is an experimental open-source memory layer inspired by the practi
 - **Truth-arbitrated**: protect authoritative core memories under noisy budget pressure, suppress duplicates, and mark contradictions.
 - **Auditable**: every memory has scope, owner, type, timestamps, source, confidence, and importance.
 
+## Current status
+
+AgentMemoryOS is currently **Development / Validation only** for Hermes integration.
+
+It is **not** approved as the default Hermes Agent memory backend. Use it in staging, shadow, or experimental mode until the production activation gates are complete.
+
+Canonical activation gate document:
+
+- [`docs/hermes-activation-gates.md`](docs/hermes-activation-gates.md)
+
 ## Current MVP
 
 Implemented now:
@@ -34,10 +44,11 @@ Planned next:
 
 - v0.2.1 refactor: candidate provider abstraction around the existing retrieval-safety baseline.
 - v0.2.2 expansion: richer Truth Arbitration stress fixtures, reserved budget buckets, and stronger contradiction severity handling.
+- Version-downgrade verification and migration/rollback proof before Hermes default-backend activation.
+- Hermes provider integration in shadow mode first; production default activation requires the gates in `docs/hermes-activation-gates.md`.
 - sqlite-vec / Qdrant hybrid vector search after the retrieval foundation is sealed.
 - Deduplication and stale-memory consolidation.
 - REST API.
-- Hermes memory provider integration.
 - Import/export from Mem0.ai and Hermes `MEMORY.md` / `USER.md`.
 
 ## Quick start
@@ -89,5 +100,7 @@ See:
 - [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for current implementation and verification status.
 - [`SPEC.md`](SPEC.md) for the product/architecture specification.
 - [`docs/HISTORY.md`](docs/HISTORY.md) for the full project journey, decisions, completed work, pending work, and code-level contracts.
+- [`docs/hermes-activation-gates.md`](docs/hermes-activation-gates.md) for the Hermes non-default deployment decision, activation gates, shadow-mode rules, and evidence bundle requirements.
 - [`docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`](docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md) for the retrieval safety layer and no-data-loss contract.
+- [`docs/plans/20260605_143442-version-downgrade-verification.md`](docs/plans/20260605_143442-version-downgrade-verification.md) for downgrade, migration, rollback, and compatibility verification planning.
 - [`docs/stress-cases/case-01-noisy-truth.md`](docs/stress-cases/case-01-noisy-truth.md) for `[Mizuki/StressCase] Case 01: 喧囂中的真理`.
