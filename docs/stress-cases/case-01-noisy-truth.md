@@ -1,6 +1,6 @@
 # Stress Case 01: 喧囂中的真理
 
-Last updated: 2026-06-05 10:46:13 CST (+0800)
+Last updated: 2026-06-05 11:59:20 CST (+0800)
 
 ## Case label
 
@@ -11,6 +11,29 @@ Last updated: 2026-06-05 10:46:13 CST (+0800)
 This stress case verifies that AgentMemoryOS can preserve authorized core truth under noisy memory pressure and limited context budget.
 
 It is not a simple recall test. It is a resource arbitration and safety test for the Context Budget Allocator.
+
+## Implementation status
+
+v0.2.2 baseline is implemented and regression-tested in:
+
+- `src/agent_memory_os/context_pack.py`
+- `src/agent_memory_os/client.py`
+- `tests/test_truth_arbitration.py`
+
+Covered now:
+
+- authoritative / permanent / `weight>8` core memory survives tight budget pressure;
+- low-confidence high-text-score noise is demoted;
+- duplicate clusters are suppressed with explicit rejection reasons;
+- contradictory claim groups are marked with `CONFLICT` and `conflict_detected`;
+- `MemoryClient.context_pack_report()` exposes selected/rejected decisions after requester-aware ACL filtering.
+
+Still to expand:
+
+- full requester-matrix stress fixture with larger mixed-scope corpus;
+- reserved budget buckets by memory class;
+- contradiction severity / arbitration policies beyond basic conflict marking;
+- near-duplicate semantic clustering beyond exact `claim_key` / normalized content fingerprints.
 
 ## One-line definition
 

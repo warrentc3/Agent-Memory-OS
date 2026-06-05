@@ -45,11 +45,19 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
   - Fallback preserves ACL and `expires_at` hard gates.
   - `MemoryClient.rebuild_indexes()` rebuilds disposable FTS5 state from authoritative `memories` rows.
   - Regression tests cover fallback recall, private non-leak, expired exclusion, and rebuild/no-loss behavior.
+- v0.2.2 Truth Arbitration / Context Budget Allocator baseline implemented:
+  - `build_context_pack_report()` emits prompt text plus selected/rejected `ContextDecision` metadata.
+  - Context packing now prioritizes authoritative / permanent / `weight>8` core memories under budget pressure.
+  - Duplicate clusters are suppressed via stable claim keys or content fingerprints with explicit rejection reasons.
+  - Contradictory claim groups are marked with `CONFLICT` and `conflict_detected` decision reasons instead of being silently blended.
+  - `MemoryClient.context_pack_report()` exposes the auditable context-pack path while preserving requester-aware ACL filtering from search.
 
 ## Verification snapshot
 
 - Test command: `PYTHONPATH=src python3 -m pytest -q`
-- Result: `29 passed` at `2026-06-05 11:40 CST (+0800)`
+- Result: `33 passed` at `2026-06-05 11:59 CST (+0800)`
+- Truth Arbitration targeted command: `PYTHONPATH=src python3 -m pytest tests/test_truth_arbitration.py -q`
+- Truth Arbitration targeted result: `4 passed` covering core-memory survival under budget pressure, duplicate suppression, contradiction marking, and peer requester private-memory absence in auditable context packs.
 - Retrieval Foundation targeted command: `PYTHONPATH=src python3 -m pytest tests/test_retrieval_foundation.py -q`
 - Retrieval Foundation targeted result: `4 passed` covering zero-hit fallback, ACL-preserving fallback, expired fallback exclusion, and index rebuild/no-loss behavior.
 - ACL targeted command: `PYTHONPATH=src python3 -m pytest tests/test_acl_visibility.py -q`
@@ -74,11 +82,12 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 ## Next engineering decisions
 
 1. Refactor v0.2.1 baseline into explicit candidate-provider classes (`FTS5CandidateProvider`, `PinnedRecentFallbackProvider`) while keeping the green tests.
-2. Choose vector backend for v0.3: `sqlite-vec`, `fastembed`, or Qdrant.
-3. Define exact Hermes provider/MCP integration point.
-4. Add memory dedupe/consolidation flow.
-5. Add importers for Hermes `MEMORY.md` / `USER.md` and Mem0 export/API.
-6. Decide whether the default deployment mode is embedded library, local daemon, or both.
+2. Expand v0.2.2 Truth Arbitration beyond the baseline allocator: richer near-duplicate detection, contradiction severity, reserved budget buckets, and requester-matrix stress fixtures.
+3. Choose vector backend for v0.3: `sqlite-vec`, `fastembed`, or Qdrant.
+4. Define exact Hermes provider/MCP integration point.
+5. Add memory dedupe/consolidation flow.
+6. Add importers for Hermes `MEMORY.md` / `USER.md` and Mem0 export/API.
+7. Decide whether the default deployment mode is embedded library, local daemon, or both.
 
 ## Verification commands
 

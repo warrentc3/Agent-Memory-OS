@@ -1,4 +1,4 @@
-# AgentMemoryOS SPEC v0.2.1
+# AgentMemoryOS SPEC v0.2.2
 
 ## Product thesis
 
@@ -122,6 +122,22 @@ Retrieval safety invariants:
 ## Context budget policy
 
 The context pack builder uses an approximate token count of `ceil(chars / 4)` and stops before `max_tokens`. This is deliberately conservative and dependency-free for MVP. Future versions can use tokenizer-specific counters.
+
+v0.2.2 adds an auditable Truth Arbitration layer for context packing:
+
+- `build_context_pack_report()` returns both prompt text and `ContextDecision` entries.
+- Authoritative / permanent / `source.weight > 8` core memories receive priority under budget pressure.
+- Low-confidence noisy memories are demoted even when lexical score is high.
+- Duplicate clusters are suppressed using `source.claim_key` when available, otherwise a normalized content fingerprint.
+- Contradictory claim groups are detected when records share `source.claim_key` but carry different `source.claim` values; selected pack lines include `CONFLICT`, and decisions include `conflict_detected`.
+- Decision reasons are stable strings such as `acl_allowed`, `not_expired`, `authoritative`, `permanent`, `weight_gt_8`, `core_reserved_budget`, `fits_budget`, `budget_exceeded`, and `duplicate_cluster_suppressed`.
+
+Public SDK entry points:
+
+```python
+pack = client.context_pack(query, requester_agent_id="neo", max_tokens=1200)
+report = client.context_pack_report(query, requester_agent_id="neo", max_tokens=1200)
+```
 
 ## MCP tools planned
 

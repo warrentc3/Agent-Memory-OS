@@ -1,6 +1,6 @@
 # AgentMemoryOS - Project History and Roadmap
 
-Last updated: 2026-06-05 11:40:49 CST (+0800)
+Last updated: 2026-06-05 11:59:20 CST (+0800)
 
 ## Purpose
 
@@ -301,6 +301,32 @@ Still planned for the explicit provider-class refactor and semantic backend stag
 - `test_semantic_candidates_still_exclude_expired_memories`
 - `test_backend_failure_degrades_recall_without_deleting_records`
 
+### v0.2.2 Truth Arbitration baseline
+
+Implemented the first Context Budget Allocator / Truth Arbitration baseline for `[Mizuki/StressCase] Case 01: 喧囂中的真理`.
+
+Key code areas:
+
+- `src/agent_memory_os/context_pack.py`
+- `src/agent_memory_os/client.py`
+- `tests/test_truth_arbitration.py`
+
+Implemented behavior:
+
+- `build_context_pack_report()` returns both prompt text and auditable selected/rejected `ContextDecision` metadata.
+- `MemoryClient.context_pack_report()` exposes the audited path using the same requester-aware search/ACL filtering as `context_pack()`.
+- Authoritative, permanent, and `source.weight > 8` core memories receive priority under budget pressure.
+- Low-confidence noisy memories are demoted even when lexical score is high.
+- Duplicate clusters are suppressed using `source.claim_key` or a normalized content fingerprint and receive `duplicate_cluster_suppressed` rejection reasons.
+- Contradictory records sharing `source.claim_key` but carrying different `source.claim` values receive `conflict_detected`; selected context lines are marked `CONFLICT`.
+
+Implemented TDD acceptance tests:
+
+- `test_truth_arbitration_keeps_authoritative_core_under_budget_pressure`
+- `test_truth_arbitration_suppresses_duplicate_clusters_with_rejection_reasons`
+- `test_truth_arbitration_marks_contradictions_instead_of_silently_blending`
+- `test_context_pack_report_keeps_private_memory_absent_for_peer_requester`
+
 ## Authoritative engineering decisions
 
 ### ACL is a hard gate
@@ -357,7 +383,14 @@ Last known verification from `PROJECT_STATUS.md`:
 ```bash
 cd /mnt/nas/Hermes-Gitlab/agent-memory-os
 PYTHONPATH=src python3 -m pytest -q
-# 29 passed at 2026-06-05 11:40 CST (+0800)
+# 33 passed at 2026-06-05 11:59 CST (+0800)
+```
+
+Truth Arbitration targeted verification:
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/test_truth_arbitration.py -q
+# 4 passed
 ```
 
 ACL targeted verification:
@@ -397,15 +430,16 @@ Completed:
 - [x] v0.2.1 Retrieval Foundation contract/specification.
 - [x] v0.2.1 zero-hit fallback under ACL.
 - [x] v0.2.1 index rebuild/no-data-loss regression tests.
+- [x] v0.2.2 Context Budget Allocator / Truth Arbitration baseline.
+- [x] v0.2.2 selected/rejected decision reason metadata.
+- [x] v0.2.2 duplicate suppression and contradiction markers.
 - [x] Project-local history and stress-case documentation.
 
 In progress / next:
 
 - [ ] v0.2.1 candidate-provider abstraction.
-- [ ] Context Budget Allocator strengthening.
-- [ ] Core Memory Protection logic.
-- [ ] Truth arbitration algorithms.
-- [ ] Selection/rejection reason metadata.
+- [ ] v0.2.2 richer requester-matrix noisy fixture.
+- [ ] v0.2.2 reserved budget buckets and contradiction severity.
 
 Pending / backlog:
 

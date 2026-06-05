@@ -4,7 +4,7 @@ from pathlib import Path
 import os
 
 from .cache import LRUCache
-from .context_pack import build_context_pack
+from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
 from .db import MemoryStore
 from .schema import MemoryRecord, SearchResult
 
@@ -76,6 +76,33 @@ class MemoryClient:
         pack = build_context_pack(results, max_tokens=max_tokens)
         self.cache.set(key, pack)
         return pack
+
+    def context_pack_report(
+        self,
+        query: str,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 12,
+        max_tokens: int = 1200,
+    ) -> ContextPackReport:
+        key = ("pack_report", query, owner, scope, requester_agent_id, requester_team_id, limit, max_tokens)
+        cached = self.cache.get(key)
+        if cached is not None:
+            return cached  # type: ignore[return-value]
+        results = self.search(
+            query,
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+        )
+        report = build_context_pack_report(results, max_tokens=max_tokens)
+        self.cache.set(key, report)
+        return report
 
     def stats(self) -> dict[str, object]:
         return self.store.stats() | {"cache_items": len(self.cache)}

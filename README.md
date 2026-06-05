@@ -11,6 +11,7 @@ AgentMemoryOS is an experimental open-source memory layer inspired by the practi
 - **MCP-native**: expose memory tools through MCP so other agents can plug in.
 - **Fast hot path**: RAM LRU cache for frequently recalled context packs and pinned facts.
 - **Context-budget aware**: return a compact context pack instead of dumping every memory into the model context.
+- **Truth-arbitrated**: protect authoritative core memories under noisy budget pressure, suppress duplicates, and mark contradictions.
 - **Auditable**: every memory has scope, owner, type, timestamps, source, confidence, and importance.
 
 ## Current MVP
@@ -21,7 +22,7 @@ Implemented now:
 - SQLite FTS5 keyword retrieval.
 - Structured memory records.
 - In-process LRU cache.
-- Context pack builder with a hard token-ish budget.
+- Context pack builder with a hard token-ish budget, truth arbitration, selected/rejected decision metadata, duplicate suppression, and contradiction markers.
 - Requester-aware ACL filtering for search and context packs.
 - Expiration hard filter with recency/decay-aware effective scoring.
 - v0.2.1 retrieval-safety contract: SQLite memories are the source of truth, while FTS5/future vector/fallback paths are disposable candidate providers merged by stable memory id.
@@ -31,7 +32,8 @@ Implemented now:
 
 Planned next:
 
-- v0.2.1 implementation: candidate provider abstraction, zero-hit fallback under ACL, and index rebuild/no-data-loss tests.
+- v0.2.1 refactor: candidate provider abstraction around the existing retrieval-safety baseline.
+- v0.2.2 expansion: richer Truth Arbitration stress fixtures, reserved budget buckets, and stronger contradiction severity handling.
 - sqlite-vec / Qdrant hybrid vector search after the retrieval foundation is sealed.
 - Deduplication and stale-memory consolidation.
 - REST API.
@@ -75,6 +77,9 @@ client.add(
 
 hits = client.search("filename convention", owner="bastet-agent", limit=5)
 pack = client.context_pack("Create a report", owner="bastet-agent", max_tokens=300)
+report = client.context_pack_report("Create a report", owner="bastet-agent", max_tokens=300)
+for decision in report.decisions:
+    print(decision.memory_id, decision.selected, decision.reason)
 ```
 
 ## Repository status
