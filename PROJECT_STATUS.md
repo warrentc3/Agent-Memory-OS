@@ -24,6 +24,21 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - CLI implemented.
 - Optional MCP server scaffold added.
 - Unit tests added.
+- First GitLab project created and pushed.
+
+## Verification snapshot
+
+- Test command: `PYTHONPATH=src python3 -m pytest -q`
+- Result: `6 passed`
+- First commit: `d02c22b feat: bootstrap AgentMemoryOS MVP`
+- GitLab URL: `https://gitlab.com/hermes-agent-bastet/agent-memory-os`
+
+## Architecture review notes before v0.2
+
+- Clarify which SPEC features are implemented versus planned, especially `visibility` ACL, `expires_at`, audit log, and MCP update/delete/consolidation tools.
+- Add input validation for `scope`, `type`, `confidence`, and `importance`.
+- Add tests for update/delete FTS triggers, expired memory handling, installation/entrypoint smoke test, and precision of multi-term search.
+- Document SQLite FTS5 as a runtime prerequisite.
 
 ## Next engineering decisions
 
