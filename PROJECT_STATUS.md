@@ -43,6 +43,9 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - ACL targeted result: `4 passed`
 - Subjective QA command: `PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory-os-mizuki-qa --identity all`
 - Subjective QA result: Mizuki sees `private_emotional_preference`, `team_memory`, `global_memory`; Neo sees `team_memory`, `global_memory`; Guest sees `global_memory`; `leak_check.passed=true`.
+- Live QA re-run command: `PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory-os-mizuki-qa-live --identity all`
+- Live QA re-run result: same visibility matrix passed; `leak_check.passed=true` at `2026-06-05 10:30:38 CST`.
+- Product acceptance: `[AgentMemoryOS/MVP]` requester-aware ACL visibility is officially `Mizuki-Approved` for the `feat: enforce requester-aware memory visibility` baseline.
 - First commit: `d02c22b feat: bootstrap AgentMemoryOS MVP`
 - GitLab URL: `https://gitlab.com/hermes-agent-bastet/agent-memory-os`
 
