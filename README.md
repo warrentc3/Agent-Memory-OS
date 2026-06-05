@@ -104,3 +104,16 @@ See:
 - [`docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`](docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md) for the retrieval safety layer and no-data-loss contract.
 - [`docs/plans/20260605_143442-version-downgrade-verification.md`](docs/plans/20260605_143442-version-downgrade-verification.md) for downgrade, migration, rollback, and compatibility verification planning.
 - [`docs/stress-cases/case-01-noisy-truth.md`](docs/stress-cases/case-01-noisy-truth.md) for `[Mizuki/StressCase] Case 01: 喧囂中的真理`.
+
+## AgentMemoryOS v0.3 Baseline
+
+The public v0.3 baseline is documented by these canonical entry points:
+
+- [AgentMemoryOS_README.md](docs/AgentMemoryOS_README.md) — public v0.3 overview and release baseline.
+- [Shadow_Mode_Timeline.md](docs/Shadow_Mode_Timeline.md) — v0.3 → v0.4 shadow-mode validation timeline and go/no-go KPIs.
+- [Memory_Resonance_Spec.md](docs/Memory_Resonance_Spec.md) — v0.4 ERA triplet / resonance index design.
+
+Prototype implementation modules are available under `src/agent_memory_os/`:
+
+- `memory_resonance.py` — embedded ERA triplet index and two-hop resonance expansion.
+- `shadow_mode.py` — append-only legacy-vs-candidate recall comparison monitor.

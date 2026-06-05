@@ -11,3 +11,6 @@ build/
 *.sqlite
 .env
 .DS_Store
+.hermes/
+shadow_recall*.jsonl
+*.pyc
