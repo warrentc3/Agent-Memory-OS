@@ -1,6 +1,6 @@
 # AgentMemoryOS - Project History and Roadmap
 
-Last updated: 2026-06-05 11:04:59 CST (+0800)
+Last updated: 2026-06-05 11:12:21 CST (+0800)
 
 ## Purpose
 
@@ -132,6 +132,11 @@ The memory record model includes:
 - `created_at`
 - `updated_at`
 - `expires_at`
+- `decay_policy`
+- `decay_half_life_days`
+- `last_accessed_at`
+- `access_count`
+- `pinned`
 
 ## Completed implementation history
 
@@ -199,6 +204,48 @@ effective_score = text_score
 ```
 
 ACL and expiry are hard filters, not soft multipliers.
+
+### Memory Decay & Recency baseline
+
+Implemented the first v0.2 scoring baseline.
+
+Key code areas:
+
+- `src/agent_memory_os/scoring.py`
+- `src/agent_memory_os/schema.py`
+- `src/agent_memory_os/db.py`
+- `tests/test_decay_scoring.py`
+- `tests/test_memory_decay_recency.py`
+- `tests/test_acl_visibility.py`
+
+Implemented behavior:
+
+- `decay_policy`: `none`, `linear`, or `exponential`.
+- `decay_half_life_days`: defaulted by memory type, positive for decaying policies.
+- `pinned`: disables freshness decay while preserving ACL and expiration hard gates.
+- `access_count`: contributes a capped reinforcement factor.
+- Search now fetches extra FTS candidates, computes effective score, sorts by metadata-aware score, then trims to requested limit.
+
+Implemented scoring shape:
+
+```text
+effective_score = text_score
+                * (0.45 + 0.35 * importance + 0.20 * confidence)
+                * freshness_factor
+                * reinforcement_factor
+```
+
+Verification coverage:
+
+- Exponential half-life behavior.
+- Linear decay floor.
+- Pinned/no-decay handling.
+- Reinforcement cap.
+- Schema defaults and validation.
+- Recent memory outranking stale equivalent memory.
+- Important authoritative older memory outranking recent low-confidence trivia.
+- Expired memory exclusion even when important or pinned.
+- Regression that pinned/fresh private memory remains hidden from unauthorized agents.
 
 ### Team collaboration route repair
 
@@ -278,14 +325,21 @@ Last known verification from `PROJECT_STATUS.md`:
 ```bash
 cd /mnt/nas/Hermes-Gitlab/agent-memory-os
 PYTHONPATH=src python3 -m pytest -q
-# 12 passed at 2026-06-05 10:19:41 CST
+# 25 passed at 2026-06-05 11:12:21 CST (+0800)
 ```
 
 ACL targeted verification:
 
 ```bash
 PYTHONPATH=src python3 -m pytest tests/test_acl_visibility.py -q
-# 4 passed
+# 6 passed
+```
+
+Decay targeted verification:
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/test_decay_scoring.py tests/test_memory_decay_recency.py -q
+# 11 passed
 ```
 
 Subjective ACL QA:
@@ -307,14 +361,14 @@ Completed:
 - [x] Requester-aware ACL enforcement.
 - [x] Identity verification suite.
 - [x] Memory Decay & Recency implementation plan.
+- [x] Memory Decay & Recency scoring baseline.
 - [x] Project-local history and stress-case documentation.
 
 In progress / next:
 
-- [ ] Memory Decay & Recency implementation.
 - [ ] Context Budget Allocator strengthening.
 - [ ] Core Memory Protection logic.
-- [ ] Temporal decay and truth arbitration algorithms.
+- [ ] Truth arbitration algorithms.
 - [ ] Selection/rejection reason metadata.
 
 Pending / backlog:

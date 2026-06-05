@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import datetime, timezone
 import json
 import sqlite3
 
 from .schema import MemoryRecord, SearchResult, utc_now
+from .scoring import effective_score, freshness_factor, reinforcement_factor
 
 
 SCHEMA = """
@@ -22,7 +24,12 @@ CREATE TABLE IF NOT EXISTS memories (
   importance REAL NOT NULL DEFAULT 0.5,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
-  expires_at TEXT
+  expires_at TEXT,
+  decay_policy TEXT NOT NULL DEFAULT 'exponential',
+  decay_half_life_days REAL NOT NULL DEFAULT 30.0,
+  last_accessed_at TEXT,
+  access_count INTEGER NOT NULL DEFAULT 0,
+  pinned INTEGER NOT NULL DEFAULT 0
 );
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
   id UNINDEXED,
@@ -58,23 +65,40 @@ class MemoryStore:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._ensure_decay_columns()
         self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
+
+    def _ensure_decay_columns(self) -> None:
+        existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(memories)")}
+        columns = {
+            "decay_policy": "TEXT NOT NULL DEFAULT 'exponential'",
+            "decay_half_life_days": "REAL NOT NULL DEFAULT 30.0",
+            "last_accessed_at": "TEXT",
+            "access_count": "INTEGER NOT NULL DEFAULT 0",
+            "pinned": "INTEGER NOT NULL DEFAULT 0",
+        }
+        for name, definition in columns.items():
+            if name not in existing:
+                self.conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {definition}")
 
     def add(self, record: MemoryRecord) -> MemoryRecord:
         record.summary = record.normalized_summary()
         self.conn.execute(
             """
             INSERT INTO memories(id, owner, scope, type, content, summary, tags, visibility, source,
-                                 confidence, importance, created_at, updated_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 confidence, importance, created_at, updated_at, expires_at,
+                                 decay_policy, decay_half_life_days, last_accessed_at, access_count, pinned)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id, record.owner, record.scope, record.type, record.content, record.summary,
                 record.tags_json(), record.visibility_json(), record.source_json(),
                 record.confidence, record.importance, record.created_at, record.updated_at, record.expires_at,
+                record.decay_policy, record.decay_half_life_days, record.last_accessed_at,
+                record.access_count, int(record.pinned),
             ),
         )
         self.conn.commit()
@@ -139,7 +163,7 @@ class MemoryStore:
                 )
                 params.extend([requester_team_id, f"team:{requester_team_id}"])
             where.append("(" + " OR ".join(acl_clauses) + ")")
-        params.append(limit)
+        params.append(max(limit * 5, limit))
         sql = f"""
           SELECT m.*, bm25(memories_fts) AS rank
           FROM memories_fts
@@ -150,12 +174,30 @@ class MemoryStore:
         """
         rows = self.conn.execute(sql, params).fetchall()
         results = []
+        now_dt = datetime.now(timezone.utc)
         for row in rows:
-            # bm25 lower is better; convert to positive-ish score with metadata boost.
+            # bm25 lower is better; convert to a positive score before soft metadata scoring.
             rank = float(row["rank"])
-            score = (1.0 / (1.0 + abs(rank))) + float(row["importance"]) * 0.2 + float(row["confidence"]) * 0.1
-            results.append(SearchResult(record=self._row_to_record(row), score=score))
-        return results
+            text_score = 1.0 / (1.0 + abs(rank))
+            age_days = self._age_days(row["updated_at"], now_dt)
+            freshness = freshness_factor(
+                row["decay_policy"],
+                age_days=age_days,
+                half_life_days=float(row["decay_half_life_days"]),
+                pinned=bool(row["pinned"]),
+            )
+            reinforcement = reinforcement_factor(int(row["access_count"] or 0))
+            score = effective_score(
+                text_score=text_score,
+                importance=float(row["importance"]),
+                confidence=float(row["confidence"]),
+                freshness=freshness,
+                reinforcement=reinforcement,
+            )
+            reason = f"fts+metadata+freshness:{freshness:.3f}+reinforcement:{reinforcement:.3f}"
+            results.append(SearchResult(record=self._row_to_record(row), score=score, reason=reason))
+        results.sort(key=lambda result: result.score, reverse=True)
+        return results[:limit]
 
     def stats(self) -> dict[str, int]:
         total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
@@ -170,7 +212,20 @@ class MemoryStore:
             visibility=json.loads(row["visibility"] or "[]"), source=json.loads(row["source"] or "{}"),
             confidence=float(row["confidence"]), importance=float(row["importance"]),
             created_at=row["created_at"], updated_at=row["updated_at"], expires_at=row["expires_at"],
+            decay_policy=row["decay_policy"], decay_half_life_days=float(row["decay_half_life_days"]),
+            last_accessed_at=row["last_accessed_at"], access_count=int(row["access_count"] or 0),
+            pinned=bool(row["pinned"]),
         )
+
+    @staticmethod
+    def _age_days(value: str, now_dt: datetime) -> float:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0.0
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return max(0.0, (now_dt - parsed).total_seconds() / 86_400)
 
     @staticmethod
     def _fts_query(query: str) -> str:

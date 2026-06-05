@@ -38,6 +38,42 @@ Required fields:
 - `confidence`: 0.0 to 1.0.
 - `importance`: 0.0 to 1.0.
 - `created_at`, `updated_at`, `expires_at`.
+- `decay_policy`: `none`, `linear`, or `exponential`; soft scoring only.
+- `decay_half_life_days`: positive float used by linear/exponential decay.
+- `last_accessed_at`, `access_count`: reinforcement metadata; explicit update flow is planned.
+- `pinned`: disables decay but does not bypass ACL or expiration.
+
+## Expiration, decay, and ranking
+
+AgentMemoryOS keeps hard safety filters separate from soft retrieval ranking:
+
+1. **ACL / visibility hard gate**: unauthorized memories are excluded before ranking.
+2. **Expiration hard gate**: `expires_at <= now` is excluded from search and context packs.
+3. **Decay soft score**: stale but still-valid memories receive a freshness multiplier.
+4. **Pinned safety**: pinned memories keep `freshness_factor = 1.0`, but still obey ACL and `expires_at`.
+
+Initial v0.2 formula:
+
+```text
+effective_score = text_score
+                * (0.45 + 0.35 * importance + 0.20 * confidence)
+                * freshness_factor
+                * reinforcement_factor
+```
+
+Freshness:
+
+```text
+none or pinned: 1.0
+linear:         max(0.0, 1 - age_days / half_life_days)
+exponential:    0.5 ** (age_days / half_life_days)
+```
+
+Reinforcement:
+
+```text
+min(1.25, 1.0 + log1p(access_count) * 0.03)
+```
 
 ## MVP storage
 

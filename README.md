@@ -22,6 +22,8 @@ Implemented now:
 - Structured memory records.
 - In-process LRU cache.
 - Context pack builder with a hard token-ish budget.
+- Requester-aware ACL filtering for search and context packs.
+- Expiration hard filter with recency/decay-aware effective scoring.
 - Python SDK.
 - CLI commands: `add`, `search`, `pack`, `stats`.
 - Optional MCP server scaffold.

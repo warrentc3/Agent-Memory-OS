@@ -34,13 +34,19 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - Subjective QA verification script added:
   - `scripts/verify_acl_identities.py` seeds a temporary ACL fixture and switches identities across Mizuki, Neo, and Guest.
   - Verifies both raw search and context-pack filtering, with a leak check for `private_emotional_preference`.
+- v0.2 Memory Decay & Recency baseline implemented:
+  - `MemoryRecord` now includes `decay_policy`, `decay_half_life_days`, `last_accessed_at`, `access_count`, and `pinned`.
+  - Search ranking now combines FTS score with importance, confidence, freshness decay, and access-count reinforcement.
+  - `pinned` disables freshness decay but does **not** bypass ACL or `expires_at` hard filters.
 
 ## Verification snapshot
 
 - Test command: `PYTHONPATH=src python3 -m pytest -q`
-- Result: `12 passed` at `2026-06-05 10:19:41 CST`
+- Result: `25 passed` at `2026-06-05 11:12:21 CST (+0800)`
 - ACL targeted command: `PYTHONPATH=src python3 -m pytest tests/test_acl_visibility.py -q`
-- ACL targeted result: `4 passed`
+- ACL targeted result: `6 passed` including pinned/fresh private-memory non-leak regression checks.
+- Decay targeted command: `PYTHONPATH=src python3 -m pytest tests/test_decay_scoring.py tests/test_memory_decay_recency.py -q`
+- Decay targeted result: `11 passed` covering exponential/linear freshness, reinforcement cap, default schema metadata, invalid-policy rejection, recency-aware ranking, importance-vs-recency arbitration, and expiry hard filtering.
 - Subjective QA command: `PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory-os-mizuki-qa --identity all`
 - Subjective QA result: Mizuki sees `private_emotional_preference`, `team_memory`, `global_memory`; Neo sees `team_memory`, `global_memory`; Guest sees `global_memory`; `leak_check.passed=true`.
 - Live QA re-run command: `PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory-os-mizuki-qa-live --identity all`
