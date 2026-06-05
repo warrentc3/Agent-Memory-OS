@@ -160,74 +160,196 @@ class MemoryStore:
         requester_team_id: str | None = None,
         limit: int = 10,
     ) -> list[SearchResult]:
-        query = self._fts_query(query)
-        where = ["memories_fts MATCH ?", "(m.expires_at IS NULL OR m.expires_at > ?)"]
-        params: list[object] = [query, utc_now()]
-        if owner:
-            where.append("m.owner = ?")
-            params.append(owner)
-        if scope:
-            where.append("m.scope = ?")
-            params.append(scope)
-        if requester_agent_id:
-            acl_clauses = [
-                "m.owner = ?",
-                "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = 'global')",
-                "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = ?)",
-            ]
-            params.extend([requester_agent_id, f"agent:{requester_agent_id}"])
-            if requester_team_id:
-                acl_clauses.extend(
-                    [
-                        "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = 'team' AND json_extract(m.source, '$.team_id') = ?)",
-                        "EXISTS (SELECT 1 FROM json_each(m.visibility) WHERE value = ?)",
-                    ]
-                )
-                params.extend([requester_team_id, f"team:{requester_team_id}"])
-            where.append("(" + " OR ".join(acl_clauses) + ")")
-        params.append(max(limit * 5, limit))
-        sql = f"""
-          SELECT m.*, bm25(memories_fts) AS rank
-          FROM memories_fts
-          JOIN memories m ON m.id = memories_fts.id
-          WHERE {' AND '.join(where)}
-          ORDER BY rank, m.importance DESC, m.confidence DESC, m.updated_at DESC
-          LIMIT ?
+        """Search memories via dual-track retrieval.
+
+        Track A is query-bound FTS5 relevance. Track B is query-independent
+        authority recall for bedrock memories. Both tracks still pass the same
+        expiry and requester ACL hard gates before scoring/fusion.
         """
-        rows = self.conn.execute(sql, params).fetchall()
-        results = []
+        now = utc_now()
         now_dt = datetime.now(timezone.utc)
+        rows = self._fts_rows(
+            query,
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+            now=now,
+        )
+        results: dict[str, SearchResult] = {}
         for row in rows:
-            # bm25 lower is better; convert to a positive score before soft metadata scoring.
             rank = float(row["rank"])
             text_score = 1.0 / (1.0 + abs(rank))
-            age_days = self._age_days(row["updated_at"], now_dt)
-            freshness = freshness_factor(
-                row["decay_policy"],
-                age_days=age_days,
-                half_life_days=float(row["decay_half_life_days"]),
-                pinned=bool(row["pinned"]),
+            result = self._score_row(row, text_score=text_score, now_dt=now_dt, reason_prefix="fts")
+            results[result.record.id] = result
+
+        authority_rows = self._authority_rows(
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+            now=now,
+        )
+        for row in authority_rows:
+            source = json.loads(row["source"] or "{}")
+            authority_weight = min(max(float(source.get("weight", 10.0)), 0.0), 10.0) / 10.0
+            text_component = results.get(row["id"]).score if row["id"] in results else 0.0
+            fused_score = (text_component * 0.3) + (authority_weight * 0.7)
+            result = self._score_row(
+                row,
+                text_score=fused_score,
+                now_dt=now_dt,
+                reason_prefix="authority_track",
             )
-            reinforcement = reinforcement_factor(int(row["access_count"] or 0))
-            score = effective_score(
-                text_score=text_score,
-                importance=float(row["importance"]),
-                confidence=float(row["confidence"]),
-                freshness=freshness,
-                reinforcement=reinforcement,
-            )
-            reason = f"fts+metadata+freshness:{freshness:.3f}+reinforcement:{reinforcement:.3f}"
-            results.append(SearchResult(record=self._row_to_record(row), score=score, reason=reason))
-        results.sort(key=lambda result: result.score, reverse=True)
-        if not results:
-            results = self._fallback_candidates(
+            previous = results.get(result.record.id)
+            if previous is None or result.score > previous.score:
+                results[result.record.id] = result
+
+        final_results = sorted(results.values(), key=lambda result: result.score, reverse=True)
+        if not final_results:
+            final_results = self._fallback_candidates(
                 owner=owner,
                 scope=scope,
                 requester_agent_id=requester_agent_id,
                 requester_team_id=requester_team_id,
                 limit=limit,
             )
-        return results[:limit]
+        return final_results[:limit]
+
+    def _fts_rows(
+        self,
+        query: str,
+        *,
+        owner: str | None,
+        scope: str | None,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+        limit: int,
+        now: str,
+    ) -> list[sqlite3.Row]:
+        fts_query = self._fts_query(query)
+        where = ["memories_fts MATCH ?", "(m.expires_at IS NULL OR m.expires_at > ?)"]
+        params: list[object] = [fts_query, now]
+        if owner:
+            where.append("m.owner = ?")
+            params.append(owner)
+        if scope:
+            where.append("m.scope = ?")
+            params.append(scope)
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="m.",
+        )
+        params.append(max(limit * 5, limit))
+        return self.conn.execute(
+            f"""
+            SELECT m.*, bm25(memories_fts) AS rank
+            FROM memories_fts
+            JOIN memories m ON m.id = memories_fts.id
+            WHERE {' AND '.join(where)}
+            ORDER BY rank, m.importance DESC, m.confidence DESC, m.updated_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+    def _authority_rows(
+        self,
+        *,
+        owner: str | None,
+        scope: str | None,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+        limit: int,
+        now: str,
+    ) -> list[sqlite3.Row]:
+        where = [
+            "(expires_at IS NULL OR expires_at > ?)",
+            "(json_extract(source, '$.permanence') = 1 AND json_extract(source, '$.weight') >= 10)",
+        ]
+        params: list[object] = [now]
+        if owner:
+            where.append("owner = ?")
+            params.append(owner)
+        if scope:
+            where.append("scope = ?")
+            params.append(scope)
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="",
+        )
+        params.append(max(limit, 1))
+        return self.conn.execute(
+            f"""
+            SELECT * FROM memories
+            WHERE {' AND '.join(where)}
+            ORDER BY pinned DESC, json_extract(source, '$.weight') DESC,
+                     importance DESC, confidence DESC, updated_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+    def _append_acl_filter(
+        self,
+        where: list[str],
+        params: list[object],
+        *,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+        alias: str,
+    ) -> None:
+        if not requester_agent_id:
+            return
+        acl_clauses = [
+            f"{alias}owner = ?",
+            f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = 'global')",
+            f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = ?)",
+        ]
+        params.extend([requester_agent_id, f"agent:{requester_agent_id}"])
+        if requester_team_id:
+            acl_clauses.extend(
+                [
+                    f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = 'team' AND json_extract({alias}source, '$.team_id') = ?)",
+                    f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = ?)",
+                ]
+            )
+            params.extend([requester_team_id, f"team:{requester_team_id}"])
+        where.append("(" + " OR ".join(acl_clauses) + ")")
+
+    def _score_row(
+        self,
+        row: sqlite3.Row,
+        *,
+        text_score: float,
+        now_dt: datetime,
+        reason_prefix: str,
+    ) -> SearchResult:
+        age_days = self._age_days(row["updated_at"], now_dt)
+        freshness = freshness_factor(
+            row["decay_policy"],
+            age_days=age_days,
+            half_life_days=float(row["decay_half_life_days"]),
+            pinned=bool(row["pinned"]),
+        )
+        reinforcement = reinforcement_factor(int(row["access_count"] or 0))
+        score = effective_score(
+            text_score=text_score,
+            importance=float(row["importance"]),
+            confidence=float(row["confidence"]),
+            freshness=freshness,
+            reinforcement=reinforcement,
+        )
+        reason = f"{reason_prefix}+metadata+freshness:{freshness:.3f}+reinforcement:{reinforcement:.3f}"
+        return SearchResult(record=self._row_to_record(row), score=score, reason=reason)
 
     def _fallback_candidates(
         self,

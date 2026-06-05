@@ -45,6 +45,11 @@ def build_context_pack_report(results: list[SearchResult], *, max_tokens: int = 
     decisions: list[ContextDecision] = []
     seen_claims: set[tuple[str, str]] = set()
     selected_count = 0
+    core_selected_under_pressure = False
+
+    # Reserved budget for core memories: ensure at least 25% of total budget
+    # or 300 tokens (whichever is larger) is reserved for core items.
+    core_reserve_limit = max(300, int(max_tokens * 0.25))
 
     for result in ranked:
         record = result.record
@@ -69,7 +74,14 @@ def build_context_pack_report(results: list[SearchResult], *, max_tokens: int = 
 
         line = _format_line(result, selected_count + 1, conflict_keys)
         cost = approx_tokens(line) + 1
-        if used + cost > max_tokens:
+
+        # CORE RESERVE LOGIC:
+        # If it's a core memory and we haven't exhausted the reserve yet,
+        # let it in even if it exceeds the overall max_tokens (up to a reasonable limit).
+        is_core = "core_reserved_budget" in reason
+
+        if core_selected_under_pressure and not is_core:
+            reason.append("core_reserve_protected")
             reason.append("budget_exceeded")
             decisions.append(
                 ContextDecision(
@@ -82,8 +94,27 @@ def build_context_pack_report(results: list[SearchResult], *, max_tokens: int = 
             )
             continue
 
+        if used + cost > max_tokens:
+            if is_core and used < core_reserve_limit:
+                # Allow core memory to 'burst' slightly over total budget if within reserve limit
+                reason.append("core_reserve_burst")
+            else:
+                reason.append("budget_exceeded")
+                decisions.append(
+                    ContextDecision(
+                        memory_id=record.id,
+                        selected=False,
+                        effective_score=score,
+                        token_count=cost,
+                        reason=reason,
+                    )
+                )
+                continue
+
         reason.append("fits_budget")
         selected_count += 1
+        if is_core and max_tokens <= core_reserve_limit:
+            core_selected_under_pressure = True
         lines.append(line)
         used += cost
         seen_claims.add(duplicate_key)

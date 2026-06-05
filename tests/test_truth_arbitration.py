@@ -138,3 +138,49 @@ def test_context_pack_report_keeps_private_memory_absent_for_peer_requester(tmp_
     assert "Private high-score truth for Mizuki only." not in report.text
     assert "Global truth: ACL hard gate is mandatory." in report.text
     assert all(decision.memory_id != private.id for decision in report.decisions)
+
+
+def test_case_01_noisy_truth_authority_track_survives_fts_noise(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    core = client.add(
+        "Core bedrock: ACL hard gate must run before any ranking or context packing.",
+        owner="mizuki",
+        visibility=["global"],
+        type="fact",
+        tags=["core", "authoritative", "acl"],
+        confidence=0.99,
+        importance=1.0,
+        pinned=True,
+        source={
+            "authoritative": True,
+            "permanence": True,
+            "weight": 10,
+            "claim_key": "acl_pipeline_bedrock",
+        },
+    )
+    for idx in range(50):
+        client.add(
+            f"Truth Noise_{idx}: a similar but low-confidence reflection that repeats Truth and noisy retrieval bait. " * 2,
+            owner="mizuki",
+            visibility=["global"],
+            type="note",
+            tags=["truth", "noise"],
+            confidence=0.25,
+            importance=0.1,
+            source={"weight": 1, "claim_key": f"noise_{idx}"},
+        )
+
+    results = client.search("Truth", requester_agent_id="neo", limit=12)
+    report = client.context_pack_report("Truth", requester_agent_id="neo", limit=12, max_tokens=200)
+
+    assert results[0].record.id == core.id
+    assert "authority_track" in results[0].reason
+    assert "Noise_" in "\n".join(result.record.content for result in results[1:])
+    assert "Core bedrock: ACL hard gate" in report.text
+    selected_ids = [decision.memory_id for decision in report.decisions if decision.selected]
+    assert selected_ids == [core.id]
+    core_decision = next(decision for decision in report.decisions if decision.memory_id == core.id)
+    assert {"authoritative", "permanent", "weight_gt_8", "core_reserved_budget"}.issubset(
+        set(core_decision.reason)
+    )
+    assert any("budget_exceeded" in decision.reason for decision in report.decisions if not decision.selected)
