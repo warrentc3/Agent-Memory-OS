@@ -75,4 +75,9 @@ pack = client.context_pack("Create a report", owner="bastet-agent", max_tokens=3
 
 ## Repository status
 
-See [`PROJECT_STATUS.md`](PROJECT_STATUS.md) and [`SPEC.md`](SPEC.md).
+See:
+
+- [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for current implementation and verification status.
+- [`SPEC.md`](SPEC.md) for the product/architecture specification.
+- [`docs/HISTORY.md`](docs/HISTORY.md) for the full project journey, decisions, completed work, pending work, and code-level contracts.
+- [`docs/stress-cases/case-01-noisy-truth.md`](docs/stress-cases/case-01-noisy-truth.md) for `[Mizuki/StressCase] Case 01: 喧囂中的真理`.

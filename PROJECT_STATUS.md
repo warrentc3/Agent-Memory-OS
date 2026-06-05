@@ -71,3 +71,10 @@ cd /mnt/nas/Hermes-Gitlab/agent-memory-os
 PYTHONPATH=src python3 -m pytest -q
 git status --short --branch
 ```
+
+## Project-local documentation
+
+The project history and stress-case definitions are now documented inside this repository, not only in the external wiki:
+
+- `docs/HISTORY.md`: project journey, planning, completed work, pending work, decisions, code-level contracts, and recovery order.
+- `docs/stress-cases/case-01-noisy-truth.md`: `[Mizuki/StressCase] Case 01: 喧囂中的真理`, fixture design, requester matrix, budget acceptance criteria, and suggested pytest tests.
