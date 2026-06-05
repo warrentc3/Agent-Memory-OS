@@ -38,11 +38,20 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
   - `MemoryRecord` now includes `decay_policy`, `decay_half_life_days`, `last_accessed_at`, `access_count`, and `pinned`.
   - Search ranking now combines FTS score with importance, confidence, freshness decay, and access-count reinforcement.
   - `pinned` disables freshness decay but does **not** bypass ACL or `expires_at` hard filters.
+- v0.2.1 Retrieval Foundation baseline implemented:
+  - SQLite `memories` table remains the durable source of truth.
+  - FTS5, future vector indexes, and fallback sources are disposable candidate providers.
+  - Zero-hit fallback now returns bounded pinned/recent authorized records when lexical search has no hits.
+  - Fallback preserves ACL and `expires_at` hard gates.
+  - `MemoryClient.rebuild_indexes()` rebuilds disposable FTS5 state from authoritative `memories` rows.
+  - Regression tests cover fallback recall, private non-leak, expired exclusion, and rebuild/no-loss behavior.
 
 ## Verification snapshot
 
 - Test command: `PYTHONPATH=src python3 -m pytest -q`
-- Result: `25 passed` at `2026-06-05 11:12:21 CST (+0800)`
+- Result: `29 passed` at `2026-06-05 11:40 CST (+0800)`
+- Retrieval Foundation targeted command: `PYTHONPATH=src python3 -m pytest tests/test_retrieval_foundation.py -q`
+- Retrieval Foundation targeted result: `4 passed` covering zero-hit fallback, ACL-preserving fallback, expired fallback exclusion, and index rebuild/no-loss behavior.
 - ACL targeted command: `PYTHONPATH=src python3 -m pytest tests/test_acl_visibility.py -q`
 - ACL targeted result: `6 passed` including pinned/fresh private-memory non-leak regression checks.
 - Decay targeted command: `PYTHONPATH=src python3 -m pytest tests/test_decay_scoring.py tests/test_memory_decay_recency.py -q`
@@ -64,11 +73,12 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 
 ## Next engineering decisions
 
-1. Choose vector backend for v0.2: `sqlite-vec`, `fastembed`, or Qdrant.
-2. Define exact Hermes provider/MCP integration point.
-3. Add memory dedupe/consolidation flow.
-4. Add importers for Hermes `MEMORY.md` / `USER.md` and Mem0 export/API.
-5. Decide whether the default deployment mode is embedded library, local daemon, or both.
+1. Refactor v0.2.1 baseline into explicit candidate-provider classes (`FTS5CandidateProvider`, `PinnedRecentFallbackProvider`) while keeping the green tests.
+2. Choose vector backend for v0.3: `sqlite-vec`, `fastembed`, or Qdrant.
+3. Define exact Hermes provider/MCP integration point.
+4. Add memory dedupe/consolidation flow.
+5. Add importers for Hermes `MEMORY.md` / `USER.md` and Mem0 export/API.
+6. Decide whether the default deployment mode is embedded library, local daemon, or both.
 
 ## Verification commands
 
@@ -83,4 +93,5 @@ git status --short --branch
 The project history and stress-case definitions are now documented inside this repository, not only in the external wiki:
 
 - `docs/HISTORY.md`: project journey, planning, completed work, pending work, decisions, code-level contracts, and recovery order.
+- `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`: hybrid retrieval safety layer, source-of-truth contract, bounded fallback, index rebuild/no-data-loss contract, and TDD acceptance matrix.
 - `docs/stress-cases/case-01-noisy-truth.md`: `[Mizuki/StressCase] Case 01: 喧囂中的真理`, fixture design, requester matrix, budget acceptance criteria, and suggested pytest tests.

@@ -1,4 +1,4 @@
-# AgentMemoryOS SPEC v0.1
+# AgentMemoryOS SPEC v0.2.1
 
 ## Product thesis
 
@@ -80,6 +80,44 @@ min(1.25, 1.0 + log1p(access_count) * 0.03)
 - `memories` table for structured data.
 - `memories_fts` FTS5 virtual table for keyword retrieval.
 - In-process LRU cache for search/context packs.
+
+## v0.2.1 Retrieval Foundation contract
+
+AgentMemoryOS treats raw memories and retrieval indexes as separate layers:
+
+```text
+SQLite memories table = durable source of truth
+FTS5 index            = disposable lexical candidate provider
+Future vector index   = disposable semantic candidate provider
+Fallback provider     = bounded safety net, never storage
+Context pack          = downstream allocator, never storage
+```
+
+Safe retrieval pipeline:
+
+```text
+query
+  -> candidate providers
+       - FTS5CandidateProvider
+       - future SemanticCandidateProvider
+       - PinnedRecentFallbackProvider
+  -> merge / dedupe by stable memory_id
+  -> join authoritative records from SQLite memories table
+  -> ACL hard gate
+  -> expires_at hard gate
+  -> metadata-aware scoring
+  -> context budget allocation
+  -> final ACL/expiry re-check before prompt insertion
+```
+
+Retrieval safety invariants:
+
+- `memory_id` is the durable join key across all providers.
+- Backend-specific ids, vector row ids, chunk ids, and raw ranks must not replace memory identity.
+- Semantic retrieval must union with lexical/fallback candidates rather than replace them.
+- Zero-hit fallback may surface pinned/recent/core candidates, but only after ACL and `expires_at` hard gates.
+- Dropping or rebuilding FTS/vector indexes must not delete or mutate rows in `memories`.
+- Index rebuild must preserve memory ids and metadata, including `visibility`, `source`, `expires_at`, `decay_policy`, `confidence`, `importance`, and `pinned`.
 
 ## Context budget policy
 

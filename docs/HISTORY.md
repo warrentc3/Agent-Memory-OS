@@ -1,6 +1,6 @@
 # AgentMemoryOS - Project History and Roadmap
 
-Last updated: 2026-06-05 11:12:21 CST (+0800)
+Last updated: 2026-06-05 11:40:49 CST (+0800)
 
 ## Purpose
 
@@ -113,6 +113,32 @@ Key engineering challenges:
 - Temporal Decay and Recency: reduce stale-but-similar memory influence.
 - Truth Arbitration: handle contradictory memories with conflict metadata.
 - Explainability: emit selected/rejected decision reasons.
+
+### Phase 2.1: v0.2.1 - Retrieval Foundation
+
+Focus: prevent candidate recall gaps and future index migrations from causing memory loss or false stress-case failures.
+
+Core source-of-truth contract:
+
+```text
+SQLite memories table = durable source of truth
+FTS5 index            = disposable lexical candidate provider
+Future vector index   = disposable semantic candidate provider
+Fallback provider     = bounded safety net, never storage
+Context pack          = downstream allocator, never storage
+```
+
+v0.2.1 must land before full vector retrieval and before heavier noisy-context arbitration. The purpose is to prove that all retrieval sources only produce candidate `memory_id`s, then the system rejoins the authoritative SQLite records and reapplies ACL/expiry hard gates.
+
+Planned providers:
+
+- `FTS5CandidateProvider`: wraps current lexical retrieval behavior.
+- `PinnedRecentFallbackProvider`: bounded zero-hit fallback for authorized, non-expired pinned/recent/core memories.
+- Future `SemanticCandidateProvider`: semantic recall source unioned with lexical and fallback candidates, never a replacement.
+
+Implementation plan:
+
+- `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`
 
 ## Data model definition
 
@@ -247,6 +273,34 @@ Verification coverage:
 - Expired memory exclusion even when important or pinned.
 - Regression that pinned/fresh private memory remains hidden from unauthorized agents.
 
+### v0.2.1 Retrieval Foundation baseline
+
+Defined the retrieval safety contract and implemented the first regression-tested fallback/rebuild baseline.
+
+Key documented contracts:
+
+- SQLite `memories` table remains the only durable source of truth.
+- FTS5, future vector indexes, and fallback sources are candidate providers only.
+- Candidate providers merge/dedupe by stable `memory_id` before authoritative SQLite rejoin.
+- ACL and `expires_at` hard gates run after candidate merge and before context insertion.
+- Zero-hit fallback is small, explainable, ACL-preserving, and non-expired.
+- `MemoryClient.rebuild_indexes()` rebuilds disposable FTS5 state from authoritative `memories` rows.
+- Index rebuild does not delete, mutate, or regenerate memory rows.
+
+Implemented TDD acceptance tests:
+
+- `test_zero_fts_hits_can_fallback_to_allowed_recent_core_memory`
+- `test_fallback_does_not_leak_private_memory`
+- `test_fallback_excludes_expired_memories`
+- `test_index_rebuild_preserves_memory_ids_and_records`
+
+Still planned for the explicit provider-class refactor and semantic backend stage:
+
+- `test_hybrid_retrieval_unions_fts_and_semantic_candidates`
+- `test_semantic_candidates_still_pass_acl_gate`
+- `test_semantic_candidates_still_exclude_expired_memories`
+- `test_backend_failure_degrades_recall_without_deleting_records`
+
 ## Authoritative engineering decisions
 
 ### ACL is a hard gate
@@ -279,6 +333,23 @@ The next major engineering stress case requires the context budget allocator to 
 
 No agent receives implicit read-all access. Even a core/engineering agent does not automatically read another persona's private memory unless explicitly authorized.
 
+### Retrieval indexes are disposable artifacts
+
+Retrieval backends may improve candidate recall but must never become the authoritative memory store.
+
+Required flow:
+
+```text
+candidate ids -> merge by memory_id -> authoritative SQLite rejoin -> ACL/expiry hard gates -> score -> pack
+```
+
+Forbidden designs:
+
+- migrating raw memory text into a vector DB without retaining SQLite records;
+- regenerating memory ids during embedding/index rebuild;
+- storing ACL/expiry only in vector metadata and skipping the authoritative re-check;
+- treating missing vector/FTS index rows as proof that a memory does not exist.
+
 ## Verification snapshot
 
 Last known verification from `PROJECT_STATUS.md`:
@@ -286,7 +357,7 @@ Last known verification from `PROJECT_STATUS.md`:
 ```bash
 cd /mnt/nas/Hermes-Gitlab/agent-memory-os
 PYTHONPATH=src python3 -m pytest -q
-# 25 passed at 2026-06-05 11:12:21 CST (+0800)
+# 29 passed at 2026-06-05 11:40 CST (+0800)
 ```
 
 ACL targeted verification:
@@ -323,10 +394,14 @@ Completed:
 - [x] Identity verification suite.
 - [x] Memory Decay & Recency implementation plan.
 - [x] Memory Decay & Recency scoring baseline.
+- [x] v0.2.1 Retrieval Foundation contract/specification.
+- [x] v0.2.1 zero-hit fallback under ACL.
+- [x] v0.2.1 index rebuild/no-data-loss regression tests.
 - [x] Project-local history and stress-case documentation.
 
 In progress / next:
 
+- [ ] v0.2.1 candidate-provider abstraction.
 - [ ] Context Budget Allocator strengthening.
 - [ ] Core Memory Protection logic.
 - [ ] Truth arbitration algorithms.
@@ -351,7 +426,8 @@ When resuming this project from a new session:
 2. Read `PROJECT_STATUS.md`.
 3. Read this file: `docs/HISTORY.md`.
 4. Read `docs/stress-cases/case-01-noisy-truth.md`.
-5. Run:
+5. Read `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`.
+6. Run:
 
 ```bash
 cd /mnt/nas/Hermes-Gitlab/agent-memory-os
@@ -359,12 +435,13 @@ PYTHONPATH=src python3 -m pytest -q
 PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory-os-qa --identity all
 ```
 
-6. Only claim a visibility or budget behavior is complete after test output confirms it.
+7. Only claim a visibility, retrieval, or budget behavior is complete after test output confirms it.
 
 ## Related project docs
 
 - `README.md`
 - `SPEC.md`
 - `PROJECT_STATUS.md`
+- `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`
 - `docs/stress-cases/case-01-noisy-truth.md`
 - `docs/plans/20260605_100751-memory-decay-recency-v0.2.md`

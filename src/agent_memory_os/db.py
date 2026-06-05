@@ -128,6 +128,28 @@ class MemoryStore:
         self.conn.commit()
         return cur.rowcount > 0
 
+    def rebuild_indexes(self) -> dict[str, int]:
+        """Rebuild disposable retrieval indexes from authoritative memories."""
+        self.conn.executescript(
+            """
+            DROP TRIGGER IF EXISTS memories_ai;
+            DROP TRIGGER IF EXISTS memories_ad;
+            DROP TRIGGER IF EXISTS memories_au;
+            DROP TABLE IF EXISTS memories_fts;
+            """
+        )
+        self.conn.executescript(SCHEMA)
+        self.conn.execute(
+            """
+            INSERT INTO memories_fts(id, owner, scope, type, content, summary, tags)
+            SELECT id, owner, scope, type, content, summary, tags FROM memories
+            """
+        )
+        self.conn.commit()
+        indexed = self.conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+        total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        return {"memories_indexed": int(indexed), "memories_total": int(total)}
+
     def search(
         self,
         query: str,
@@ -197,7 +219,81 @@ class MemoryStore:
             reason = f"fts+metadata+freshness:{freshness:.3f}+reinforcement:{reinforcement:.3f}"
             results.append(SearchResult(record=self._row_to_record(row), score=score, reason=reason))
         results.sort(key=lambda result: result.score, reverse=True)
+        if not results:
+            results = self._fallback_candidates(
+                owner=owner,
+                scope=scope,
+                requester_agent_id=requester_agent_id,
+                requester_team_id=requester_team_id,
+                limit=limit,
+            )
         return results[:limit]
+
+    def _fallback_candidates(
+        self,
+        *,
+        owner: str | None,
+        scope: str | None,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+        limit: int,
+    ) -> list[SearchResult]:
+        where = ["(expires_at IS NULL OR expires_at > ?)"]
+        params: list[object] = [utc_now()]
+        if owner:
+            where.append("owner = ?")
+            params.append(owner)
+        if scope:
+            where.append("scope = ?")
+            params.append(scope)
+        if requester_agent_id:
+            acl_clauses = [
+                "owner = ?",
+                "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = 'global')",
+                "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)",
+            ]
+            params.extend([requester_agent_id, f"agent:{requester_agent_id}"])
+            if requester_team_id:
+                acl_clauses.extend(
+                    [
+                        "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = 'team' AND json_extract(source, '$.team_id') = ?)",
+                        "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)",
+                    ]
+                )
+                params.extend([requester_team_id, f"team:{requester_team_id}"])
+            where.append("(" + " OR ".join(acl_clauses) + ")")
+        params.append(max(limit, 1))
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM memories
+            WHERE {' AND '.join(where)}
+            ORDER BY pinned DESC, importance DESC, confidence DESC, updated_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        results: list[SearchResult] = []
+        now_dt = datetime.now(timezone.utc)
+        for row in rows:
+            age_days = self._age_days(row["updated_at"], now_dt)
+            freshness = freshness_factor(
+                row["decay_policy"],
+                age_days=age_days,
+                half_life_days=float(row["decay_half_life_days"]),
+                pinned=bool(row["pinned"]),
+            )
+            reinforcement = reinforcement_factor(int(row["access_count"] or 0))
+            score = effective_score(
+                text_score=0.05,
+                importance=float(row["importance"]),
+                confidence=float(row["confidence"]),
+                freshness=freshness,
+                reinforcement=reinforcement,
+            )
+            reason = f"fallback:pinned_recent+freshness:{freshness:.3f}+reinforcement:{reinforcement:.3f}"
+            results.append(SearchResult(record=self._row_to_record(row), score=score, reason=reason))
+        results.sort(key=lambda result: result.score, reverse=True)
+        return results
 
     def stats(self) -> dict[str, int]:
         total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]

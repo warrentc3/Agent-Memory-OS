@@ -80,5 +80,10 @@ class MemoryClient:
     def stats(self) -> dict[str, object]:
         return self.store.stats() | {"cache_items": len(self.cache)}
 
+    def rebuild_indexes(self) -> dict[str, int]:
+        result = self.store.rebuild_indexes()
+        self.cache.clear()
+        return result
+
     def close(self) -> None:
         self.store.close()

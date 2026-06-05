@@ -24,13 +24,15 @@ Implemented now:
 - Context pack builder with a hard token-ish budget.
 - Requester-aware ACL filtering for search and context packs.
 - Expiration hard filter with recency/decay-aware effective scoring.
+- v0.2.1 retrieval-safety contract: SQLite memories are the source of truth, while FTS5/future vector/fallback paths are disposable candidate providers merged by stable memory id.
 - Python SDK.
 - CLI commands: `add`, `search`, `pack`, `stats`.
 - Optional MCP server scaffold.
 
 Planned next:
 
-- sqlite-vec / Qdrant hybrid vector search.
+- v0.2.1 implementation: candidate provider abstraction, zero-hit fallback under ACL, and index rebuild/no-data-loss tests.
+- sqlite-vec / Qdrant hybrid vector search after the retrieval foundation is sealed.
 - Deduplication and stale-memory consolidation.
 - REST API.
 - Hermes memory provider integration.
@@ -82,4 +84,5 @@ See:
 - [`PROJECT_STATUS.md`](PROJECT_STATUS.md) for current implementation and verification status.
 - [`SPEC.md`](SPEC.md) for the product/architecture specification.
 - [`docs/HISTORY.md`](docs/HISTORY.md) for the full project journey, decisions, completed work, pending work, and code-level contracts.
+- [`docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`](docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md) for the retrieval safety layer and no-data-loss contract.
 - [`docs/stress-cases/case-01-noisy-truth.md`](docs/stress-cases/case-01-noisy-truth.md) for `[Mizuki/StressCase] Case 01: 喧囂中的真理`.
