@@ -31,13 +31,18 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
   - `visibility=["agent:<id>"]`: explicit agent allowlist.
   - `visibility=["team"]` or `visibility=["team:<id>"]`: team-aware access via requester team id.
   - `expires_at` is excluded from search results when expired.
+- Subjective QA verification script added:
+  - `scripts/verify_acl_identities.py` seeds a temporary ACL fixture and switches identities across Mizuki, Neo, and Guest.
+  - Verifies both raw search and context-pack filtering, with a leak check for `private_emotional_preference`.
 
 ## Verification snapshot
 
 - Test command: `PYTHONPATH=src python3 -m pytest -q`
-- Result: `10 passed` at `2026-06-05 09:58:55 CST`
+- Result: `12 passed` at `2026-06-05 10:19:41 CST`
 - ACL targeted command: `PYTHONPATH=src python3 -m pytest tests/test_acl_visibility.py -q`
 - ACL targeted result: `4 passed`
+- Subjective QA command: `PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory-os-mizuki-qa --identity all`
+- Subjective QA result: Mizuki sees `private_emotional_preference`, `team_memory`, `global_memory`; Neo sees `team_memory`, `global_memory`; Guest sees `global_memory`; `leak_check.passed=true`.
 - First commit: `d02c22b feat: bootstrap AgentMemoryOS MVP`
 - GitLab URL: `https://gitlab.com/hermes-agent-bastet/agent-memory-os`
 
