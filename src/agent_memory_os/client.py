@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Sequence
 import os
 
+from .candidates import CandidateProvider
 from .cache import LRUCache
 from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
 from .db import MemoryStore
@@ -10,10 +12,16 @@ from .schema import MemoryRecord, SearchResult
 
 
 class MemoryClient:
-    def __init__(self, home: str | Path | None = None, *, cache_items: int = 512):
+    def __init__(
+        self,
+        home: str | Path | None = None,
+        *,
+        cache_items: int = 512,
+        candidate_providers: Sequence[CandidateProvider] | None = None,
+    ):
         home_path = Path(home or os.getenv("AGENT_MEMORY_HOME", "~/.agent-memory")).expanduser()
         self.home = home_path
-        self.store = MemoryStore(home_path / "memories.db")
+        self.store = MemoryStore(home_path / "memories.db", candidate_providers=candidate_providers)
         self.cache: LRUCache[tuple, object] = LRUCache(max_items=cache_items)
 
     def add(self, content: str, **kwargs) -> MemoryRecord:

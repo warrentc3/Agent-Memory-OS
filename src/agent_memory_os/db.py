@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Sequence
 import json
+import math
 import sqlite3
 
+from .candidates import Candidate, CandidateProvider
 from .schema import MemoryRecord, SearchResult, utc_now
 from .scoring import effective_score, freshness_factor, reinforcement_factor
+
+
+MAX_SEMANTIC_CANDIDATES = 500
 
 
 SCHEMA = """
@@ -59,8 +65,9 @@ END;
 
 
 class MemoryStore:
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, candidate_providers: Sequence[CandidateProvider] | None = None):
         self.path = Path(path)
+        self.candidate_providers = list(candidate_providers or [])
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
@@ -207,6 +214,26 @@ class MemoryStore:
             if previous is None or result.score > previous.score:
                 results[result.record.id] = result
 
+        semantic_rows = self._semantic_candidate_rows(
+            query,
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+            now=now,
+        )
+        for row, candidate in semantic_rows:
+            result = self._score_row(
+                row,
+                text_score=max(0.0, float(candidate.score)),
+                now_dt=now_dt,
+                reason_prefix=self._semantic_reason_prefix(candidate),
+            )
+            previous = results.get(result.record.id)
+            if previous is None or result.score > previous.score:
+                results[result.record.id] = result
+
         final_results = sorted(results.values(), key=lambda result: result.score, reverse=True)
         if not final_results:
             final_results = self._fallback_candidates(
@@ -297,6 +324,146 @@ class MemoryStore:
             """,
             params,
         ).fetchall()
+
+    def _semantic_candidate_rows(
+        self,
+        query: str,
+        *,
+        owner: str | None,
+        scope: str | None,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+        limit: int,
+        now: str,
+    ) -> list[tuple[sqlite3.Row, Candidate]]:
+        """Rejoin untrusted semantic candidates through SQLite and hard gates."""
+        if not self.candidate_providers:
+            return []
+
+        candidates_by_id: dict[str, Candidate] = {}
+        candidate_cap = max(1, min(MAX_SEMANTIC_CANDIDATES, max(limit * 10, limit)))
+        for provider in self.candidate_providers:
+            provider_name = self._safe_provider_name(provider)
+            provider_candidates: dict[str, Candidate] = {}
+            raw_seen = 0
+            try:
+                candidates = provider.candidates(
+                    query,
+                    owner=owner,
+                    scope=scope,
+                    requester_agent_id=requester_agent_id,
+                    requester_team_id=requester_team_id,
+                    limit=limit,
+                )
+                for raw_candidate in candidates:
+                    raw_seen += 1
+                    if raw_seen > candidate_cap:
+                        break
+                    candidate = self._coerce_semantic_candidate(raw_candidate, provider_name=provider_name)
+                    if candidate is None:
+                        continue
+                    previous = provider_candidates.get(candidate.memory_id)
+                    if previous is None or candidate.score > previous.score:
+                        provider_candidates[candidate.memory_id] = candidate
+                    if len(provider_candidates) >= candidate_cap:
+                        break
+            except Exception:
+                # Candidate providers are optional sidecars. Backend failure must
+                # discard provider-local partial output and degrade to
+                # authoritative SQLite/FTS/fallback retrieval.
+                continue
+            for memory_id, candidate in provider_candidates.items():
+                previous = candidates_by_id.get(memory_id)
+                if previous is None or candidate.score > previous.score:
+                    candidates_by_id[memory_id] = candidate
+                if len(candidates_by_id) >= candidate_cap:
+                    break
+            if len(candidates_by_id) >= candidate_cap:
+                break
+
+        if not candidates_by_id:
+            return []
+
+        ids = list(candidates_by_id)
+        placeholders = ",".join("?" for _ in ids)
+        where = [f"id IN ({placeholders})", "(expires_at IS NULL OR expires_at > ?)"]
+        params: list[object] = [*ids, now]
+        if owner:
+            where.append("owner = ?")
+            params.append(owner)
+        if scope:
+            where.append("scope = ?")
+            params.append(scope)
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="",
+        )
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM memories
+            WHERE {' AND '.join(where)}
+            """,
+            params,
+        ).fetchall()
+        return [(row, candidates_by_id[row["id"]]) for row in rows]
+
+    @classmethod
+    def _coerce_semantic_candidate(cls, raw_candidate: object, *, provider_name: str) -> Candidate | None:
+        memory_id = getattr(raw_candidate, "memory_id", None)
+        if not isinstance(memory_id, str):
+            return None
+        memory_id = memory_id.strip()
+        if not memory_id:
+            return None
+
+        raw_score = getattr(raw_candidate, "score", None)
+        if raw_score is None:
+            return None
+        try:
+            score = float(raw_score)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(score):
+            return None
+        score = min(max(score, 0.0), 1.0)
+
+        raw_rank = getattr(raw_candidate, "rank", None)
+        rank = raw_rank if isinstance(raw_rank, int) else None
+        reason = cls._safe_semantic_label(getattr(raw_candidate, "reason", ""))
+        return Candidate(
+            memory_id=memory_id,
+            provider=provider_name,
+            score=score,
+            rank=rank,
+            reason=reason,
+        )
+
+    @staticmethod
+    def _safe_provider_name(provider: CandidateProvider) -> str:
+        try:
+            raw_name = getattr(provider, "name")
+        except Exception:
+            raw_name = provider.__class__.__name__
+        return MemoryStore._safe_semantic_label(raw_name)
+
+    @staticmethod
+    def _safe_semantic_label(value: object, *, max_length: int = 80) -> str:
+        try:
+            text = "" if value is None else str(value)
+        except Exception:
+            text = "unknown"
+        cleaned = "".join(char if char.isalnum() or char in {"_", "-", ":", "."} else "_" for char in text)
+        return cleaned[:max_length] or "unknown"
+
+    @staticmethod
+    def _semantic_reason_prefix(candidate: Candidate) -> str:
+        reason = f"semantic:{candidate.provider}"
+        if candidate.reason:
+            reason = f"{reason}:{candidate.reason}"
+        return reason
 
     def _append_acl_filter(
         self,

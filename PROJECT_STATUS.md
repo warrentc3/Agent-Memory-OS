@@ -15,42 +15,19 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - NAS working tree: `/mnt/nas/Hermes-Gitlab/agent-memory-os`
 - Intended GitLab remote: `git@gitlab.com:hermes-agent-bastet/agent-memory-os.git`
 
-## Current baseline
+## Current baseline (Physical Audit: 2026-06-06)
 
-- Python package skeleton created.
-- SQLite + FTS5 memory store implemented.
-- In-memory LRU cache implemented.
-- Context-pack budget logic implemented.
-- CLI implemented.
-- Optional MCP server scaffold added.
-- Unit tests added.
-- First GitLab project created and pushed.
-- v0.2 ACL baseline implemented for requester-aware search/context-pack filtering:
-  - `visibility=["agent"]`: owner/requester isolation.
-  - `visibility=["global"]`: visible to any requester.
-  - `visibility=["agent:<id>"]`: explicit agent allowlist.
-  - `visibility=["team"]` or `visibility=["team:<id>"]`: team-aware access via requester team id.
-  - `expires_at` is excluded from search results when expired.
-- Subjective QA verification script added:
-  - `scripts/verify_acl_identities.py` seeds a temporary ACL fixture and switches identities across Mizuki, Neo, and Guest.
-  - Verifies both raw search and context-pack filtering, with a leak check for `private_emotional_preference`.
-- v0.2 Memory Decay & Recency baseline implemented:
-  - `MemoryRecord` now includes `decay_policy`, `decay_half_life_days`, `last_accessed_at`, `access_count`, and `pinned`.
-  - Search ranking now combines FTS score with importance, confidence, freshness decay, and access-count reinforcement.
-  - `pinned` disables freshness decay but does **not** bypass ACL or `expires_at` hard filters.
-- v0.2.1 Retrieval Foundation baseline implemented:
-  - SQLite `memories` table remains the durable source of truth.
-  - FTS5, future vector indexes, and fallback sources are disposable candidate providers.
-  - Zero-hit fallback now returns bounded pinned/recent authorized records when lexical search has no hits.
-  - Fallback preserves ACL and `expires_at` hard gates.
-  - `MemoryClient.rebuild_indexes()` rebuilds disposable FTS5 state from authoritative `memories` rows.
-  - Regression tests cover fallback recall, private non-leak, expired exclusion, and rebuild/no-loss behavior.
-- v0.2.2 Truth Arbitration / Context Budget Allocator baseline implemented:
-  - `build_context_pack_report()` emits prompt text plus selected/rejected `ContextDecision` metadata.
-  - Context packing now prioritizes authoritative / permanent / `weight>8` core memories under budget pressure.
-  - Duplicate clusters are suppressed via stable claim keys or content fingerprints with explicit rejection reasons.
-  - Contradictory claim groups are marked with `CONFLICT` and `conflict_detected` decision reasons instead of being silently blended.
-  - `MemoryClient.context_pack_report()` exposes the auditable context-pack path while preserving requester-aware ACL filtering from search.
+- **Version**: v0.3 Awakened (Sovereign Mode) - Physically deployed on `main`.
+- **Core Infrastructure**:
+  - SQLite + FTS5 durable store.
+  - Requester-aware ACL & Visibility matrix.
+  - Memory Decay & Reinforcement (Exponential/Linear).
+  - Truth Arbitration & Context Budgeting (v0.2.2 baseline).
+- **v0.3 Advancements**:
+  - Sovereign Mode: Autonomous pruning and synthesis.
+  - Multi-provider support (Mem0, SuperMemory, RetainDB).
+  - Associative/Temporal layers (Prototypes in `tests/test_memory_resonance.py`).
+- **Verification State**: Full test suite exists, but production activation gates are currently **UNVERIFIED** for v0.3 logic.
 
 ## Hermes activation status
 
@@ -111,11 +88,11 @@ Required gates before production activation:
 
 ## Verification commands
 
-```bash
+\`\`\`bash
 cd /mnt/nas/Hermes-Gitlab/agent-memory-os
 PYTHONPATH=src python3 -m pytest -q
 git status --short --branch
-```
+\`\`\`
 
 ## Project-local documentation
 
