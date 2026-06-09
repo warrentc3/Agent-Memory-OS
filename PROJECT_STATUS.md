@@ -15,9 +15,12 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - NAS working tree: `/mnt/nas/Hermes-Gitlab/agent-memory-os`
 - Intended GitLab remote: `git@gitlab.com:hermes-agent-bastet/agent-memory-os.git`
 
-## Current baseline (Physical Audit: 2026-06-06)
+## Current baseline (Physical Audit: 2026-06-09)
 
-- **Version**: v0.3 Awakened (Sovereign Mode) - Physically deployed on `main`.
+- **Package metadata**: `agent-memory-os` version `0.1.0` in `pyproject.toml`.
+- **Observed Git release tag**: `v0.1.0-stable` only; no `v0.3-awakened` tag is present in the current working tree.
+- **Branch state**: `main` / `origin/main` currently resolve to `4c2eb2b`; active worktree branch is `feat/pr3-turbovec-provider` at `d75ae93`.
+- **v0.3 / Sovereign Mode stance**: validation/roadmap documentation exists, but production activation and public release claims require matching gate evidence before they are treated as current operational fact.
 - **Core Infrastructure**:
   - SQLite + FTS5 durable store.
   - Requester-aware ACL & Visibility matrix.
@@ -37,6 +40,17 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 - Production Hermes memory backend remains unchanged until all activation gates are complete.
 - Canonical gate document: `docs/hermes-activation-gates.md`.
 - Downgrade verification plan: `docs/plans/20260605_143442-version-downgrade-verification.md`.
+
+### PR3 turbovec semantic sidecar hold decision (2026-06-08)
+
+PR3 keeps `turbovec` as an optional, disposable semantic candidate sidecar only:
+
+- Default runtime state: **disabled**. `MemoryClient` has no semantic provider unless one is explicitly injected.
+- Approved use: local spike, benchmark, and shadow evidence collection.
+- Not approved: production prompt influence, all-profile activation, or treating vector IDs as memory authority.
+- Required stance: `production_injection=false` until golden recall, ACL/expiry, rollback, latency, consistency, killswitch, and Mizuki/Product acceptance gates pass.
+- Safety boundary: `turbovec` may return candidate IDs and scores only; every candidate must rejoin through SQLite and pass requester-aware ACL plus `expires_at` hard gates before content can be used.
+- Operational caution: if a provider is manually injected into a live client, it participates in retrieval fusion after hard gates; therefore do not wire it into production prompt paths while this hold decision remains active.
 
 Required gates before production activation:
 

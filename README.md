@@ -1,7 +1,7 @@
-# AgentMemoryOS v0.3 Awakened (Sovereign Mode)
+# AgentMemoryOS
 
 ## 🚀 Project Overview
-AgentMemoryOS is a high-performance memory orchestration layer designed for sovereign AI agents. v0.3 introduces **Sovereign Mode**, enabling agents to autonomously manage, prune, and synthesize long-term memory stores across multiple providers.
+AgentMemoryOS is a local-first memory orchestration layer for AI agents. The current package metadata is `agent-memory-os` version `0.1.0`; later v0.3 / Sovereign Mode documentation is treated as roadmap or validation work until the repository has matching release evidence.
 
 ## 🛠 Technical Architecture
 The system operates as a plugin-based memory aggregator, supporting:
@@ -9,13 +9,15 @@ The system operates as a plugin-based memory aggregator, supporting:
 - **Temporal Memory:** Hindsight-based chronological tracking.
 - **Associative Layers:** Holographic memory for pattern-based retrieval.
 
-## 📦 Public Release (v0.3)
-This release marks the transition to a public baseline.
-- **Stable Branch:** `main`
-- **Release Tag:** `v0.3-awakened`
+## 📦 Current Repository Baseline
+This repository is still in development / validation mode.
+- **Stable branch:** `main`
+- **Observed release tag:** `v0.1.0-stable`
+- **Current package version:** `0.1.0` in `pyproject.toml`
+- **Activation status:** not approved as the default Hermes production memory backend.
 
 ## 🗺 Roadmap
-- **v0.3 (Current):** Sovereign Mode, Multi-provider support, ACL hardening.
+- **v0.3 (Validation/Roadmap):** Sovereign Mode, multi-provider support, ACL hardening.
 - **v0.4 (Upcoming):** **Memory Resonance**. Transitioning from linear vector retrieval to a graph-based neural link system for complex associative recall.
 
 ## 📄 Documentation

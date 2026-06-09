@@ -19,10 +19,18 @@ Decision summary:
 - **GO:** provider-abstraction refactor.
 - **GO:** fake semantic-provider safety tests before real vector integration.
 - **GO:** optional `turbovec` backend, disabled by default, for local spike / benchmark / shadow evidence.
+- **HOLD:** keep PR3 in optional-off / shadow-evidence-only posture until a later explicit activation decision changes this ADR.
 - **NO-GO:** direct production prompt injection before shadow evidence, golden recall, ACL, expiry, rollback, and product/safety gates pass.
 - **NO-GO:** claiming v0.4 Memory Resonance, active canary, production injection, or all-profile activation from this work.
 
 This ADR formalizes the Neo engineering view and Mizuki product/safety/audit sign-off for the sidecar positioning only. It does not authorize production activation.
+
+Operational interpretation as of 2026-06-08:
+
+- Base installs do not require `turbovec`; it lives behind the optional `semantic` extra.
+- `MemoryClient` has no semantic provider by default, so the turbovec path is off unless explicitly injected by test, benchmark, or shadow tooling.
+- Manually injecting a semantic provider into a live retrieval client is not a pure logging-only mode: after SQLite rejoin and ACL/expiry hard gates, candidates can participate in scoring/fusion. Do not connect that path to production prompt insertion while `production_injection=false` is active.
+- Shadow evidence must persist metrics/logs without raw private content and must be reviewed before any production-influence change.
 
 ---
 
