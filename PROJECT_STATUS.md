@@ -54,12 +54,12 @@ PR3 keeps `turbovec` as an optional, disposable semantic candidate sidecar only:
 
 Required gates before production activation:
 
-1. Version-downgrade verification proves older/stable readers or downgrade simulations can safely read/export newer data without weakening ACL.
-2. Lossless migration verifies row counts, stable `memory_id` values, deterministic defaults, and rebuildable indexes.
-3. Rollback safety verifies timestamped backup, restore, and post-restore index rebuild.
-4. Hermes shadow integration compares AgentMemoryOS outputs against the current Hermes memory path without injecting them into production prompts.
-5. Multi-profile ACL validation verifies Mizuki / LittleNEO / Guest visibility across search and context-pack paths.
-6. Mizuki/Product final subjective acceptance reviews the evidence bundle before any default switch.
+1. Version-downgrade verification proves older/stable readers or downgrade simulations can safely read/export newer data without weakening ACL. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
+2. Lossless migration evidence proves row counts, stable IDs, core fields, and deterministic defaults are preserved. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
+3. Rollback evidence proves backups restore and disposable indexes rebuild after simulated migration failure. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
+4. Hermes shadow integration proves production Hermes memory remains authoritative while AgentMemoryOS output is compared only. **Still blocked.**
+5. Multi-profile ACL validation proves Mizuki / LittleNEO / Guest visibility boundaries across search and context pack. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
+6. Mizuki/Product subjective acceptance signs off on selected/rejected decision quality. **Still blocked.**
 
 ## Verification snapshot
 

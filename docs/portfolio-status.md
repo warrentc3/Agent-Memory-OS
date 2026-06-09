@@ -25,7 +25,8 @@ This file is the portfolio-level entry required by the multi-project execution r
 - Status: running
 - Current active worktree: `feat/pr3-turbovec-provider`
 - Current blockers:
-  - Production Hermes activation remains blocked by incomplete activation gates.
+  - Hermes production/default activation remains blocked by missing shadow integration comparison and Mizuki/Product final acceptance.
+  - Local downgrade/migration/rollback/index-rebuild/ACL fixture gates now have evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
   - Turbovec production prompt influence remains blocked by ADR hold decision and missing evidence bundle.
   - `v0.3-awakened` must not be treated as an observed Git release tag unless it exists in `git tag --list`.
 - Next milestone / report condition:

@@ -30,8 +30,9 @@ Last updated: 2026-06-09 12:08:37 CST (+0800)
 ## Current non-production constraints
 
 - blocked — Hermes default memory backend activation.
-  - Blocker: activation gates in `docs/hermes-activation-gates.md` are not complete.
-  - Required input/evidence: downgrade verification, migration/rollback evidence, shadow integration comparison, multi-profile ACL validation, and Mizuki/Product final acceptance.
+  - Completed local prerequisite evidence: downgrade/migration/rollback/index-rebuild/ACL fixture matrix in `docs/evidence/20260609_121749-activation-gate-verification.md`.
+  - Remaining blocker: Hermes shadow integration comparison and Mizuki/Product final acceptance are not complete.
+  - Required input/evidence: shadow adapter/config diff, comparison logs against current Hermes memory behavior, and Product acceptance.
 - blocked — Production prompt influence from turbovec semantic candidates.
   - Blocker: ADR hold decision keeps PR3 optional-off / shadow-evidence-only.
   - Required input/evidence: golden recall, ACL/expiry, rollback, latency, consistency, killswitch, and product acceptance gates.
