@@ -1,6 +1,6 @@
 # Current Project Status — AgentMemoryOS
 
-Last updated: 2026-06-09 12:08:37 CST (+0800)
+Last updated: 2026-06-09 12:20:32 CST (+0800)
 
 ## Repository facts
 
@@ -8,7 +8,7 @@ Last updated: 2026-06-09 12:08:37 CST (+0800)
 - GitLab remote: `git@gitlab.com:hermes-agent-bastet/agent-memory-os.git`
 - Active branch: `feat/pr3-turbovec-provider`
 - Upstream: `origin/feat/pr3-turbovec-provider`
-- Current HEAD: `d75ae93`
+- Current HEAD: `b9c26be`
 - `main` / `origin/main`: `4c2eb2b`
 - Observed Git tags: `v0.1.0-stable`
 - Python package version: `0.1.0` in `pyproject.toml`

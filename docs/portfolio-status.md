@@ -1,6 +1,6 @@
 # Portfolio Status — AgentMemoryOS
 
-Last updated: 2026-06-09 12:08:37 CST (+0800)
+Last updated: 2026-06-09 12:20:32 CST (+0800)
 
 This file is the portfolio-level entry required by the multi-project execution rules. It is intentionally scoped to this single official project entry until more projects are added to the same portfolio.
 
@@ -24,6 +24,8 @@ This file is the portfolio-level entry required by the multi-project execution r
 - Priority: active validation project
 - Status: running
 - Current active worktree: `feat/pr3-turbovec-provider`
+- Current HEAD: `b9c26be`
+- Merge request: `https://gitlab.com/hermes-agent-bastet/agent-memory-os/-/merge_requests/1`
 - Current blockers:
   - Hermes production/default activation remains blocked by missing shadow integration comparison and Mizuki/Product final acceptance.
   - Local downgrade/migration/rollback/index-rebuild/ACL fixture gates now have evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.

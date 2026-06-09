@@ -19,7 +19,7 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 
 - **Package metadata**: `agent-memory-os` version `0.1.0` in `pyproject.toml`.
 - **Observed Git release tag**: `v0.1.0-stable` only; no `v0.3-awakened` tag is present in the current working tree.
-- **Branch state**: `main` / `origin/main` currently resolve to `4c2eb2b`; active worktree branch is `feat/pr3-turbovec-provider` at `d75ae93`.
+- **Branch state**: `main` / `origin/main` currently resolve to `4c2eb2b`; active worktree branch is `feat/pr3-turbovec-provider` at `b9c26be`.
 - **v0.3 / Sovereign Mode stance**: validation/roadmap documentation exists, but production activation and public release claims require matching gate evidence before they are treated as current operational fact.
 - **Core Infrastructure**:
   - SQLite + FTS5 durable store.
