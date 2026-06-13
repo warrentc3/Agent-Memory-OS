@@ -51,17 +51,19 @@ class ResonanceWeight:
     def calculate(base_strength: float, timestamp: float, current_time: float = None) -> float:
         """
         Compute weighted strength based on temporal decay and edge strength.
-        Formula: Strength = Base * exp(-lambda * delta_t)
+        Formula: Strength = max(min_weight, Base * exp(-lambda * delta_t))
         """
         if current_time is None:
             current_time = time.time()
             
         delta_t = max(0, current_time - timestamp)
-        # Decay constant: half-life of ~30 days for prototype
-        decay_lambda = 0.00000133 
+        # Decay constant: reduced from 0.00000133 to 0.0000008 to mitigate recall drop
+        decay_lambda = 0.0000008 
         decay_factor = 2.71828 ** (-decay_lambda * delta_t)
         
-        return base_strength * decay_factor
+        # Introduce weight floor to prevent total resonance collapse
+        min_weight = 0.01
+        return max(min_weight, base_strength * decay_factor)
 
 class ERATripletIndex:
     """Embedded ERA triplet index with ResonanceWeighting.
