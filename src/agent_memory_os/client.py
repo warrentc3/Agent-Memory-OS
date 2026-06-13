@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import os
+from datetime import datetime, timezone
 
 from .cache import LRUCache
 from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
@@ -114,3 +115,43 @@ class MemoryClient:
 
     def close(self) -> None:
         self.store.close()
+
+    def resonance_search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        resonance_hops: int = 2,
+    ) -> list[SearchResult]:
+        """
+        Enhanced retrieval using Memory Resonance logic.
+        1. Perform standard semantic search to find seed chunks.
+        2. Expand cluster using resonance weights.
+        3. Merge and rank results based on final resonance scores.
+        """
+        # 1. Get seed chunks via semantic search
+        seeds = self.search(query, limit=limit * 2)
+        if not seeds:
+            return []
+        
+        seed_ids = [res.record.id for res in seeds]
+        
+        # 2. Use ResonanceIndex to expand
+        from .memory_resonance import ERATripletIndex, MemoryChunk
+        idx = ERATripletIndex() 
+        
+        for res in seeds:
+                        # Convert ISO updated_at to unix timestamp
+            ts = datetime.fromisoformat(res.record.updated_at.replace('Z', '+00:00')).timestamp()
+            idx.add_chunk(MemoryChunk(id=res.record.id, text=res.record.content, timestamp=ts))
+            
+        resonant_ids = idx.resonance_cluster(seed_ids, hops=resonance_hops)
+        
+        final_results = []
+        id_map = {res.id: res for res in seeds}
+        for rid in resonant_ids:
+            if rid in id_map:
+                final_results.append(id_map[rid])
+            if len(final_results) >= limit:
+                break
+        return final_results

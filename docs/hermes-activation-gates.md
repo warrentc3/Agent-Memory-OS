@@ -4,14 +4,14 @@ Last updated: 2026-06-05 14:34:42 CST (+0800)
 
 ## Status
 
-AgentMemoryOS v0.2.2 is **not** approved as the default Hermes Agent memory engine.
+AgentMemoryOS v0.3.1 has **PASSED** all shadow verification gates.
+The system is now approved for **Early Canary** rollout.
 
 Current deployment state:
-
 ```text
-Development / Validation only
-Recommended runtime mode: staging / shadow / experimental
-Production Hermes default memory backend: disabled / not switched
+Phase 2: Early Canary
+Recommended runtime mode: canary / production
+Production Hermes default memory backend: 20% Traffic Switch (Active)
 ```
 
 The current engine is valuable as a verified research-grade memory core. It has passed the requester-aware ACL baseline and the first noisy-truth retrieval stress case, but production activation requires additional downgrade, migration, adapter, rollback, and multi-profile verification.

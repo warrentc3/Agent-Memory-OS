@@ -1,9 +1,7 @@
 """Prototype graph-neural memory resonance primitives.
 
-This module implements a lightweight embedded ERA (Entity-Relation-Attribute)
-triplet index for AgentMemoryOS v0.4 experiments.  It intentionally avoids
-external graph dependencies so shadow-mode probes can run in constrained test
-and gateway environments.
+This module implements an embedded ERA (Entity-Relation-Attribute)
+triplet index for AgentMemoryOS v0.4 experiments.
 """
 
 from __future__ import annotations
@@ -11,19 +9,19 @@ from __future__ import annotations
 from collections import defaultdict, deque
 from dataclasses import dataclass
 import re
+import time
 from typing import DefaultDict, Iterable
 
-
-_TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_.-]*\b")
-_VERSION_RE = re.compile(r"\bv\d+(?:\.\d+)+\b", re.IGNORECASE)
+_TOKEN_RE = re.compile(r"\\b[A-Za-z][A-Za-z0-9_.-]*\\b")
+_VERSION_RE = re.compile(r"\\bv\\d+(?:\\.\\d+)+\\b", re.IGNORECASE)
 _USES_RE = re.compile(
-    r"\b(?P<subject>[A-Z][A-Za-z0-9_.-]*)\s+uses\s+"
-    r"(?P<object>[A-Z][A-Za-z0-9_.-]*)\b",
+    r"\\b(?P<subject>[A-Z][A-Za-z0-9_.-]*)\\s+uses\\s+"
+    r"(?P<object>[A-Z][A-Za-z0-9_.-]*)\\b",
     re.IGNORECASE,
 )
 _EVOLVES_RE = re.compile(
-    r"\b(?P<subject>[A-Z][A-Za-z0-9_.-]*)\s+evolves\s+from\s+"
-    r"(?P<source>v\d+(?:\.\d+)+)\s+to\s+(?P<target>v\d+(?:\.\d+)+)\b",
+    r"\\b(?P<subject>[A-Z][A-Za-z0-9_.-]*)\\s+evolves\\s+from\\s+"
+    r"(?P<source>v\\d+(?:\\.\\d+)+)\\s+to\\s+(?P<target>v\\d+(?:\\.\\d+)+)\\b",
     re.IGNORECASE,
 )
 _STOPWORDS = {
@@ -38,22 +36,37 @@ _STOPWORDS = {
     "with",
 }
 
-
 @dataclass(frozen=True)
 class MemoryChunk:
     """A memory unit that can be projected into the resonance graph."""
 
     id: str
     text: str
-    timestamp: str = ""
+    timestamp: float = 0.0  # Unix timestamp for decay logic
 
+class ResonanceWeight:
+    """Logic for calculating memory resonance strength."""
+    
+    @staticmethod
+    def calculate(base_strength: float, timestamp: float, current_time: float = None) -> float:
+        """
+        Compute weighted strength based on temporal decay and edge strength.
+        Formula: Strength = Base * exp(-lambda * delta_t)
+        """
+        if current_time is None:
+            current_time = time.time()
+            
+        delta_t = max(0, current_time - timestamp)
+        # Decay constant: half-life of ~30 days for prototype
+        decay_lambda = 0.00000133 
+        decay_factor = 2.71828 ** (-decay_lambda * delta_t)
+        
+        return base_strength * decay_factor
 
 class ERATripletIndex:
-    """Embedded ERA triplet index with two-hop resonance expansion.
-
-    The prototype stores memory chunks, extracts simple ERA triplets, and links
-    chunks through shared entities/concepts.  It is designed as the v0.4
-    bootstrap before a production graph backend such as Neo4j is introduced.
+    """Embedded ERA triplet index with ResonanceWeighting.
+    
+    Transitioned from basic distance ranking to weight-based resonance.
     """
 
     def __init__(self) -> None:
@@ -64,7 +77,6 @@ class ERATripletIndex:
 
     def add_chunk(self, chunk: MemoryChunk) -> None:
         """Add or replace a chunk and index its ERA terms."""
-
         if not chunk.id:
             raise ValueError("MemoryChunk.id must be non-empty")
 
@@ -83,16 +95,13 @@ class ERATripletIndex:
 
     def triplets_for_chunk(self, chunk_id: str) -> set[tuple[str, str, str]]:
         """Return extracted ERA triplets for a chunk."""
-
         return set(self._triplets_by_chunk.get(chunk_id, set()))
 
     def resonance_cluster(self, seed_chunk_ids: Iterable[str], *, hops: int = 2) -> list[str]:
-        """Expand seed chunks through shared ERA terms and rank the cluster.
-
-        Ranking is deterministic: seeds first, then closer graph distance, then
-        stronger term overlap with the seed set, then chunk id.
         """
-
+        Expand seed chunks using ResonanceWeight.
+        Ranked by calculated resonance strength instead of simple distance.
+        """
         seeds = [chunk_id for chunk_id in seed_chunk_ids if chunk_id in self._chunks]
         if hops < 0:
             raise ValueError("hops must be >= 0")
@@ -100,27 +109,41 @@ class ERATripletIndex:
             return []
 
         seed_terms = set().union(*(self._terms_by_chunk[seed] for seed in seeds))
-        distances: dict[str, int] = {seed: 0 for seed in seeds}
-        queue: deque[tuple[str, int]] = deque((seed, 0) for seed in seeds)
+        resonance_scores: dict[str, float] = {}
+        
+        # Initialize seeds with high base resonance
+        current_time = time.time()
+        for seed in seeds:
+            chunk = self._chunks[seed]
+            resonance_scores[seed] = ResonanceWeight.calculate(1.0, chunk.timestamp, current_time)
+
+        # Expansion
+        visited = set(seeds)
+        queue = deque([(seed, 0, 1.0) for seed in seeds]) # (id, dist, strength)
 
         while queue:
-            chunk_id, distance = queue.popleft()
-            if distance >= hops:
+            curr_id, dist, strength = queue.popleft()
+            if dist >= hops:
                 continue
-            for neighbor in self._neighbors(chunk_id):
-                if neighbor in distances:
+            
+            for neighbor in self._neighbors(curr_id):
+                if neighbor in visited:
                     continue
-                distances[neighbor] = distance + 1
-                queue.append((neighbor, distance + 1))
+                
+                # Edge strength based on term overlap
+                overlap = len(self._terms_by_chunk[neighbor] & self._terms_by_chunk[curr_id])
+                edge_strength = overlap / max(1, len(self._terms_by_chunk[neighbor]))
+                
+                # Calculate resonance for neighbor
+                chunk = self._chunks[neighbor]
+                decayed_strength = ResonanceWeight.calculate(edge_strength * strength, chunk.timestamp, current_time)
+                
+                resonance_scores[neighbor] = decayed_strength
+                visited.add(neighbor)
+                queue.append((neighbor, dist + 1, decayed_strength))
 
-        return sorted(
-            distances,
-            key=lambda chunk_id: (
-                distances[chunk_id],
-                -len(self._terms_by_chunk[chunk_id] & seed_terms),
-                chunk_id,
-            ),
-        )
+        # Sort by resonance score descending
+        return sorted(resonance_scores.keys(), key=lambda cid: resonance_scores[cid], reverse=True)
 
     def _neighbors(self, chunk_id: str) -> set[str]:
         neighbors: set[str] = set()
@@ -142,10 +165,8 @@ class ERATripletIndex:
 
     def _extract_triplets(self, chunk: MemoryChunk) -> set[tuple[str, str, str]]:
         triplets: set[tuple[str, str, str]] = set()
-
         for match in _USES_RE.finditer(chunk.text):
             triplets.add((match.group("subject"), "uses", match.group("object")))
-
         primary_entity = self._primary_entity(chunk.text)
         for match in _EVOLVES_RE.finditer(chunk.text):
             subject = match.group("subject")
@@ -153,12 +174,10 @@ class ERATripletIndex:
                 subject = primary_entity
             triplets.add((subject, "evolves_from", match.group("source")))
             triplets.add((subject, "evolves_to", match.group("target")))
-
         if chunk.timestamp:
             subject = self._primary_entity(chunk.text)
             if subject:
-                triplets.add((subject, "timestamp", chunk.timestamp))
-
+                triplets.add((subject, "timestamp", str(chunk.timestamp)))
         return triplets
 
     def _primary_entity(self, text: str) -> str:
@@ -171,7 +190,6 @@ class ERATripletIndex:
         terms = {_normalize(token) for token in _TOKEN_RE.findall(text)}
         terms.update(_normalize(version) for version in _VERSION_RE.findall(text))
         return {term for term in terms if term and term not in _STOPWORDS}
-
 
 def _normalize(value: str) -> str:
     return value.strip().lower()

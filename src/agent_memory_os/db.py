@@ -46,12 +46,10 @@ CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
   VALUES (new.id, new.owner, new.scope, new.type, new.content, new.summary, new.tags);
 END;
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, id, owner, scope, type, content, summary, tags)
-  VALUES('delete', old.id, old.owner, old.scope, old.type, old.content, old.summary, old.tags);
+  DELETE FROM memories_fts WHERE id = old.id;
 END;
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, id, owner, scope, type, content, summary, tags)
-  VALUES('delete', old.id, old.owner, old.scope, old.type, old.content, old.summary, old.tags);
+  DELETE FROM memories_fts WHERE id = old.id;
   INSERT INTO memories_fts(id, owner, scope, type, content, summary, tags)
   VALUES (new.id, new.owner, new.scope, new.type, new.content, new.summary, new.tags);
 END;
@@ -66,10 +64,22 @@ class MemoryStore:
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
         self._ensure_decay_columns()
+        self._ensure_fts_triggers()
         self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
+
+    def _ensure_fts_triggers(self) -> None:
+        """Install current FTS triggers, replacing older external-content style triggers."""
+        self.conn.executescript(
+            """
+            DROP TRIGGER IF EXISTS memories_ai;
+            DROP TRIGGER IF EXISTS memories_ad;
+            DROP TRIGGER IF EXISTS memories_au;
+            """
+        )
+        self.conn.executescript(SCHEMA)
 
     def _ensure_decay_columns(self) -> None:
         existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(memories)")}
