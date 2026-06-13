@@ -132,7 +132,15 @@ class MemoryClient:
             trigger=trigger,
         )
         record = snapshot.to_record()
-        saved = self.add(record.content, **{k: v for k, v in record.__dict__.items() if k != "content"})
+        # Ensure the session_id is in the content for FTS searchability
+        # ContextSnapshot.to_record currently only puts session_id in source.
+        # We add it to the content to ensure reload_context search works.
+        record.content = f"session_id:{session_id}\n{record.content}"
+        
+        from dataclasses import asdict
+        record_dict = asdict(record)
+        content = record_dict.pop("content")
+        saved = self.add(content, **record_dict)
         return saved.id
 
     def reload_context(
@@ -150,12 +158,19 @@ class MemoryClient:
         else:
             # Search for the latest snapshot for this session
             results = self.search(
-                query=f"session_id:{session_id}", 
+                query=f"\"session_id:{session_id}\"", 
                 limit=1
             )
             if not results:
                 raise ValueError(f"No snapshots found for session {session_id}")
             record = results[0].record
+            
+        # The content now contains the session_id prefix, we must strip it
+        raw_content = record.content
+        if raw_content.startswith(f"session_id:{session_id}\n"):
+            raw_content = raw_content[len(f"session_id:{session_id}\n"):]
+            
+        return json.loads(raw_content)
 
         return json.loads(record.content)
 
