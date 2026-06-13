@@ -3,12 +3,12 @@ from __future__ import annotations
 from pathlib import Path
 import os
 from datetime import datetime, timezone
+import json
 
 from .cache import LRUCache
 from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
 from .db import MemoryStore
 from .schema import MemoryRecord, SearchResult
-
 
 class MemoryClient:
     def __init__(self, home: str | Path | None = None, *, cache_items: int = 512):
@@ -116,6 +116,49 @@ class MemoryClient:
     def close(self) -> None:
         self.store.close()
 
+    def offload_context(
+        self,
+        snapshot_data: dict[str, Any],
+        session_id: str,
+        trigger: str = "manual",
+    ) -> str:
+        """
+        Saves the current agent state as a ContextSnapshot memory record.
+        """
+        from .schema import ContextSnapshot
+        snapshot = ContextSnapshot(
+            session_id=session_id,
+            snapshot_data=snapshot_data,
+            trigger=trigger,
+        )
+        record = snapshot.to_record()
+        saved = self.add(record.content, **{k: v for k, v in record.__dict__.items() if k != "content"})
+        return saved.id
+
+    def reload_context(
+        self,
+        session_id: str,
+        snapshot_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Retrieves the specified or most recent snapshot for the given session.
+        """
+        if snapshot_id:
+            record = self.get(snapshot_id)
+            if not record: 
+                raise ValueError(f"Snapshot {snapshot_id} not found")
+        else:
+            # Search for the latest snapshot for this session
+            results = self.search(
+                query=f"session_id:{session_id}", 
+                limit=1
+            )
+            if not results:
+                raise ValueError(f"No snapshots found for session {session_id}")
+            record = results[0].record
+
+        return json.loads(record.content)
+
     def resonance_search(
         self,
         query: str,
@@ -141,7 +184,6 @@ class MemoryClient:
         idx = ERATripletIndex() 
         
         for res in seeds:
-                        # Convert ISO updated_at to unix timestamp
             ts = datetime.fromisoformat(res.record.updated_at.replace('Z', '+00:00')).timestamp()
             idx.add_chunk(MemoryChunk(id=res.record.id, text=res.record.content, timestamp=ts))
             
