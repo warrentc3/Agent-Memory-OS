@@ -19,6 +19,7 @@ MAX_SEMANTIC_CANDIDATES = 500
 MAX_RESONANCE_CANDIDATES = 200
 RESONANCE_HOP_DECAY = 0.6
 RESONANCE_MAX_EDGES_PER_NODE = 8
+RESONANCE_CONVERGENCE_CAP = 2.0
 LINK_DECAY_HALF_LIFE_DAYS = 90.0
 CO_RECALL_WEIGHT_STEP = 0.05
 CO_RECALL_WEAKEN_STEP = 0.1
@@ -1032,14 +1033,24 @@ class MemoryStore:
                 link_freshness = 0.5 ** (link_age_days / LINK_DECAY_HALF_LIFE_DAYS)
                 edges_by_node[edge["from_id"]].append((edge_weight * link_freshness, edge))
 
-            activations: dict[str, tuple[float, str, str]] = {}
+            contributions: DefaultDict[str, list[tuple[float, str, str]]] = defaultdict(list)
             for from_id, node_edges in edges_by_node.items():
                 node_edges.sort(key=lambda item: item[0], reverse=True)
                 for effective_weight, edge in node_edges[:RESONANCE_MAX_EDGES_PER_NODE]:
-                    neighbor_id = edge["neighbor_id"]
                     activation = frontier[from_id] * effective_weight * RESONANCE_HOP_DECAY
-                    if activation > activations.get(neighbor_id, (0.0, "", ""))[0]:
-                        activations[neighbor_id] = (activation, from_id, edge["relation"])
+                    contributions[edge["neighbor_id"]].append((activation, from_id, edge["relation"]))
+
+            # Converging evidence: a memory activated from several independent
+            # sources resonates more strongly than any single path — sum the
+            # contributions, capped so one hub can't be amplified without bound.
+            activations: dict[str, tuple[float, str, str, int]] = {}
+            for neighbor_id, sources in contributions.items():
+                best_activation, best_from, best_relation = max(sources, key=lambda item: item[0])
+                total = min(
+                    sum(activation for activation, _, _ in sources),
+                    best_activation * RESONANCE_CONVERGENCE_CAP,
+                )
+                activations[neighbor_id] = (total, best_from, best_relation, len(sources))
             if not activations:
                 break
 
@@ -1056,9 +1067,12 @@ class MemoryStore:
             visited.update(ids)
             frontier = {}
             for row in rows:
-                activation, from_id, relation = activations[row["id"]]
+                activation, from_id, relation, source_count = activations[row["id"]]
                 frontier[row["id"]] = activation
-                collected.append((row, activation, hop, f"via:{from_id}:{relation}"))
+                path = f"via:{from_id}:{relation}"
+                if source_count > 1:
+                    path = f"{path}:converge{source_count}"
+                collected.append((row, activation, hop, path))
                 if len(collected) >= MAX_RESONANCE_CANDIDATES:
                     break
 
@@ -1477,7 +1491,36 @@ class MemoryStore:
                 (days[0],),
             ).fetchall()
         )
+        linked = self.conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE id IN "
+            "(SELECT src_id FROM memory_links UNION SELECT dst_id FROM memory_links)"
+        ).fetchone()[0]
+        stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=int(LINK_DECAY_HALF_LIFE_DAYS))).isoformat(timespec="seconds")
+        stale_links = self.conn.execute(
+            "SELECT COUNT(*) FROM memory_links WHERE COALESCE(last_activated_at, updated_at) < ?",
+            (stale_cutoff,),
+        ).fetchone()[0]
+        top_hubs = [
+            {"id": row["id"], "summary": row["summary"], "degree": int(row["degree"])}
+            for row in self.conn.execute(
+                """
+                SELECT m.id, m.summary, COUNT(*) AS degree FROM (
+                    SELECT src_id AS memory_id FROM memory_links
+                    UNION ALL SELECT dst_id FROM memory_links
+                ) endpoints JOIN memories m ON m.id = endpoints.memory_id
+                GROUP BY m.id ORDER BY degree DESC LIMIT 3
+                """
+            ).fetchall()
+        ]
+        graph_health = {
+            "linked_memories": int(linked),
+            "orphan_memories": int(base["total"]) - int(linked),
+            "avg_degree": round(2 * int(base["links"]) / max(1, int(base["total"])), 2),
+            "stale_links": int(stale_links),
+            "top_hubs": top_hubs,
+        }
         return base | {
+            "graph_health": graph_health,
             "pinned": int(pinned),
             "expired": int(expired),
             "by_owner": by_owner,

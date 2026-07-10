@@ -398,3 +398,35 @@ def test_load_profile_sees_profiles_saved_by_another_client(tmp_path):
     refreshed = reader.load_profile("neo")
     assert refreshed is not None
     assert refreshed.type_weights == {"procedure": 1.5}
+
+
+def test_converging_evidence_boosts_multi_source_resonance(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    seed_a = client.add("Deploy checklist covers staging traffic.", visibility=["global"])
+    seed_b = client.add("Deploy rollback plan for staging incidents.", visibility=["global"])
+    converged = client.add("Snapshot ritual before schema changes.", visibility=["global"])
+    single = client.add("Snapshot naming convention for archives.", visibility=["global"])
+    client.link(seed_a.id, converged.id, weight=0.6)
+    client.link(seed_b.id, converged.id, weight=0.6)
+    client.link(seed_a.id, single.id, weight=0.6)
+
+    hits = {hit.record.id: hit for hit in client.search("deploy staging", requester_agent_id="neo", limit=10)}
+
+    assert hits[converged.id].score > hits[single.id].score
+    assert "converge2" in hits[converged.id].reason
+    assert "converge" not in hits[single.id].reason
+
+
+def test_dashboard_reports_graph_health(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    a = client.add("Linked memory one.", visibility=["global"])
+    b = client.add("Linked memory two.", visibility=["global"])
+    client.add("Orphan memory.", visibility=["global"])
+    client.link(a.id, b.id, weight=0.8)
+
+    health = client.dashboard_stats()["graph_health"]
+
+    assert health["linked_memories"] == 2
+    assert health["orphan_memories"] == 1
+    assert health["stale_links"] == 0
+    assert health["top_hubs"][0]["degree"] == 1

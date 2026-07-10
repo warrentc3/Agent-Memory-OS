@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 360" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Memory OS wordmark</title>
+  <desc id="desc">Agent Memory OS wordmark with the negative-space A icon and text.</desc>
+  <rect width="360" height="360" rx="48" fill="#4B2E83"/>
+  <path
+    fill="#FFFFFF"
+    fill-rule="evenodd"
+    d="M51 315 146 45h69l95 270h-75l-15-54h-78l-15 54H51Zm105-104h48l-24-82-24 82Z"
+  />
+  <path
+    fill="#4B2E83"
+    d="M142 315c0-49 7-93 20-131 13-37 32-72 58-104 6-7 16-5 19 4l10 34c6-2 12-2 19-1 23 2 41 19 45 42 1 9 5 14 13 17 12 4 19 16 18 30-2 24-21 41-49 47-21 5-36 13-40 25-3 9 1 17 11 23 19 12 35 29 46 51 5 11-2 23-15 23H142v-60Z"
+  />
+  <circle cx="209" cy="158" r="6" fill="#FFFFFF"/>
+  <circle cx="230" cy="143" r="5" fill="#FFFFFF"/>
+  <circle cx="253" cy="151" r="6" fill="#FFFFFF"/>
+  <path d="m214 155 13-10m9-1 14 5" stroke="#FFFFFF" stroke-width="5" stroke-linecap="round"/>
+  <text
+    x="430"
+    y="163"
+    fill="#211A2E"
+    font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="78"
+    font-weight="800"
+    letter-spacing="0"
+  >Agent Memory OS</text>
+  <text
+    x="433"
+    y="227"
+    fill="#685B7F"
+    font-family="Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif"
+    font-size="30"
+    font-weight="600"
+    letter-spacing="0"
+  >Local-first recall for AI agents</text>
+</svg>

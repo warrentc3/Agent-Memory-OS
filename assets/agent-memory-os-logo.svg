@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Agent Memory OS logo</title>
+  <desc id="desc">A white geometric letter A on a purple field with a memory-profile silhouette formed in negative space.</desc>
+  <rect width="512" height="512" rx="72" fill="#4B2E83"/>
+  <path
+    fill="#FFFFFF"
+    fill-rule="evenodd"
+    d="M72 448 207 64h98l135 384H333l-22-76H201l-22 76H72Zm150-148h68l-34-116-34 116Z"
+  />
+  <path
+    fill="#4B2E83"
+    d="M201 448c0-70 9-132 28-186 18-53 46-102 83-147 8-10 23-7 27 6l14 48c8-2 17-3 27-2 32 3 58 27 63 59 2 13 8 20 19 24 17 6 27 23 25 42-3 35-29 59-69 68-30 7-51 18-57 36-4 13 1 24 15 33 27 17 49 41 65 72 8 15-3 33-20 33H201v-86Z"
+  />
+  <circle cx="295" cy="225" r="9" fill="#FFFFFF"/>
+  <circle cx="326" cy="203" r="7" fill="#FFFFFF"/>
+  <circle cx="359" cy="214" r="8" fill="#FFFFFF"/>
+  <path d="M302 221 321 207M333 205l19 7" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round"/>
+</svg>

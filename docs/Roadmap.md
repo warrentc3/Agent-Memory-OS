@@ -2,10 +2,16 @@
 
 Last updated: 2026-07-11
 
-Governance rule: a milestone is "done" only when its features are merged,
-tested, and evidenced in this repository. Production claims (canary
-percentages, default-backend status, traffic switches) belong in
-`PROJECT_STATUS.md` with evidence, never here.
+Governance rules:
+
+1. A milestone is "done" only when its features are merged, tested, and
+   evidenced in this repository. Production claims (canary percentages,
+   default-backend status, traffic switches) belong in `PROJECT_STATUS.md`
+   with evidence, never here.
+2. **Web console parity is part of Done**: every engine feature that changes
+   what users can inspect or control (new memory fields, new operations, new
+   retrieval behavior) ships with matching Web UI support in the same
+   milestone — the console must never lag the engine.
 
 ## Shipped — v0.2.3 (current release)
 

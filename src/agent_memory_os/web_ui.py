@@ -242,6 +242,10 @@ PAGE = r"""<!doctype html>
   .toplist .toprow { display: flex; gap: 10px; align-items: baseline; }
   .toplist .cnt { font-weight: 750; color: var(--accent); min-width: 30px; font-variant-numeric: tabular-nums; }
   .toplist .sm { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .healthrow { display: flex; gap: 24px; flex-wrap: wrap; font-size: 13px; }
+  .healthstat { display: flex; flex-direction: column; gap: 2px; }
+  .healthstat b { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .healthstat span { color: var(--muted); font-size: 11.5px; }
   .editform { display: grid; gap: 10px; margin-top: 4px; }
   .editform textarea, .editform input[type=text], .editform select {
     padding: 9px 11px; border-radius: 9px; border: 1px solid var(--border);
@@ -305,6 +309,10 @@ PAGE = r"""<!doctype html>
     <div class="panelgrid">
       <div class="panel"><h3>Link relations</h3><div class="hbars" id="d-relations"></div></div>
       <div class="panel"><h3>Most recalled</h3><div class="toplist" id="d-top"></div></div>
+    </div>
+    <div class="panel"><h3>Resonance health</h3>
+      <div class="healthrow" id="d-health"></div>
+      <div class="toplist" id="d-hubs" style="margin-top:12px"></div>
     </div>
   </section>
 
@@ -567,6 +575,33 @@ async function loadDashboard() {
     row.appendChild(el("span", "cnt", "×" + item.access_count));
     row.appendChild(el("span", "sm", item.summary));
     top.appendChild(row);
+  }
+
+  const health = data.graph_health;
+  const healthRow = $("d-health");
+  healthRow.innerHTML = "";
+  const stats = [
+    [health.linked_memories, "linked memories"],
+    [health.orphan_memories, "orphans (no links)"],
+    [health.avg_degree, "avg links / memory"],
+    [health.stale_links, "stale links (90d+)"],
+  ];
+  for (const [value, label] of stats) {
+    const stat = el("div", "healthstat");
+    stat.appendChild(el("b", null, String(value)));
+    stat.appendChild(el("span", null, label));
+    healthRow.appendChild(stat);
+  }
+  const hubs = $("d-hubs");
+  hubs.innerHTML = "";
+  if (health.top_hubs.length) {
+    hubs.appendChild(el("span", "sm", "Strongest hubs:"));
+    for (const hub of health.top_hubs) {
+      const row = el("div", "toprow");
+      row.appendChild(el("span", "cnt", hub.degree + "⛓"));
+      row.appendChild(el("span", "sm", hub.summary));
+      hubs.appendChild(row);
+    }
   }
 }
 

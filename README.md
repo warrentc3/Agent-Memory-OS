@@ -135,12 +135,15 @@ agents are writing. Disposable indexes rebuild automatically after a restore.
 
 ## Agent integrations
 
-Step-by-step guides for wiring AgentMemoryOS into common agents:
+Step-by-step guides for wiring AgentMemoryOS into common agents — click a tile:
 
-- [Claude Code](docs/integrations/claude-code.md)
-- [Codex](docs/integrations/codex.md)
-- [OpenClaw](docs/integrations/openclaw.md)
-- [Hermes Agent](docs/integrations/hermes-agent.md)
+<p>
+  <a href="docs/integrations/claude-code.md"><img src="assets/integrations/claude-code.svg" alt="Claude Code integration guide" height="56"></a>
+  <a href="docs/integrations/codex.md"><img src="assets/integrations/codex.svg" alt="Codex integration guide" height="56"></a>
+  <br>
+  <a href="docs/integrations/openclaw.md"><img src="assets/integrations/openclaw.svg" alt="OpenClaw integration guide" height="56"></a>
+  <a href="docs/integrations/hermes-agent.md"><img src="assets/integrations/hermes-agent.svg" alt="Hermes Agent integration guide" height="56"></a>
+</p>
 
 Any MCP-capable agent can use the same pattern: run
 `python -m agent_memory_os.mcp_server` as a stdio MCP server pointing at a
