@@ -330,6 +330,43 @@ class MemoryStore:
             scope_weights=json.loads(row["scope_weights"] or "{}"),
         )
 
+    def list_recent(
+        self,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[MemoryRecord]:
+        """List memories by recency for browsing (inventory view, no scoring)."""
+        where = ["1=1"]
+        params: list[object] = []
+        if owner:
+            where.append("owner = ?")
+            params.append(owner)
+        if scope:
+            where.append("scope = ?")
+            params.append(scope)
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="",
+        )
+        params.extend([max(1, limit), max(0, offset)])
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM memories WHERE {' AND '.join(where)}
+            ORDER BY updated_at DESC, rowid DESC
+            LIMIT ? OFFSET ?
+            """,
+            params,
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def latest_snapshot_record(self, session_id: str) -> MemoryRecord | None:
         """Return the most recent context snapshot for a session.
 

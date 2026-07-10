@@ -9,7 +9,6 @@ the server to localhost only unless you front it with real authentication.
 from __future__ import annotations
 
 import argparse
-import html
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -22,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .client import MemoryClient
 from .schema import MemoryRecord, SearchResult, VALID_LINK_RELATIONS
+from .web_ui import PAGE
 
 VALID_SCOPES = {"user", "agent", "project", "team", "global"}
 VALID_TYPES = {"preference", "fact", "procedure", "environment", "decision", "warning", "note"}
@@ -123,103 +123,6 @@ def _search_result_payload(result: SearchResult) -> dict[str, Any]:
     }
 
 
-def _render_index(stats: dict[str, Any]) -> str:
-    total = html.escape(str(stats.get("total", 0)))
-    links = html.escape(str(stats.get("links", 0)))
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>AgentMemoryOS Web UI</title>
-  <style>
-    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; }}
-    body {{ margin: 0; background: #0b1020; color: #eef2ff; }}
-    main {{ max-width: 920px; margin: 0 auto; padding: 40px 20px; }}
-    section {{ background: #121a33; border: 1px solid #25304f; border-radius: 18px; padding: 20px; margin: 18px 0; }}
-    input, textarea, button {{ width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #334166; padding: 10px; margin: 8px 0; }}
-    input, textarea {{ background: #0b1020; color: #eef2ff; }}
-    button {{ background: #7c3aed; color: white; font-weight: 700; cursor: pointer; }}
-    pre {{ white-space: pre-wrap; background: #070b16; padding: 14px; border-radius: 12px; overflow: auto; }}
-    .stats {{ display: flex; gap: 14px; flex-wrap: wrap; }}
-    .pill {{ background: #1d2848; border-radius: 999px; padding: 8px 12px; }}
-    label {{ font-size: 0.85em; color: #93a4d0; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>AgentMemoryOS Web UI</h1>
-    <p>Local-first memory inspection console. Searches without a requester run in unrestricted admin view.</p>
-    <section class="stats">
-      <div class="pill">Total memories: <strong>{total}</strong></div>
-      <div class="pill">Links: <strong>{links}</strong></div>
-      <div class="pill"><a href="/api/stats">/api/stats</a></div>
-      <div class="pill"><a href="/health">/health</a></div>
-    </section>
-    <section>
-      <h2>Add memory</h2>
-      <textarea id="content" rows="4" placeholder="Memory content"></textarea>
-      <label>owner</label><input id="owner" value="default">
-      <label>scope (user/agent/project/team/global)</label><input id="scope" value="user">
-      <label>type (preference/fact/procedure/environment/decision/warning/note)</label><input id="type" value="note">
-      <label>visibility (comma separated, e.g. global or agent:neo; empty = owner-only)</label><input id="visibility" value="">
-      <button onclick="addMemory()">Add</button>
-    </section>
-    <section>
-      <h2>Search &amp; context pack</h2>
-      <input id="query" placeholder="Search query">
-      <label>requester agent id (empty = unrestricted admin view)</label><input id="requester" value="">
-      <button onclick="searchMemory()">Search</button>
-      <button onclick="contextPack()">Context pack</button>
-      <pre id="output">Ready.</pre>
-    </section>
-  </main>
-  <script>
-    async function show(promise) {{
-      const output = document.getElementById('output');
-      try {{
-        const response = await promise;
-        const body = await response.json();
-        output.textContent = (response.ok ? '' : 'HTTP ' + response.status + '\\n')
-          + JSON.stringify(body, null, 2);
-      }} catch (error) {{
-        output.textContent = 'Request failed: ' + error;
-      }}
-    }}
-    function visibilityList() {{
-      return document.getElementById('visibility').value
-        .split(',').map(v => v.trim()).filter(Boolean);
-    }}
-    function addMemory() {{
-      show(fetch('/api/memories', {{
-        method: 'POST',
-        headers: {{'content-type': 'application/json'}},
-        body: JSON.stringify({{
-          content: document.getElementById('content').value,
-          owner: document.getElementById('owner').value,
-          scope: document.getElementById('scope').value,
-          type: document.getElementById('type').value,
-          visibility: visibilityList()
-        }})
-      }}));
-    }}
-    function searchMemory() {{
-      const params = new URLSearchParams({{ q: document.getElementById('query').value }});
-      const requester = document.getElementById('requester').value.trim();
-      if (requester) params.set('requester_agent_id', requester);
-      show(fetch('/api/search?' + params));
-    }}
-    function contextPack() {{
-      const params = new URLSearchParams({{ q: document.getElementById('query').value }});
-      const requester = document.getElementById('requester').value.trim();
-      if (requester) params.set('requester_agent_id', requester);
-      show(fetch('/api/context-pack?' + params));
-    }}
-  </script>
-</body>
-</html>"""
-
-
 def create_app(home: str | Path | None = None) -> FastAPI:
     # One shared client per app: the schema/migration cost is paid once and
     # the LRU cache actually works. SQLite access is serialized by `lock`
@@ -255,6 +158,26 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _record_payload(record)
 
+    @app.get("/api/memories")
+    def list_memories(
+        owner: str | None = None,
+        scope: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
+        with lock:
+            records = client.list_recent(
+                owner=owner or None,
+                scope=scope or None,
+                requester_agent_id=requester_agent_id or None,
+                requester_team_id=requester_team_id or None,
+                limit=limit,
+                offset=offset,
+            )
+        return {"memories": [_record_payload(record) for record in records]}
+
     @app.get("/api/memories/{memory_id}")
     def get_memory(memory_id: str) -> dict[str, Any]:
         with lock:
@@ -262,6 +185,14 @@ def create_app(home: str | Path | None = None) -> FastAPI:
         if record is None:
             raise HTTPException(status_code=404, detail=f"memory not found: {memory_id}")
         return _record_payload(record)
+
+    @app.delete("/api/memories/{memory_id}")
+    def delete_memory(memory_id: str) -> dict[str, Any]:
+        with lock:
+            removed = client.delete(memory_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"memory not found: {memory_id}")
+        return {"deleted": memory_id}
 
     @app.get("/api/memories/{memory_id}/links")
     def memory_links(memory_id: str) -> dict[str, Any]:
@@ -377,9 +308,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> HTMLResponse:
-        with lock:
-            page = _render_index(client.stats())
-        return HTMLResponse(page)
+        return HTMLResponse(PAGE)
 
     return app
 

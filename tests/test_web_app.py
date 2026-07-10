@@ -193,3 +193,28 @@ def test_web_api_recall_respects_requester_acl(tmp_path):
     assert response.json()["weakened_memories"] == 0
     fetched = client.get(f"/api/memories/{private['id']}").json()
     assert fetched["confidence"] == 0.8
+
+
+def test_web_api_list_memories_respects_requester_acl(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    client.post("/api/memories", json={"content": "Private one.", "owner": "mizuki", "visibility": []})
+    client.post("/api/memories", json={"content": "Public one.", "owner": "mizuki", "visibility": ["global"]})
+
+    admin_view = client.get("/api/memories").json()["memories"]
+    neo_view = client.get("/api/memories", params={"requester_agent_id": "neo"}).json()["memories"]
+
+    assert len(admin_view) == 2
+    assert [m["content"] for m in neo_view] == ["Public one."]
+
+
+def test_web_api_delete_memory(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    created = client.post(
+        "/api/memories", json={"content": "Disposable.", "visibility": ["global"]}
+    ).json()
+
+    assert client.delete(f"/api/memories/{created['id']}").status_code == 200
+    assert client.get(f"/api/memories/{created['id']}").status_code == 404
+    assert client.delete(f"/api/memories/{created['id']}").status_code == 404

@@ -46,6 +46,31 @@ class MemoryClient:
     def get(self, memory_id: str) -> MemoryRecord | None:
         return self.store.get(memory_id)
 
+    def delete(self, memory_id: str) -> bool:
+        removed = self.store.delete(memory_id)
+        if removed:
+            self.cache.clear()
+        return removed
+
+    def list_recent(
+        self,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> list[MemoryRecord]:
+        return self.store.list_recent(
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+            offset=offset,
+        )
+
     def link(
         self,
         src_id: str,
