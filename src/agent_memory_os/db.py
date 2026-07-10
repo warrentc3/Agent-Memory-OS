@@ -208,6 +208,20 @@ def _migration_feedback_counts(conn: sqlite3.Connection) -> None:
             conn.execute(f"ALTER TABLE memories_archive ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
 
 
+def _migration_sync_peers(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sync_peers (
+          url TEXT PRIMARY KEY,
+          token TEXT,
+          added_at TEXT NOT NULL,
+          last_synced_at TEXT,
+          last_result TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -215,6 +229,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (4, "session recall delivery log", _migration_session_recall_log),
     (5, "memory sharing audit trail", _migration_memory_audit),
     (6, "recall feedback counters", _migration_feedback_counts),
+    (7, "federated sync peer registry", _migration_sync_peers),
 ]
 
 
@@ -647,6 +662,52 @@ class MemoryStore:
             return 0
         placeholders = ",".join("?" for _ in ids)
         return self._archive_where(f"id IN ({placeholders})", ids, reason="snapshot_rotation")
+
+    def add_peer(self, url: str, *, token: str | None = None) -> dict[str, object]:
+        url = url.strip().rstrip("/")
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("peer URL must start with http:// or https://")
+        self.conn.execute(
+            """
+            INSERT INTO sync_peers(url, token, added_at) VALUES (?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET token = excluded.token
+            """,
+            (url, token, utc_now()),
+        )
+        self.conn.commit()
+        return {"url": url, "has_token": token is not None}
+
+    def remove_peer(self, url: str) -> bool:
+        cur = self.conn.execute("DELETE FROM sync_peers WHERE url = ?", (url.strip().rstrip("/"),))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def list_peers(self) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT url, token IS NOT NULL AS has_token, added_at, last_synced_at, last_result "
+            "FROM sync_peers ORDER BY added_at"
+        ).fetchall()
+        return [
+            {
+                "url": row["url"], "has_token": bool(row["has_token"]),
+                "added_at": row["added_at"], "last_synced_at": row["last_synced_at"],
+                "last_result": row["last_result"],
+            }
+            for row in rows
+        ]
+
+    def peer_token(self, url: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT token FROM sync_peers WHERE url = ?", (url.strip().rstrip("/"),)
+        ).fetchone()
+        return row["token"] if row else None
+
+    def record_peer_sync(self, url: str, result: str) -> None:
+        self.conn.execute(
+            "UPDATE sync_peers SET last_synced_at = ?, last_result = ? WHERE url = ?",
+            (utc_now(), result[:400], url),
+        )
+        self.conn.commit()
 
     def semantic_corpus(self) -> list[tuple[int, str, str]]:
         """(rowid, memory_id, embeddable text) for every memory — the auto

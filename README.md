@@ -147,6 +147,23 @@ agent-memory restore ~/backups/memories-2026-07-11.db --force
 Backups use SQLite's online backup API, so they are consistent even while
 agents are writing. Disposable indexes rebuild automatically after a restore.
 
+## Federation (multi-host sync)
+
+```bash
+# one-time, on each host
+agent-memory peers add http://other-host:8000 --peer-token <their token>
+
+# converge with every registered peer (pull + push, deterministic merges)
+agent-memory sync auto
+```
+
+Peers are stored per-home; `sync auto` (or the console's "Sync mesh now")
+converges bidirectionally with each peer — last-writer-wins on memories and
+profiles, strongest-wins on links — and unreachable peers fail individually,
+never fatally. File bundles (`sync export/import`) cover air-gapped moves.
+Pair with `agent-memory service install` and a cron/timer entry for
+continuous mesh sync.
+
 ## Agent integrations
 
 Step-by-step guides for wiring AgentMemoryOS into common agents — click a tile:

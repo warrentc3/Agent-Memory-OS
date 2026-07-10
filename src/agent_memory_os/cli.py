@@ -78,14 +78,19 @@ def build_parser() -> argparse.ArgumentParser:
     service.add_argument("--port", type=int, default=8000)
     service.add_argument("--dry-run", action="store_true", help="Print actions without executing")
 
-    sync = sub.add_parser("sync", help="Federated sync: file bundles or peer HTTP endpoints")
-    sync.add_argument("action", choices=["export", "import", "pull", "push"])
+    sync = sub.add_parser("sync", help="Federated sync: file bundles, peer HTTP endpoints, or the whole mesh")
+    sync.add_argument("action", choices=["export", "import", "pull", "push", "auto"])
     sync.add_argument(
-        "target",
-        help="Bundle .jsonl path (export/import) or peer base URL like http://host:8000 (pull/push)",
+        "target", nargs="?", default=None,
+        help="Bundle .jsonl path (export/import) or peer base URL (pull/push); omit for auto",
     )
     sync.add_argument("--since", default=None, help="Only records updated after this ISO timestamp")
     sync.add_argument("--peer-token", default=None, help="Bearer token of the peer's Web API")
+
+    peers = sub.add_parser("peers", help="Manage federated sync peers")
+    peers.add_argument("action", choices=["add", "remove", "list"])
+    peers.add_argument("url", nargs="?", default=None)
+    peers.add_argument("--peer-token", default=None, help="Bearer token of the peer's Web API")
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -283,7 +288,28 @@ def main(argv: list[str] | None = None) -> int:
             report = client.integrity_check()
             print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
             return 0 if report["ok"] else 1
+        if args.command == "peers":
+            if args.action == "list":
+                print(json.dumps(client.store.list_peers(), ensure_ascii=False, indent=2))
+                return 0
+            if not args.url:
+                print("peers add/remove require a URL")
+                return 2
+            if args.action == "add":
+                print(json.dumps(client.store.add_peer(args.url, token=args.peer_token)))
+            else:
+                removed = client.store.remove_peer(args.url)
+                print("removed" if removed else "not registered")
+            return 0
         if args.command == "sync":
+            if args.action == "auto":
+                from .sync import sync_all_peers
+
+                print(json.dumps(sync_all_peers(client), ensure_ascii=False, indent=2))
+                return 0
+            if not args.target:
+                print("sync export/import/pull/push require a target")
+                return 2
             if args.action == "export":
                 report = client.export_bundle(args.target, since=args.since)
             elif args.action == "import":

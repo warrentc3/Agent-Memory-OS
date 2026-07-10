@@ -222,3 +222,101 @@ def test_consolidate_accepts_custom_link_extractor(tmp_path):
 
     assert result["links_derived"] == 1
     assert client.links(a.id)[0].weight == 0.9
+
+
+# ---------- peer registry & mesh auto-sync ----------
+
+
+def test_peer_registry_and_mesh_sync(tmp_path, monkeypatch):
+    host_a = MemoryClient(home=tmp_path / "a")
+    peer_app = TestClient(create_app(home=tmp_path / "b"))
+    created = peer_app.post(
+        "/api/memories", json={"content": "Memory living on peer B.", "visibility": ["global"]}
+    ).json()
+
+    # registry CRUD + validation
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        host_a.store.add_peer("ftp://nope")
+    host_a.store.add_peer("http://peer-b:8000/", token="s3cret")
+    peers = host_a.store.list_peers()
+    assert peers[0]["url"] == "http://peer-b:8000" and peers[0]["has_token"] is True
+
+    # route the mesh's HTTP through the in-process peer app
+    from agent_memory_os import sync as sync_module
+
+    def fake_http(url, *, token, post=None):
+        assert token == "s3cret"  # registered token is used
+        path = url.replace("http://peer-b:8000", "")
+        if post is None:
+            return peer_app.get(path).text
+        response = peer_app.post(path, content=post, headers={"content-type": "application/x-ndjson"})
+        return response.text
+
+    monkeypatch.setattr(sync_module, "_http", fake_http)
+
+    local_memory = host_a.add("Memory living on host A.", visibility=["global"])
+    results = sync_module.sync_all_peers(host_a)
+
+    assert results[0]["ok"] is True
+    # pulled B's memory, pushed A's memory
+    assert host_a.get(created["id"]) is not None
+    assert peer_app.get(f"/api/memories/{local_memory.id}").status_code == 200
+    # sync outcome recorded on the peer row
+    assert host_a.store.list_peers()[0]["last_result"].startswith("ok")
+
+    # unreachable peers fail per-peer, not fatally
+    host_a.store.add_peer("http://unreachable:1")
+    results = sync_module.sync_all_peers(host_a)
+    assert any(r["ok"] is False for r in results) and any(r["ok"] is True for r in results)
+
+    assert host_a.store.remove_peer("http://unreachable:1") is True
+    host_a.close()
+
+
+def test_web_api_peers_endpoints(tmp_path):
+    web = TestClient(create_app(home=tmp_path))
+
+    assert web.post("/api/peers", json={"url": "http://peer:8000"}).status_code == 200
+    listed = web.get("/api/peers").json()["peers"]
+    assert listed[0]["url"] == "http://peer:8000"
+    assert web.post("/api/peers", json={"url": "gopher://x"}).status_code == 400
+    assert web.delete("/api/peers", params={"url": "http://peer:8000"}).status_code == 200
+    assert web.delete("/api/peers", params={"url": "http://peer:8000"}).status_code == 404
+
+
+# ---------- LLM link extractor helper ----------
+
+
+def test_llm_link_extractor_parses_and_guards(tmp_path):
+    from agent_memory_os.extractors import make_llm_link_extractor
+
+    client = MemoryClient(home=tmp_path)
+    a = client.add("Deploy procedure for staging.", visibility=["global"])
+    b = client.add("Staging deploy failed last week.", visibility=["global"])
+    c = client.add("Banana bread recipe.", visibility=["global"])
+
+    prompts = []
+
+    def fake_llm(prompt: str) -> str:
+        prompts.append(prompt)
+        return (
+            "Here you go:\n"
+            f'[{{"src": "{a.id}", "dst": "{b.id}", "weight": 0.8}},'
+            f' {{"src": "{a.id}", "dst": "{b.id}", "weight": 0.8}},'   # dup dropped
+            f' {{"src": "{a.id}", "dst": "{a.id}"}},'                  # self dropped
+            f' {{"src": "{a.id}", "dst": "mem_unknown"}},'             # unknown dropped
+            f' {{"src": "{c.id}", "dst": "{b.id}", "weight": 9}}]'     # weight clamped
+        )
+
+    result = client.consolidate(link_extractor=make_llm_link_extractor(fake_llm))
+
+    assert result["links_derived"] == 2
+    assert a.id in prompts[0] and "JSON array" in prompts[0]
+    weights = {frozenset((l.src_id, l.dst_id)): l.weight for l in client.links(b.id)}
+    assert weights[frozenset((a.id, b.id))] == 0.8
+    assert weights[frozenset((c.id, b.id))] == 1.0  # clamped
+
+    # garbage output degrades to zero links, never raises
+    broken = make_llm_link_extractor(lambda prompt: "sorry, no JSON here")
+    assert client.consolidate(link_extractor=broken)["links_derived"] == 0

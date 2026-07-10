@@ -169,6 +169,32 @@ def push_to_peer(client, base_url: str, *, since: str | None = None,
     return json.loads(response)
 
 
+def sync_with_peer(client, url: str, *, peer_token: str | None = None) -> dict[str, object]:
+    """Bidirectional converge with one peer: pull their bundle, push ours."""
+    pulled = pull_from_peer(client, url, peer_token=peer_token)
+    pushed = push_to_peer(client, url, peer_token=peer_token)
+    return {"peer": url, "pulled": pulled, "pushed": pushed, "ok": True}
+
+
+def sync_all_peers(client) -> list[dict[str, object]]:
+    """Converge with every registered peer; failures are per-peer, not fatal."""
+    results: list[dict[str, object]] = []
+    for peer in client.store.list_peers():
+        url = peer["url"]
+        try:
+            result = sync_with_peer(client, url, peer_token=client.store.peer_token(url))
+            summary = (
+                f"ok +{result['pulled']['memories_added']}/"
+                f"~{result['pulled']['memories_updated']} pulled"
+            )
+        except Exception as exc:  # noqa: BLE001 - one unreachable peer must not stop the mesh
+            result = {"peer": url, "ok": False, "error": str(exc)}
+            summary = f"error: {exc}"
+        client.store.record_peer_sync(url, summary)
+        results.append(result)
+    return results
+
+
 def _http(url: str, *, token: str | None, post: str | None = None) -> str:
     import urllib.request
 

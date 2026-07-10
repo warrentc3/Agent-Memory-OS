@@ -129,6 +129,11 @@ class LinkRequest(BaseModel):
         return value
 
 
+class PeerRequest(BaseModel):
+    url: str = Field(min_length=8)
+    token: str | None = None
+
+
 class ShareRequest(BaseModel):
     actor: str = Field(min_length=1)
     to_agent: str | None = None
@@ -313,6 +318,34 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def integrity() -> dict[str, Any]:
         with lock:
             return client.integrity_check()
+
+    @app.get("/api/peers")
+    def peers_list() -> dict[str, Any]:
+        with lock:
+            return {"peers": client.store.list_peers()}
+
+    @app.post("/api/peers")
+    def peers_add(request: PeerRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                return client.store.add_peer(request.url, token=request.token)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/peers")
+    def peers_remove(url: str = Query(min_length=1)) -> dict[str, Any]:
+        with lock:
+            removed = client.store.remove_peer(url)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"peer not registered: {url}")
+        return {"removed": url}
+
+    @app.post("/api/sync/run")
+    def sync_run() -> dict[str, Any]:
+        from .sync import sync_all_peers
+
+        with lock:
+            return {"results": sync_all_peers(client)}
 
     @app.get("/api/sync/export")
     def sync_export(since: str | None = None) -> Any:

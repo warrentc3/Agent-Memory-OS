@@ -464,6 +464,13 @@ PAGE = r"""<!doctype html>
           <button class="ghost" id="btn-bundle-import">⬆ Import bundle</button>
         </div>
         <div id="sync-out" style="margin-top:6px;font-size:13px;color:var(--muted)"></div>
+        <div class="row" style="margin-top:12px">
+          <input id="peer-url" type="text" placeholder="peer url, e.g. http://host:8000">
+          <input id="peer-token" type="password" placeholder="peer token (optional)" style="max-width:180px">
+          <button class="ghost" id="btn-peer-add">Add peer</button>
+          <button class="ghost" id="btn-sync-now">⇆ Sync mesh now</button>
+        </div>
+        <div class="toplist" id="peer-list" style="margin-top:8px"></div>
       </div>
       <div class="tool danger" style="grid-column: 1 / -1;">
         <h3>⚠ Danger zone — forget an agent</h3>
@@ -1206,6 +1213,48 @@ $("btn-bundle-import").addEventListener("click", async () => {
     loadStats(); loadDashboard(); browseLoaded = false;
   } catch (e) { out.textContent = ""; toast(e.message, "err"); }
 });
+
+async function refreshPeers() {
+  const list = $("peer-list");
+  try {
+    const data = await api("/api/peers");
+    list.innerHTML = "";
+    if (!data.peers.length) { list.appendChild(el("span", "sm", "No peers registered — this host syncs alone.")); return; }
+    for (const peer of data.peers) {
+      const row = el("div", "toprow");
+      row.appendChild(el("span", "sm", peer.url + (peer.last_synced_at ? " · last: " + peer.last_result : " · never synced")));
+      const removeBtn = el("button", "ghost", "remove");
+      removeBtn.style.cssText = "font-size:11px;padding:2px 10px;flex:0 0 auto";
+      removeBtn.addEventListener("click", async () => {
+        try { await api("/api/peers?url=" + encodeURIComponent(peer.url), { method: "DELETE" }); refreshPeers(); }
+        catch (e) { toast(e.message, "err"); }
+      });
+      row.appendChild(removeBtn);
+      list.appendChild(row);
+    }
+  } catch (e) { /* pre-auth */ }
+}
+$("btn-peer-add").addEventListener("click", async () => {
+  const url = $("peer-url").value.trim();
+  if (!url) return;
+  try {
+    await api("/api/peers", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: url, token: $("peer-token").value || null }) });
+    $("peer-url").value = ""; $("peer-token").value = "";
+    toast("Peer registered.", "ok"); refreshPeers();
+  } catch (e) { toast(e.message, "err"); }
+});
+$("btn-sync-now").addEventListener("click", async () => {
+  const out = $("sync-out");
+  out.textContent = "Syncing mesh…";
+  try {
+    const data = await api("/api/sync/run", { method: "POST" });
+    const ok = data.results.filter(r => r.ok).length;
+    out.textContent = ok + "/" + data.results.length + " peers converged.";
+    refreshPeers(); loadStats(); loadDashboard(); browseLoaded = false;
+  } catch (e) { out.textContent = ""; toast(e.message, "err"); }
+});
+refreshPeers();
 
 $("btn-purge").addEventListener("click", async () => {
   const owner = $("purge-owner").value.trim();

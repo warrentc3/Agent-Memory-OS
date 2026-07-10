@@ -86,4 +86,15 @@ not just what exists.
    recomputes decay half-lives idempotently — proven-helpful memories forget
    slower (up to 4x base), misleading ones faster (down to 0.5x).
 
+## v0.6 — Mesh federation & extraction plumbing (in progress)
+
+1. **Peer registry & mesh sync** — SHIPPED: per-home `sync_peers` registry
+   (migration 7), `agent-memory peers add|remove|list`, `sync auto`
+   converging bidirectionally with every peer (per-peer failure isolation,
+   outcome recorded per peer), `/api/peers` + `/api/sync/run`, and console
+   peer management with "Sync mesh now".
+2. **LLM link extraction helper** — SHIPPED: `make_llm_link_extractor(fn)`
+   wraps any completion callable into a consolidation link extractor with
+   defensive JSON parsing (bad output degrades to zero links).
+
 ## Later / research
