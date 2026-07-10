@@ -196,4 +196,6 @@ def make_config(home: str | Path | None, host: str, port: int) -> ServiceConfig:
 def _uid() -> int:
     import os
 
-    return os.getuid()
+    # os.getuid does not exist on Windows; only reachable there in dry-run
+    # previews of the darwin flow, where any stable placeholder is fine.
+    return os.getuid() if hasattr(os, "getuid") else 0
