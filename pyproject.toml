@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-memory-os"
-version = "0.1.0"
+version = "0.2.3"
 description = "Local-first, MCP-native memory engine for AI agents with RAM cache and context-budgeted recall."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -12,7 +12,7 @@ license = "Apache-2.0"
 authors = [{ name = "Bastet Agent Team" }]
 keywords = ["ai-agent", "memory", "mcp", "sqlite", "local-first"]
 classifiers = [
-  "Development Status :: 2 - Pre-Alpha",
+  "Development Status :: 3 - Alpha",
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: Apache Software License",
 ]
