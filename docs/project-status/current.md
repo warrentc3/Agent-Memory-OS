@@ -1,6 +1,6 @@
 # Current Project Status — AgentMemoryOS
 
-Last updated: 2026-06-09 12:20:32 CST (+0800)
+Last updated: 2026-06-17 21:17:01 CST (+0800)
 
 ## Repository facts
 
@@ -38,6 +38,13 @@ Read these before any task:
 
 - README previously described `v0.3-awakened` as a release tag; current git evidence only shows `v0.1.0-stable`.
 - `PROJECT_STATUS.md` previously described v0.3 as physically deployed on `main`; the status now distinguishes actual package/tag/branch evidence from validation/roadmap language.
+
+## Latest verified work
+
+- completed — Web UI openability path exists through FastAPI root page and JSON smoke endpoints.
+  - Evidence: `src/agent_memory_os/web_app.py`, `tests/test_web_app.py`, `pyproject.toml` script `agent-memory-web`, README Web UI instructions.
+  - Verification: `PYTHONPATH=src python3 -m pytest -q` → `73 passed`; manual HTTP smoke on `127.0.0.1:8765` with local-disk home `/home/hermes/.agent-memory-os-web` returned `200` for `/`, `/health`, `/api/stats`, `POST /api/memories`, `/api/search`.
+  - Runtime note: NAS-backed `/mnt/nas/.../data` reproduced SQLite FTS5 `database is locked`; use local disk for live DB files.
 
 ## Acceptance boundary for future completion claims
 

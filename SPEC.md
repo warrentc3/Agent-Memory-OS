@@ -1,4 +1,4 @@
-# AgentMemoryOS SPEC v0.2.2
+# AgentMemoryOS SPEC v0.2.3
 
 ## Product thesis
 
@@ -119,6 +119,129 @@ Retrieval safety invariants:
 - Dropping or rebuilding FTS/vector indexes must not delete or mutate rows in `memories`.
 - Index rebuild must preserve memory ids and metadata, including `visibility`, `source`, `expires_at`, `decay_policy`, `confidence`, `importance`, and `pinned`.
 
+## v0.2.3 Memory association and repeated recall
+
+Associative recall lets memories that share no query terms with the request
+still surface because they are linked to direct hits — the difference between
+"search" and "remembering".
+
+### Authoritative links
+
+- `memory_links` is an authoritative SQLite table next to `memories`; links
+  survive disposable index rebuilds.
+- Relations: `related_to`, `supersedes`, `caused_by`, `derived_from`,
+  `co_recalled`. Weight is clamped to `[0.0, 1.0]`.
+- Traversal is undirected for resonance recall.
+
+### Resonance retrieval track
+
+Search fuses three tracks: FTS5 relevance, authority recall, and resonance
+expansion. Resonance takes the direct hits as seeds and walks `memory_links`
+up to `resonance_hops` (default 1):
+
+```text
+activation = seed_score * edge_weight * 0.6 ** hop
+```
+
+Safety invariants:
+
+- Every traversed node passes the same ACL and `expires_at` hard gates as
+  direct hits before scoring.
+- Requester-invisible or expired nodes are dropped before entering the
+  frontier: they are both unreturnable and untraversable. A private memory can
+  never bridge two public memories for an unauthorized requester, and edge
+  existence never leaks through scores.
+- Resonance candidates are capped (`MAX_RESONANCE_CANDIDATES = 200`) and can
+  be disabled with `resonance_hops = 0`.
+
+### Repeated recall reinforcement and self-correction
+
+`client.record_recall(memory_ids, create_colinks=False, helpful=True)` is the
+Hebbian feedback loop: memories recalled (and useful) together get their
+`access_count` bumped and every existing link between co-recalled pairs gains
+`+0.05` weight (capped at 1.0). With `create_colinks=True`, unlinked pairs get
+a weak `co_recalled` edge (`0.2`). Well-worn recall paths therefore resonate
+more strongly over time.
+
+`helpful=False` is the self-correction path: the recall misled the agent, so
+link weights drop by `0.1`, memory `confidence` drops by `0.05`, and no
+reinforcement is recorded.
+
+`context_pack(..., auto_reinforce=True)` / `context_pack_report(...,
+auto_reinforce=True)` close the loop automatically: every memory the
+arbitration layer selects into the pack is treated as a recall event and
+reinforced, so MCP callers do not need to remember to report back.
+
+### Link decay, hub damping, and audit paths
+
+- Edges decay like memories: resonance multiplies edge weight by
+  `0.5 ** (days_since_last_activation / 90)`, so associations that stop being
+  co-activated fade instead of persisting forever.
+- Each frontier node expands only its strongest `8` edges
+  (`RESONANCE_MAX_EDGES_PER_NODE`), so hub memories cannot flood the cluster.
+- Resonance results carry an auditable path in `reason`:
+  `resonance:hop1:via:<seed_id>:<relation>`.
+- `supersedes` is directional: when both ends of a `supersedes` edge survive
+  the hard gates, the superseded memory's score is multiplied by `0.4` and its
+  reason gains `superseded_by:<id>`. Demotion only fires when the requester
+  can see the superseding memory.
+
+### Write-time association and the ERA bridge
+
+- `client.add(content, auto_link=True)` creates weak `related_to` edges
+  (`0.3`, `source.auto = "fts_similarity"`) from a new memory to its top FTS
+  neighbors, so new memories join the graph immediately; co-recall
+  reinforcement decides which edges mature.
+- `ERATripletIndex.derive_links(min_shared_terms=2, max_term_degree=20)`
+  derives `(src_id, dst_id, weight)` pairs from shared ERA terms (hub terms
+  skipped), and `client.import_links(pairs)` upserts them as authoritative
+  edges — the bridge from the disposable v0.4 prototype into `memory_links`.
+
+### Persisted recall profiles
+
+`recall_profiles` is an authoritative table (`agent_id`, `type_weights`,
+`scope_weights`). `client.save_profile(profile)` persists an agent's soul
+attributes; `search`/`context_pack` auto-load the stored profile for
+`requester_agent_id` when no explicit profile is passed. Profiles remain soft
+ranking multipliers only.
+
+### Write-side consolidation
+
+`client.consolidate(owner=None, scope=None)` is the hygiene pass:
+
+1. **Duplicate merge**: memories with identical owner, scope, visibility, and
+   normalized content fingerprint collapse into the highest-confidence copy;
+   links re-point to the survivor and `access_count` accumulates.
+2. **Concept synthesis**: clusters of >= 3 memories connected by strong
+   co-recall edges (`weight >= 0.6`, `activation_count >= 3`) with identical
+   owner/scope/visibility are synthesized into a concept memory
+   (`source.auto = "consolidation"`) with `derived_from` edges back to each
+   episode. Everyday retrieval hits the concept; details stay reachable
+   through the graph. The pass is idempotent, and clusters spanning different
+   visibility are never blended (ACL-safe by construction).
+
+### Multi-agent deployment
+
+The store enables SQLite WAL journal mode and a 5s busy timeout so multiple
+agent processes can share one database file; both PRAGMAs degrade gracefully
+on filesystems that do not support them.
+
+### Per-agent recall profiles
+
+Different agents have different personas, so they need different memory.
+`RecallProfile(agent_id, type_weights, scope_weights)` applies a soft
+multiplier (clamped to `[0.25, 2.0]`) to ranking by memory `type`/`scope` —
+an engineering agent can lean on `procedure`/`decision` while a companion
+agent leans on `preference`/`note`. Profiles re-weight ranking only; they
+never bypass ACL or expiry hard gates and never grant visibility.
+
+```python
+profile = RecallProfile(agent_id="neo", type_weights={"procedure": 1.5})
+client.search(query, requester_agent_id="neo", profile=profile)
+client.link(src_id, dst_id, relation="caused_by", weight=0.8)
+client.record_recall([mem_a.id, mem_b.id], create_colinks=True)
+```
+
 ## Context budget policy
 
 The context pack builder uses an approximate token count of `ceil(chars / 4)` and stops before `max_tokens`. This is deliberately conservative and dependency-free for MVP. Future versions can use tokenizer-specific counters.
@@ -148,6 +271,8 @@ report = client.context_pack_report(query, requester_agent_id="neo", max_tokens=
 - `memory_forget`
 - `memory_consolidate`
 - `memory_context_pack`
+- `memory_link` (implemented in scaffold)
+- `memory_recall_feedback` (implemented in scaffold)
 
 ## Safety rules
 

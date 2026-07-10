@@ -63,8 +63,10 @@ Required gates before production activation:
 
 ## Verification snapshot
 
+- Web UI smoke command: `PYTHONPATH=src python3 -m pytest tests/test_web_app.py -q`
+- Web UI smoke result: `2 passed`; manual HTTP smoke returned `200` for `/`, `/health`, `/api/stats`, `POST /api/memories`, and `/api/search` on `127.0.0.1:8765` using local-disk home `/home/hermes/.agent-memory-os-web`. NAS-backed `/mnt/nas/.../data` reproduced SQLite FTS5 `database is locked` and is not recommended for the live DB.
 - Test command: `PYTHONPATH=src python3 -m pytest -q`
-- Result: `33 passed` at `2026-06-05 11:59 CST (+0800)`
+- Result: `73 passed` at `2026-06-17 21:17 CST (+0800)`
 - Truth Arbitration targeted command: `PYTHONPATH=src python3 -m pytest tests/test_truth_arbitration.py -q`
 - Truth Arbitration targeted result: `4 passed` covering core-memory survival under budget pressure, duplicate suppression, contradiction marking, and peer requester private-memory absence in auditable context packs.
 - Retrieval Foundation targeted command: `PYTHONPATH=src python3 -m pytest tests/test_retrieval_foundation.py -q`
