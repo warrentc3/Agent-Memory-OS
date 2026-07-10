@@ -1,18 +1,29 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Sequence
+from typing import DefaultDict, Sequence
 import json
 import math
+import re
 import sqlite3
 
 from .candidates import Candidate, CandidateProvider
-from .schema import MemoryRecord, SearchResult, utc_now
+from .schema import MemoryLink, MemoryRecord, RecallProfile, SearchResult, utc_now
 from .scoring import effective_score, freshness_factor, reinforcement_factor
 
 
 MAX_SEMANTIC_CANDIDATES = 500
+MAX_RESONANCE_CANDIDATES = 200
+RESONANCE_HOP_DECAY = 0.6
+RESONANCE_MAX_EDGES_PER_NODE = 8
+LINK_DECAY_HALF_LIFE_DAYS = 90.0
+CO_RECALL_WEIGHT_STEP = 0.05
+CO_RECALL_WEAKEN_STEP = 0.1
+CO_RECALL_INITIAL_WEIGHT = 0.2
+NEGATIVE_FEEDBACK_CONFIDENCE_STEP = 0.05
+SUPERSEDED_SCORE_PENALTY = 0.4
 
 
 SCHEMA = """
@@ -52,27 +63,71 @@ CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
   VALUES (new.id, new.owner, new.scope, new.type, new.content, new.summary, new.tags);
 END;
 CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, id, owner, scope, type, content, summary, tags)
-  VALUES('delete', old.id, old.owner, old.scope, old.type, old.content, old.summary, old.tags);
+  DELETE FROM memories_fts WHERE id = old.id;
 END;
 CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-  INSERT INTO memories_fts(memories_fts, id, owner, scope, type, content, summary, tags)
-  VALUES('delete', old.id, old.owner, old.scope, old.type, old.content, old.summary, old.tags);
+  DELETE FROM memories_fts WHERE id = old.id;
   INSERT INTO memories_fts(id, owner, scope, type, content, summary, tags)
   VALUES (new.id, new.owner, new.scope, new.type, new.content, new.summary, new.tags);
 END;
+CREATE TABLE IF NOT EXISTS memory_links (
+  src_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  dst_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+  relation TEXT NOT NULL DEFAULT 'related_to',
+  weight REAL NOT NULL DEFAULT 0.5,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  last_activated_at TEXT,
+  activation_count INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY (src_id, dst_id, relation)
+);
+CREATE INDEX IF NOT EXISTS memory_links_src ON memory_links(src_id);
+CREATE INDEX IF NOT EXISTS memory_links_dst ON memory_links(dst_id);
+CREATE TABLE IF NOT EXISTS recall_profiles (
+  agent_id TEXT PRIMARY KEY,
+  type_weights TEXT NOT NULL DEFAULT '{}',
+  scope_weights TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
 """
+
+AUTO_LINK_WEIGHT = 0.3
+AUTO_LINK_LIMIT = 5
+CONSOLIDATION_MIN_CLUSTER_WEIGHT = 0.6
+CONSOLIDATION_MIN_ACTIVATIONS = 3
+CONSOLIDATION_MIN_CLUSTER_SIZE = 3
 
 
 class MemoryStore:
-    def __init__(self, path: str | Path, *, candidate_providers: Sequence[CandidateProvider] | None = None):
+    def __init__(
+        self,
+        path: str | Path,
+        *,
+        candidate_providers: Sequence[CandidateProvider] | None = None,
+        resonance_hops: int = 1,
+        check_same_thread: bool = True,
+    ):
+        if resonance_hops < 0:
+            raise ValueError("resonance_hops must be >= 0")
         self.path = Path(path)
         self.candidate_providers = list(candidate_providers or [])
+        self.resonance_hops = resonance_hops
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        # check_same_thread=False lets a server share one connection across a
+        # threadpool; callers doing so must serialize access themselves.
+        self.conn = sqlite3.connect(self.path, check_same_thread=check_same_thread)
         self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA foreign_keys=ON")
+        # Multi-agent deployments share one database file; WAL lets concurrent
+        # readers coexist with a writer and busy_timeout absorbs write races.
+        # Both PRAGMAs degrade gracefully where unsupported (e.g. some network
+        # filesystems keep journal_mode unchanged).
+        self.conn.execute("PRAGMA busy_timeout=5000")
+        self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
         self._ensure_decay_columns()
+        self._ensure_valid_fts_triggers()
         self.conn.commit()
 
     def close(self) -> None:
@@ -90,6 +145,24 @@ class MemoryStore:
         for name, definition in columns.items():
             if name not in existing:
                 self.conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {definition}")
+
+    def _ensure_valid_fts_triggers(self) -> None:
+        """Replace legacy FTS triggers that used the FTS5 'delete' command.
+
+        The 'delete' command is only valid for external-content/contentless
+        FTS5 tables; on this regular FTS5 table it raises 'SQL logic error' on
+        every UPDATE/DELETE. Databases created before the fix keep the broken
+        triggers because SCHEMA uses CREATE TRIGGER IF NOT EXISTS.
+        """
+        rows = self.conn.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name IN ('memories_ad', 'memories_au')"
+        ).fetchall()
+        broken = [row["name"] for row in rows if "'delete'" in (row["sql"] or "")]
+        if not broken:
+            return
+        for name in broken:
+            self.conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+        self.conn.executescript(SCHEMA)
 
     def add(self, record: MemoryRecord) -> MemoryRecord:
         record.summary = record.normalized_summary()
@@ -131,9 +204,218 @@ class MemoryStore:
         return existing
 
     def delete(self, memory_id: str) -> bool:
+        self.conn.execute(
+            "DELETE FROM memory_links WHERE src_id = ? OR dst_id = ?", (memory_id, memory_id)
+        )
         cur = self.conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
         self.conn.commit()
         return cur.rowcount > 0
+
+    def add_link(self, link: MemoryLink) -> MemoryLink:
+        """Upsert an authoritative association edge between two existing memories."""
+        for endpoint in (link.src_id, link.dst_id):
+            if self.get(endpoint) is None:
+                raise KeyError(endpoint)
+        self.conn.execute(
+            """
+            INSERT INTO memory_links(src_id, dst_id, relation, weight, created_at, updated_at,
+                                     last_activated_at, activation_count, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(src_id, dst_id, relation) DO UPDATE SET
+              weight = excluded.weight,
+              updated_at = excluded.updated_at,
+              source = excluded.source
+            """,
+            (
+                link.src_id, link.dst_id, link.relation, link.weight,
+                link.created_at, link.updated_at, link.last_activated_at,
+                link.activation_count, link.source_json(),
+            ),
+        )
+        self.conn.commit()
+        return link
+
+    def remove_link(self, src_id: str, dst_id: str, relation: str | None = None) -> bool:
+        where = "((src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?))"
+        params: list[object] = [src_id, dst_id, dst_id, src_id]
+        if relation:
+            where += " AND relation = ?"
+            params.append(relation)
+        cur = self.conn.execute(f"DELETE FROM memory_links WHERE {where}", params)
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def auto_link_similar(
+        self,
+        record: MemoryRecord,
+        *,
+        limit: int = AUTO_LINK_LIMIT,
+        weight: float = AUTO_LINK_WEIGHT,
+    ) -> list[MemoryLink]:
+        """Create weak `related_to` edges from a new memory to its FTS neighbors.
+
+        This is the write-time association pass: a new memory immediately joins
+        the graph near lexically similar memories. Edges are weak and derived —
+        co-recall reinforcement decides which of them mature. Reading through
+        these edges is still ACL/expiry hard-gated, so linking across owners or
+        visibility levels leaks nothing.
+        """
+        query = " ".join(record.content.split()[:16])
+        if not query.strip():
+            return []
+        rows = self._fts_rows(
+            query,
+            owner=None,
+            scope=None,
+            requester_agent_id=None,
+            requester_team_id=None,
+            limit=limit + 1,
+            now=utc_now(),
+        )
+        created: list[MemoryLink] = []
+        for row in rows:
+            if row["id"] == record.id or len(created) >= limit:
+                continue
+            existing = self.conn.execute(
+                "SELECT 1 FROM memory_links WHERE (src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?)",
+                (record.id, row["id"], row["id"], record.id),
+            ).fetchone()
+            if existing:
+                continue
+            created.append(
+                self.add_link(
+                    MemoryLink(
+                        src_id=record.id,
+                        dst_id=row["id"],
+                        relation="related_to",
+                        weight=weight,
+                        source={"auto": "fts_similarity"},
+                    )
+                )
+            )
+        return created
+
+    def save_profile(self, profile: RecallProfile) -> RecallProfile:
+        if not profile.agent_id:
+            raise ValueError("profile.agent_id must be non-empty to persist")
+        self.conn.execute(
+            """
+            INSERT INTO recall_profiles(agent_id, type_weights, scope_weights, updated_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(agent_id) DO UPDATE SET
+              type_weights = excluded.type_weights,
+              scope_weights = excluded.scope_weights,
+              updated_at = excluded.updated_at
+            """,
+            (
+                profile.agent_id,
+                json.dumps(profile.type_weights, ensure_ascii=False, sort_keys=True),
+                json.dumps(profile.scope_weights, ensure_ascii=False, sort_keys=True),
+                utc_now(),
+            ),
+        )
+        self.conn.commit()
+        return profile
+
+    def load_profile(self, agent_id: str) -> RecallProfile | None:
+        row = self.conn.execute(
+            "SELECT * FROM recall_profiles WHERE agent_id = ?", (agent_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return RecallProfile(
+            agent_id=row["agent_id"],
+            type_weights=json.loads(row["type_weights"] or "{}"),
+            scope_weights=json.loads(row["scope_weights"] or "{}"),
+        )
+
+    def links_for(self, memory_id: str) -> list[MemoryLink]:
+        rows = self.conn.execute(
+            "SELECT * FROM memory_links WHERE src_id = ? OR dst_id = ? ORDER BY weight DESC, src_id, dst_id",
+            (memory_id, memory_id),
+        ).fetchall()
+        return [self._row_to_link(row) for row in rows]
+
+    def record_recall(
+        self,
+        memory_ids: Sequence[str],
+        *,
+        create_colinks: bool = False,
+        helpful: bool = True,
+    ) -> dict[str, int]:
+        """Reinforce or weaken memories recalled together.
+
+        Co-recall is the Hebbian signal of associative memory: memories that are
+        useful together should surface together next time. With `helpful=True`
+        each call bumps per-memory reinforcement metadata and strengthens
+        existing links between every co-recalled pair; `create_colinks=True`
+        additionally creates weak `co_recalled` edges for pairs with no existing
+        link. With `helpful=False` the recall misled the agent: link weights are
+        reduced, memory confidence drops slightly, and no reinforcement is
+        recorded — the self-correction path.
+        """
+        ids = [memory_id for memory_id in dict.fromkeys(memory_ids) if self.get(memory_id) is not None]
+        now = utc_now()
+        reinforced_links = 0
+        created_links = 0
+        weakened_links = 0
+        for memory_id in ids:
+            if helpful:
+                self.conn.execute(
+                    "UPDATE memories SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?",
+                    (now, memory_id),
+                )
+            else:
+                self.conn.execute(
+                    "UPDATE memories SET confidence = max(0.0, confidence - ?), updated_at = ? WHERE id = ?",
+                    (NEGATIVE_FEEDBACK_CONFIDENCE_STEP, now, memory_id),
+                )
+        for i, src_id in enumerate(ids):
+            for dst_id in ids[i + 1:]:
+                if helpful:
+                    cur = self.conn.execute(
+                        """
+                        UPDATE memory_links
+                        SET weight = min(1.0, weight + ?),
+                            activation_count = activation_count + 1,
+                            last_activated_at = ?,
+                            updated_at = ?
+                        WHERE (src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?)
+                        """,
+                        (CO_RECALL_WEIGHT_STEP, now, now, src_id, dst_id, dst_id, src_id),
+                    )
+                    if cur.rowcount > 0:
+                        reinforced_links += cur.rowcount
+                    elif create_colinks:
+                        self.add_link(
+                            MemoryLink(
+                                src_id=src_id,
+                                dst_id=dst_id,
+                                relation="co_recalled",
+                                weight=CO_RECALL_INITIAL_WEIGHT,
+                                last_activated_at=now,
+                                activation_count=1,
+                            )
+                        )
+                        created_links += 1
+                else:
+                    cur = self.conn.execute(
+                        """
+                        UPDATE memory_links
+                        SET weight = max(0.0, weight - ?), updated_at = ?
+                        WHERE (src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?)
+                        """,
+                        (CO_RECALL_WEAKEN_STEP, now, src_id, dst_id, dst_id, src_id),
+                    )
+                    weakened_links += cur.rowcount
+        self.conn.commit()
+        return {
+            "reinforced_memories": len(ids) if helpful else 0,
+            "weakened_memories": 0 if helpful else len(ids),
+            "reinforced_links": reinforced_links,
+            "created_links": created_links,
+            "weakened_links": weakened_links,
+        }
 
     def rebuild_indexes(self) -> dict[str, int]:
         """Rebuild disposable retrieval indexes from authoritative memories."""
@@ -166,12 +448,16 @@ class MemoryStore:
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
         limit: int = 10,
+        profile: RecallProfile | None = None,
     ) -> list[SearchResult]:
-        """Search memories via dual-track retrieval.
+        """Search memories via dual-track retrieval plus resonance expansion.
 
         Track A is query-bound FTS5 relevance. Track B is query-independent
-        authority recall for bedrock memories. Both tracks still pass the same
-        expiry and requester ACL hard gates before scoring/fusion.
+        authority recall for bedrock memories. Track C expands direct hits
+        through authoritative `memory_links` edges (associative recall). All
+        tracks pass the same expiry and requester ACL hard gates before
+        scoring/fusion; an optional RecallProfile then applies per-agent soft
+        re-weighting to ranking only.
         """
         now = utc_now()
         now_dt = datetime.now(timezone.utc)
@@ -234,6 +520,23 @@ class MemoryStore:
             if previous is None or result.score > previous.score:
                 results[result.record.id] = result
 
+        if self.resonance_hops > 0 and results:
+            resonance_results = self._resonance_results(
+                seed_scores={memory_id: result.score for memory_id, result in results.items()},
+                owner=owner,
+                scope=scope,
+                requester_agent_id=requester_agent_id,
+                requester_team_id=requester_team_id,
+                now=now,
+                now_dt=now_dt,
+            )
+            for result in resonance_results:
+                previous = results.get(result.record.id)
+                if previous is None or result.score > previous.score:
+                    results[result.record.id] = result
+
+        self._apply_supersedes_demotion(results)
+
         final_results = sorted(results.values(), key=lambda result: result.score, reverse=True)
         if not final_results:
             final_results = self._fallback_candidates(
@@ -243,7 +546,289 @@ class MemoryStore:
                 requester_team_id=requester_team_id,
                 limit=limit,
             )
+        if profile is not None:
+            for result in final_results:
+                weight = profile.weight_for(result.record)
+                result.score *= weight
+                result.reason = f"{result.reason}+profile:{weight:.2f}"
+            final_results.sort(key=lambda result: result.score, reverse=True)
         return final_results[:limit]
+
+    def consolidate(self, *, owner: str | None = None, scope: str | None = None) -> dict[str, int]:
+        """Write-side hygiene pass: merge exact duplicates, synthesize concepts.
+
+        Both steps only operate within groups sharing identical owner, scope,
+        and visibility, so consolidation can never move content across ACL
+        boundaries or blend private and public memories into one record.
+        """
+        duplicates_merged = self._merge_exact_duplicates(owner=owner, scope=scope)
+        concepts_created = self._synthesize_corecall_clusters(owner=owner, scope=scope)
+        return {"duplicates_merged": duplicates_merged, "concepts_created": concepts_created}
+
+    def _merge_exact_duplicates(self, *, owner: str | None, scope: str | None) -> int:
+        where = ["1=1"]
+        params: list[object] = []
+        if owner:
+            where.append("owner = ?")
+            params.append(owner)
+        if scope:
+            where.append("scope = ?")
+            params.append(scope)
+        rows = self.conn.execute(
+            f"SELECT * FROM memories WHERE {' AND '.join(where)}", params
+        ).fetchall()
+        groups: DefaultDict[tuple, list[sqlite3.Row]] = defaultdict(list)
+        for row in rows:
+            key = (row["owner"], row["scope"], row["visibility"], _content_fingerprint(row["content"]))
+            groups[key].append(row)
+
+        merged = 0
+        for group in groups.values():
+            if len(group) < 2:
+                continue
+            group.sort(key=lambda row: (float(row["confidence"]), row["updated_at"], row["id"]), reverse=True)
+            canonical = group[0]
+            for duplicate in group[1:]:
+                for link in self.links_for(duplicate["id"]):
+                    other_end = link.dst_id if link.src_id == duplicate["id"] else link.src_id
+                    if other_end == canonical["id"]:
+                        continue
+                    src, dst = (
+                        (canonical["id"], other_end)
+                        if link.src_id == duplicate["id"]
+                        else (other_end, canonical["id"])
+                    )
+                    self.add_link(
+                        MemoryLink(
+                            src_id=src, dst_id=dst, relation=link.relation,
+                            weight=link.weight, last_activated_at=link.last_activated_at,
+                            activation_count=link.activation_count, source=link.source,
+                        )
+                    )
+                self.conn.execute(
+                    "UPDATE memories SET access_count = access_count + ? WHERE id = ?",
+                    (int(duplicate["access_count"] or 0), canonical["id"]),
+                )
+                self.delete(duplicate["id"])
+                merged += 1
+        self.conn.commit()
+        return merged
+
+    def _synthesize_corecall_clusters(self, *, owner: str | None, scope: str | None) -> int:
+        """Turn strongly co-recalled clusters into concept nodes.
+
+        Concept nodes are the cheap recall handle: everyday retrieval hits the
+        synthesized summary, and `derived_from` edges lead back to the original
+        episodes when detail is needed.
+        """
+        edges = self.conn.execute(
+            """
+            SELECT l.src_id, l.dst_id FROM memory_links l
+            JOIN memories s ON s.id = l.src_id
+            JOIN memories d ON d.id = l.dst_id
+            WHERE l.relation = 'co_recalled' AND l.weight >= ? AND l.activation_count >= ?
+              AND s.owner = d.owner AND s.scope = d.scope AND s.visibility = d.visibility
+            """,
+            (CONSOLIDATION_MIN_CLUSTER_WEIGHT, CONSOLIDATION_MIN_ACTIVATIONS),
+        ).fetchall()
+
+        parent: dict[str, str] = {}
+
+        def find(node: str) -> str:
+            parent.setdefault(node, node)
+            while parent[node] != node:
+                parent[node] = parent[parent[node]]
+                node = parent[node]
+            return node
+
+        for edge in edges:
+            root_a, root_b = find(edge["src_id"]), find(edge["dst_id"])
+            if root_a != root_b:
+                parent[root_b] = root_a
+
+        clusters: DefaultDict[str, list[str]] = defaultdict(list)
+        for node in parent:
+            clusters[find(node)].append(node)
+
+        created = 0
+        for members in clusters.values():
+            if len(members) < CONSOLIDATION_MIN_CLUSTER_SIZE:
+                continue
+            placeholders = ",".join("?" for _ in members)
+            rows = self.conn.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders}) ORDER BY updated_at",
+                members,
+            ).fetchall()
+            if len(rows) < CONSOLIDATION_MIN_CLUSTER_SIZE:
+                continue
+            first = rows[0]
+            if owner and first["owner"] != owner:
+                continue
+            if scope and first["scope"] != scope:
+                continue
+            already = self.conn.execute(
+                f"SELECT 1 FROM memory_links WHERE relation = 'derived_from' AND dst_id IN ({placeholders}) LIMIT 1",
+                members,
+            ).fetchone()
+            if already:
+                continue
+            summaries = "; ".join(row["summary"] for row in rows)
+            concept = MemoryRecord(
+                content=f"Consolidated insight from {len(rows)} related memories: {summaries}",
+                owner=first["owner"],
+                scope=first["scope"],
+                type="note",
+                visibility=json.loads(first["visibility"] or "[]"),
+                importance=max(float(row["importance"]) for row in rows),
+                confidence=sum(float(row["confidence"]) for row in rows) / len(rows),
+                source={"auto": "consolidation", "consolidated_from": [row["id"] for row in rows]},
+            )
+            self.add(concept)
+            for row in rows:
+                self.add_link(
+                    MemoryLink(
+                        src_id=concept.id, dst_id=row["id"], relation="derived_from",
+                        weight=0.9, source={"auto": "consolidation"},
+                    )
+                )
+            created += 1
+        self.conn.commit()
+        return created
+
+    def _apply_supersedes_demotion(self, results: dict[str, SearchResult]) -> None:
+        """Demote memories whose superseding record is also in the result set.
+
+        `supersedes` is the one directional relation: when both ends survive the
+        hard gates, the superseded end is stale by definition and must not
+        outrank its replacement. Demotion only fires when the requester can see
+        the superseding memory, so edge direction never leaks hidden records.
+        """
+        if len(results) < 2:
+            return
+        ids = list(results)
+        placeholders = ",".join("?" for _ in ids)
+        edges = self.conn.execute(
+            f"""
+            SELECT src_id, dst_id FROM memory_links
+            WHERE relation = 'supersedes'
+              AND src_id IN ({placeholders}) AND dst_id IN ({placeholders})
+            """,
+            [*ids, *ids],
+        ).fetchall()
+        for edge in edges:
+            superseded = results.get(edge["dst_id"])
+            if superseded is None or edge["src_id"] not in results:
+                continue
+            superseded.score *= SUPERSEDED_SCORE_PENALTY
+            superseded.reason = f"{superseded.reason}+superseded_by:{edge['src_id']}"
+
+    def _resonance_results(
+        self,
+        *,
+        seed_scores: dict[str, float],
+        owner: str | None,
+        scope: str | None,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+        now: str,
+        now_dt: datetime,
+    ) -> list[SearchResult]:
+        """Expand seed hits through memory_links with ACL-safe traversal.
+
+        Requester-invisible or expired nodes are dropped before they enter the
+        frontier, so they are both unreturnable and untraversable: a private
+        memory can never bridge two public memories for an unauthorized
+        requester, and edge existence never leaks through scores.
+
+        Edges themselves decay: an association that has not been co-activated
+        recently contributes less activation than a well-worn one, and each
+        frontier node only expands its strongest RESONANCE_MAX_EDGES_PER_NODE
+        edges so hub memories cannot flood the cluster.
+        """
+        visited: set[str] = set(seed_scores)
+        frontier: dict[str, float] = dict(seed_scores)
+        collected: list[tuple[sqlite3.Row, float, int, str]] = []
+
+        for hop in range(1, self.resonance_hops + 1):
+            if not frontier or len(collected) >= MAX_RESONANCE_CANDIDATES:
+                break
+            frontier_ids = list(frontier)
+            placeholders = ",".join("?" for _ in frontier_ids)
+            edges = self.conn.execute(
+                f"""
+                SELECT src_id AS from_id, dst_id AS neighbor_id, weight, relation,
+                       last_activated_at, updated_at
+                FROM memory_links WHERE src_id IN ({placeholders})
+                UNION ALL
+                SELECT dst_id AS from_id, src_id AS neighbor_id, weight, relation,
+                       last_activated_at, updated_at
+                FROM memory_links WHERE dst_id IN ({placeholders})
+                """,
+                [*frontier_ids, *frontier_ids],
+            ).fetchall()
+
+            edges_by_node: DefaultDict[str, list[tuple[float, sqlite3.Row]]] = defaultdict(list)
+            for edge in edges:
+                if edge["neighbor_id"] in visited:
+                    continue
+                edge_weight = min(max(float(edge["weight"]), 0.0), 1.0)
+                link_age_days = self._age_days(
+                    edge["last_activated_at"] or edge["updated_at"], now_dt
+                )
+                link_freshness = 0.5 ** (link_age_days / LINK_DECAY_HALF_LIFE_DAYS)
+                edges_by_node[edge["from_id"]].append((edge_weight * link_freshness, edge))
+
+            activations: dict[str, tuple[float, str, str]] = {}
+            for from_id, node_edges in edges_by_node.items():
+                node_edges.sort(key=lambda item: item[0], reverse=True)
+                for effective_weight, edge in node_edges[:RESONANCE_MAX_EDGES_PER_NODE]:
+                    neighbor_id = edge["neighbor_id"]
+                    activation = frontier[from_id] * effective_weight * RESONANCE_HOP_DECAY
+                    if activation > activations.get(neighbor_id, (0.0, "", ""))[0]:
+                        activations[neighbor_id] = (activation, from_id, edge["relation"])
+            if not activations:
+                break
+
+            ids = list(activations)
+            placeholders = ",".join("?" for _ in ids)
+            where = [f"id IN ({placeholders})", "(expires_at IS NULL OR expires_at > ?)"]
+            params: list[object] = [*ids, now]
+            if owner:
+                where.append("owner = ?")
+                params.append(owner)
+            if scope:
+                where.append("scope = ?")
+                params.append(scope)
+            self._append_acl_filter(
+                where,
+                params,
+                requester_agent_id=requester_agent_id,
+                requester_team_id=requester_team_id,
+                alias="",
+            )
+            rows = self.conn.execute(
+                f"SELECT * FROM memories WHERE {' AND '.join(where)}",
+                params,
+            ).fetchall()
+
+            visited.update(ids)
+            frontier = {}
+            for row in rows:
+                activation, from_id, relation = activations[row["id"]]
+                frontier[row["id"]] = activation
+                collected.append((row, activation, hop, f"via:{from_id}:{relation}"))
+                if len(collected) >= MAX_RESONANCE_CANDIDATES:
+                    break
+
+        return [
+            self._score_row(
+                row,
+                text_score=activation,
+                now_dt=now_dt,
+                reason_prefix=f"resonance:hop{hop}:{path}",
+            )
+            for row, activation, hop, path in collected
+        ]
 
     def _fts_rows(
         self,
@@ -588,7 +1173,17 @@ class MemoryStore:
         total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         by_scope = dict(self.conn.execute("SELECT scope, COUNT(*) FROM memories GROUP BY scope").fetchall())
         by_type = dict(self.conn.execute("SELECT type, COUNT(*) FROM memories GROUP BY type").fetchall())
-        return {"total": total, "by_scope": by_scope, "by_type": by_type}
+        links = self.conn.execute("SELECT COUNT(*) FROM memory_links").fetchone()[0]
+        return {"total": total, "by_scope": by_scope, "by_type": by_type, "links": links}
+
+    def _row_to_link(self, row: sqlite3.Row) -> MemoryLink:
+        return MemoryLink(
+            src_id=row["src_id"], dst_id=row["dst_id"], relation=row["relation"],
+            weight=float(row["weight"]), created_at=row["created_at"], updated_at=row["updated_at"],
+            last_activated_at=row["last_activated_at"],
+            activation_count=int(row["activation_count"] or 0),
+            source=json.loads(row["source"] or "{}"),
+        )
 
     def _row_to_record(self, row: sqlite3.Row) -> MemoryRecord:
         return MemoryRecord(
@@ -616,3 +1211,8 @@ class MemoryStore:
     def _fts_query(query: str) -> str:
         terms = [t.replace('"', ' ').strip() for t in query.split() if t.strip()]
         return " OR ".join(f'"{t}"' for t in terms) if terms else '""'
+
+
+def _content_fingerprint(text: str) -> str:
+    normalized = re.sub(r"\W+", " ", text.casefold()).strip()
+    return " ".join(normalized.split())[:160]

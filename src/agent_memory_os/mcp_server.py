@@ -33,6 +33,19 @@ def create_server():  # pragma: no cover - optional integration scaffold
     def memory_context_pack(query: str, owner: str | None = None, max_tokens: int = 1200) -> str:
         return client.context_pack(query, owner=owner, max_tokens=max_tokens)
 
+    @mcp.tool()
+    def memory_link(src_id: str, dst_id: str, relation: str = "related_to", weight: float = 0.5) -> dict:
+        link = client.link(src_id, dst_id, relation=relation, weight=weight)
+        return {"src_id": link.src_id, "dst_id": link.dst_id, "relation": link.relation, "weight": link.weight}
+
+    @mcp.tool()
+    def memory_recall_feedback(memory_ids: list[str], create_colinks: bool = False, helpful: bool = True) -> dict:
+        return client.record_recall(memory_ids, create_colinks=create_colinks, helpful=helpful)
+
+    @mcp.tool()
+    def memory_consolidate(owner: str | None = None, scope: str | None = None) -> dict:
+        return client.consolidate(owner=owner, scope=scope)
+
     return mcp
 
 

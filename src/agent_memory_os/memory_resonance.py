@@ -122,6 +122,35 @@ class ERATripletIndex:
             ),
         )
 
+    def derive_links(
+        self,
+        *,
+        min_shared_terms: int = 2,
+        max_term_degree: int = 20,
+    ) -> list[tuple[str, str, float]]:
+        """Derive weak association edges from shared ERA terms between chunks.
+
+        This is the bridge from the disposable ERA index into the authoritative
+        `memory_links` layer: pairs sharing at least `min_shared_terms`
+        non-hub terms become (src_id, dst_id, weight) tuples suitable for
+        `MemoryClient.import_links`. Terms appearing in more than
+        `max_term_degree` chunks are treated as hubs and skipped so common
+        vocabulary does not link everything to everything.
+        """
+        shared_counts: DefaultDict[tuple[str, str], int] = defaultdict(int)
+        for chunk_ids in self._chunks_by_term.values():
+            if len(chunk_ids) < 2 or len(chunk_ids) > max_term_degree:
+                continue
+            ordered = sorted(chunk_ids)
+            for i, src_id in enumerate(ordered):
+                for dst_id in ordered[i + 1:]:
+                    shared_counts[(src_id, dst_id)] += 1
+        return [
+            (src_id, dst_id, min(1.0, shared / 5.0))
+            for (src_id, dst_id), shared in sorted(shared_counts.items())
+            if shared >= min_shared_terms
+        ]
+
     def _neighbors(self, chunk_id: str) -> set[str]:
         neighbors: set[str] = set()
         for term in self._terms_by_chunk.get(chunk_id, set()):
