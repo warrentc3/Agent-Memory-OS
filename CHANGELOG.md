@@ -4,7 +4,7 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [0.11.0] — unreleased
+## [0.11.0] — 2026-07-11
 
 **Federation trust model** (migration 9) — resolves review findings D1–D4.
 
