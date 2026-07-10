@@ -186,6 +186,17 @@ def _cmd_doctor(args) -> int:
         if not ok:
             missing_extras.append(extra)
 
+    from .agents_config import config_path, load_agents_config
+
+    try:
+        configured = load_agents_config(args.home)
+        print(f"[{'ok' if configured else 'none'}] agents.toml "
+              f"({len(configured)} agents declared at {config_path(args.home)})"
+              if configured else
+              f"[none] agents.toml (optional; declare your fleet at {config_path(args.home)})")
+    except ValueError as exc:
+        print(f"[FAIL] agents.toml: {exc}")
+
     token_set = tokens.load_token(args.home) is not None
     print(f"[{'ok' if token_set else 'none'}] Web UI token "
           f"({'set' if token_set else 'run: agent-memory token create'})")

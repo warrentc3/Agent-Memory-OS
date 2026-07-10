@@ -46,6 +46,11 @@ class MemoryClient:
                 self.semantic_enabled = True
         elif semantic is not None:
             raise ValueError('semantic must be "auto" or None')
+        # Declarative fleet config: <home>/agents.toml entries are upserted on
+        # every open, so the file is authoritative for the agents it lists.
+        from .agents_config import apply_agents_config
+
+        self.configured_agents = apply_agents_config(self.store, home_path)
         self.profile = profile
         self.cache: LRUCache[tuple, object] = LRUCache(max_items=cache_items)
         self._profile_cache: dict[str, RecallProfile | None] = {}

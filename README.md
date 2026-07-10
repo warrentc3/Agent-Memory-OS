@@ -159,6 +159,20 @@ curl -X POST localhost:8000/api/agents -H 'content-type: application/json' \
   -d '{"id": "cc-main", "kind": "claude-code", "teams": ["apollo"]}'
 ```
 
+Or declare the whole fleet as code — `<home>/agents.toml` is re-applied
+every time the store opens (file-listed agents are file-authoritative;
+manually registered agents are untouched):
+
+```toml
+[agents.cc-main]
+kind = "claude-code"
+teams = ["apollo", "shared-infra"]   # multiple teams = multiple projects
+
+[agents.hermes-neo]
+kind = "hermes"
+teams = ["apollo", "ops"]
+```
+
 Each MCP server declares its identity with `AGENT_MEMORY_AGENT_ID`, so
 memories default to that agent as owner and every recall carries its team
 ACL. Ship one project's shared memory to another host with
@@ -213,7 +227,7 @@ pip install 'agent-memory-os[api]'
 agent-memory-web --host 127.0.0.1 --port 8000 --home ~/.agent-memory-web
 ```
 
-The console ships with a stats dashboard (scope/type/relation breakdowns, 14-day activity, most-recalled memories), search and recency browsing (memory cards with in-place editing, feedback, links, and delete actions), an interactive association-graph view, a context-pack preview with per-memory decisions, and add/link/consolidate tools — all driven by a global "acting as" identity.
+The console speaks **English, 繁體中文, 简体中文, 日本語, and 한국어** — auto-detected from the browser, switchable in the header. It ships with a stats dashboard (scope/type/relation breakdowns, 14-day activity, most-recalled memories), search and recency browsing (memory cards with in-place editing, feedback, links, and delete actions), an interactive association-graph view, a context-pack preview with per-memory decisions, and add/link/consolidate tools — all driven by a global "acting as" identity.
 
 Endpoints: `GET /health`, `GET /api/stats`, `GET /api/dashboard`, `GET|POST /api/memories`, `GET|PATCH|DELETE /api/memories/{id}`, `GET /api/memories/{id}/links`, `GET /api/graph`, `POST /api/links`, `POST /api/recall`, `POST /api/consolidate`, `GET /api/search`, `GET /api/context-pack`.
 

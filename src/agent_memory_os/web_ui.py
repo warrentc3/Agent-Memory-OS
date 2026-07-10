@@ -515,6 +515,173 @@ PAGE = r"""<!doctype html>
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
+
+/* ---------- i18n ---------- */
+const LOCALES = { "en": "English", "zh-TW": "繁體中文", "zh-CN": "简体中文", "ja": "日本語", "ko": "한국어" };
+const I18N = {
+"zh-TW": {
+"Dashboard":"儀表板","Search":"搜尋","Browse":"瀏覽","Graph":"圖譜","Agents":"代理","Add memory":"新增記憶","Tools":"工具",
+"Acting as":"目前身分","admin (all)":"管理者(全部)","Total memories":"記憶總數","Links":"關聯",
+"Memories":"記憶","Pinned":"釘選","Expired":"已過期","Archived":"已歸檔",
+"By scope":"依範圍","By type":"依類型","New memories · last 14 days":"新增記憶 · 近 14 天","Link relations":"關聯類型","Most recalled":"最常被回想","Resonance health":"共鳴健康度",
+"linked memories":"有關聯的記憶","orphans (no links)":"孤立(無關聯)","avg links / memory":"平均關聯數","stale links (90d+)":"陳舊關聯(90天+)","Strongest hubs:":"最強樞紐:",
+"No recall activity yet — feedback and auto-reinforce will populate this.":"尚無回想活動——回饋與自動強化會填入此處。",
+"Search memories… (associative recall included)":"搜尋記憶……(含聯想回想)",
+"Search your agent's memory.":"搜尋你的代理的記憶。","Results resonate through linked memories, gated by the acting identity.":"結果會沿關聯記憶共鳴浮現,並受目前身分的權限管控。",
+"Searching…":"搜尋中……","Nothing recalled for that query":"沒有回想起相關記憶",
+"all scopes":"全部範圍","all types":"全部類型","owner…":"擁有者……","Apply":"套用","Load more":"載入更多","No memories yet. Add the first one.":"還沒有記憶,新增第一筆吧。",
+"Association graph for the acting identity — an edge is shown only when both memories are visible to it. Drag nodes to untangle; click to copy a memory id.":"目前身分的關聯圖——僅當兩端記憶皆可見時才顯示邊。拖曳節點整理佈局;點擊複製記憶 ID。",
+"Register / update an agent":"註冊/更新代理","Save agent":"儲存代理","agent id (e.g. neo)":"代理 ID(例:neo)","display name":"顯示名稱","teams, comma separated (= projects)":"團隊,逗號分隔(=專案)",
+"No agents registered yet.":"尚未註冊任何代理。","no teams":"無團隊","never seen":"從未活動","👤 Act as":"👤 切換身分","🗑 Remove":"🗑 移除","memories":"筆記憶",
+"One project can mix Claude Code, Codex, OpenClaw, and multiple Hermes profiles against this store. Register each with its teams — team members automatically see team:<id> memories, and MCP servers declare identity via AGENT_MEMORY_AGENT_ID.":"一個專案可混用 Claude Code、Codex、OpenClaw 與多個 Hermes profiles。為每個代理註冊所屬團隊——成員自動可見 team:<id> 記憶;MCP 伺服器以 AGENT_MEMORY_AGENT_ID 宣告身分。",
+"Content":"內容","Owner":"擁有者","Scope":"範圍","Type":"類型","Tags":"標籤","Visibility":"可見性","Importance":"重要性","Confidence":"信心度","Expires at":"過期時間","Save memory":"儲存記憶",
+"What should be remembered?":"要記住什麼?","owner only":"僅擁有者","Pinned":"釘選","Auto-link similar":"自動關聯相似記憶",
+"Context pack preview":"Context Pack 預覽","Build pack":"產生 Pack","Query":"查詢","auto-reinforce":"自動強化",
+"Orchestrated context":"編排式 Context","Orchestrate":"編排","Task description":"任務描述","session id (optional)":"session ID(選填)",
+"Link two memories":"連結兩筆記憶","Link":"建立關聯","src memory id":"來源記憶 ID","dst memory id":"目標記憶 ID",
+"Consolidate":"整併","Run consolidation":"執行整併",
+"Retention & archive":"保留策略與歸檔","Archive expired":"歸檔過期記憶","Also archive decayed":"連同深度衰減","Archive is empty.":"歸檔是空的。","restore":"還原",
+"Federation":"聯邦同步","⬇ Download bundle":"⬇ 下載 Bundle","⬆ Import bundle":"⬆ 匯入 Bundle","Add peer":"加入節點","⇆ Sync mesh now":"⇆ 立即同步網格","peer url, e.g. http://host:8000":"節點網址,例:http://host:8000","peer token (optional)":"節點 token(選填)","No peers registered — this host syncs alone.":"尚未註冊任何節點——本機獨立運作。","remove":"移除",
+"⚠ Danger zone — forget an agent":"⚠ 危險區——遺忘一個代理","Delete all memories":"刪除全部記憶","agent / owner id (e.g. mizuki)":"代理/擁有者 ID(例:mizuki)",
+"✎ Edit":"✎ 編輯","👍 Helpful":"👍 有幫助","👎 Misleading":"👎 誤導","🔗 Links":"🔗 關聯","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 複製 ID","🗑 Delete":"🗑 刪除","why?":"為什麼?","Save":"儲存","Cancel":"取消","No links yet.":"尚無關聯。","Loading…":"載入中……","Ready.":"就緒。","🔒 private":"🔒 私有"
+},
+"zh-CN": {
+"Dashboard":"仪表板","Search":"搜索","Browse":"浏览","Graph":"图谱","Agents":"代理","Add memory":"新增记忆","Tools":"工具",
+"Acting as":"当前身份","admin (all)":"管理员(全部)","Total memories":"记忆总数","Links":"关联",
+"Memories":"记忆","Pinned":"置顶","Expired":"已过期","Archived":"已归档",
+"By scope":"按范围","By type":"按类型","New memories · last 14 days":"新增记忆 · 近 14 天","Link relations":"关联类型","Most recalled":"最常被回想","Resonance health":"共鸣健康度",
+"linked memories":"有关联的记忆","orphans (no links)":"孤立(无关联)","avg links / memory":"平均关联数","stale links (90d+)":"陈旧关联(90天+)","Strongest hubs:":"最强枢纽:",
+"No recall activity yet — feedback and auto-reinforce will populate this.":"尚无回想活动——反馈与自动强化会填充此处。",
+"Search memories… (associative recall included)":"搜索记忆……(含联想回想)",
+"Search your agent's memory.":"搜索你的代理的记忆。","Results resonate through linked memories, gated by the acting identity.":"结果会沿关联记忆共鸣浮现,并受当前身份的权限管控。",
+"Searching…":"搜索中……","Nothing recalled for that query":"没有回想起相关记忆",
+"all scopes":"全部范围","all types":"全部类型","owner…":"所有者……","Apply":"应用","Load more":"加载更多","No memories yet. Add the first one.":"还没有记忆,添加第一条吧。",
+"Association graph for the acting identity — an edge is shown only when both memories are visible to it. Drag nodes to untangle; click to copy a memory id.":"当前身份的关联图——仅当两端记忆均可见时才显示边。拖拽节点整理布局;点击复制记忆 ID。",
+"Register / update an agent":"注册/更新代理","Save agent":"保存代理","agent id (e.g. neo)":"代理 ID(如:neo)","display name":"显示名称","teams, comma separated (= projects)":"团队,逗号分隔(=项目)",
+"No agents registered yet.":"尚未注册任何代理。","no teams":"无团队","never seen":"从未活动","👤 Act as":"👤 切换身份","🗑 Remove":"🗑 移除","memories":"条记忆",
+"One project can mix Claude Code, Codex, OpenClaw, and multiple Hermes profiles against this store. Register each with its teams — team members automatically see team:<id> memories, and MCP servers declare identity via AGENT_MEMORY_AGENT_ID.":"一个项目可混用 Claude Code、Codex、OpenClaw 与多个 Hermes profiles。为每个代理注册所属团队——成员自动可见 team:<id> 记忆;MCP 服务器以 AGENT_MEMORY_AGENT_ID 声明身份。",
+"Content":"内容","Owner":"所有者","Scope":"范围","Type":"类型","Tags":"标签","Visibility":"可见性","Importance":"重要性","Confidence":"置信度","Expires at":"过期时间","Save memory":"保存记忆",
+"What should be remembered?":"要记住什么?","owner only":"仅所有者","Auto-link similar":"自动关联相似记忆",
+"Context pack preview":"Context Pack 预览","Build pack":"生成 Pack","Query":"查询","auto-reinforce":"自动强化",
+"Orchestrated context":"编排式 Context","Orchestrate":"编排","Task description":"任务描述","session id (optional)":"session ID(可选)",
+"Link two memories":"连接两条记忆","Link":"建立关联","src memory id":"源记忆 ID","dst memory id":"目标记忆 ID",
+"Consolidate":"整并","Run consolidation":"执行整并",
+"Retention & archive":"保留策略与归档","Archive expired":"归档过期记忆","Also archive decayed":"连同深度衰减","Archive is empty.":"归档是空的。","restore":"恢复",
+"Federation":"联邦同步","⬇ Download bundle":"⬇ 下载 Bundle","⬆ Import bundle":"⬆ 导入 Bundle","Add peer":"添加节点","⇆ Sync mesh now":"⇆ 立即同步网格","peer url, e.g. http://host:8000":"节点地址,如:http://host:8000","peer token (optional)":"节点 token(可选)","No peers registered — this host syncs alone.":"尚未注册任何节点——本机独立运行。","remove":"移除",
+"⚠ Danger zone — forget an agent":"⚠ 危险区——遗忘一个代理","Delete all memories":"删除全部记忆","agent / owner id (e.g. mizuki)":"代理/所有者 ID(如:mizuki)",
+"✎ Edit":"✎ 编辑","👍 Helpful":"👍 有帮助","👎 Misleading":"👎 误导","🔗 Links":"🔗 关联","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 复制 ID","🗑 Delete":"🗑 删除","why?":"为什么?","Save":"保存","Cancel":"取消","No links yet.":"暂无关联。","Loading…":"加载中……","Ready.":"就绪。","🔒 private":"🔒 私有"
+},
+"ja": {
+"Dashboard":"ダッシュボード","Search":"検索","Browse":"一覧","Graph":"グラフ","Agents":"エージェント","Add memory":"記憶を追加","Tools":"ツール",
+"Acting as":"操作中の身元","admin (all)":"管理者(すべて)","Total memories":"記憶総数","Links":"リンク",
+"Memories":"記憶","Pinned":"ピン留め","Expired":"期限切れ","Archived":"アーカイブ済み",
+"By scope":"スコープ別","By type":"タイプ別","New memories · last 14 days":"新規記憶 · 過去14日","Link relations":"リンク種別","Most recalled":"最も想起された記憶","Resonance health":"共鳴ヘルス",
+"linked memories":"リンク済み記憶","orphans (no links)":"孤立(リンクなし)","avg links / memory":"平均リンク数","stale links (90d+)":"古いリンク(90日+)","Strongest hubs:":"最強ハブ:",
+"No recall activity yet — feedback and auto-reinforce will populate this.":"まだ想起履歴がありません——フィードバックと自動強化でここに表示されます。",
+"Search memories… (associative recall included)":"記憶を検索……(連想想起を含む)",
+"Search your agent's memory.":"エージェントの記憶を検索。","Results resonate through linked memories, gated by the acting identity.":"結果はリンクされた記憶を通じて共鳴し、操作中の身元の権限で制御されます。",
+"Searching…":"検索中……","Nothing recalled for that query":"該当する記憶は想起されませんでした",
+"all scopes":"すべてのスコープ","all types":"すべてのタイプ","owner…":"所有者……","Apply":"適用","Load more":"さらに読み込む","No memories yet. Add the first one.":"まだ記憶がありません。最初の一件を追加しましょう。",
+"Association graph for the acting identity — an edge is shown only when both memories are visible to it. Drag nodes to untangle; click to copy a memory id.":"操作中の身元の関連グラフ——両端の記憶が可視の場合のみエッジを表示。ノードをドラッグで整理、クリックで記憶IDをコピー。",
+"Register / update an agent":"エージェントの登録/更新","Save agent":"エージェントを保存","agent id (e.g. neo)":"エージェントID(例:neo)","display name":"表示名","teams, comma separated (= projects)":"チーム、カンマ区切り(=プロジェクト)",
+"No agents registered yet.":"登録されたエージェントはまだありません。","no teams":"チームなし","never seen":"活動記録なし","👤 Act as":"👤 この身元で操作","🗑 Remove":"🗑 削除","memories":"件の記憶",
+"One project can mix Claude Code, Codex, OpenClaw, and multiple Hermes profiles against this store. Register each with its teams — team members automatically see team:<id> memories, and MCP servers declare identity via AGENT_MEMORY_AGENT_ID.":"一つのプロジェクトで Claude Code・Codex・OpenClaw・複数の Hermes プロファイルを併用できます。各エージェントをチームと共に登録——メンバーは team:<id> の記憶を自動的に閲覧でき、MCP サーバーは AGENT_MEMORY_AGENT_ID で身元を宣言します。",
+"Content":"内容","Owner":"所有者","Scope":"スコープ","Type":"タイプ","Tags":"タグ","Visibility":"可視性","Importance":"重要度","Confidence":"確信度","Expires at":"有効期限","Save memory":"記憶を保存",
+"What should be remembered?":"何を記憶しますか?","owner only":"所有者のみ","Auto-link similar":"類似記憶を自動リンク",
+"Context pack preview":"コンテキストパックのプレビュー","Build pack":"パック生成","Query":"クエリ","auto-reinforce":"自動強化",
+"Orchestrated context":"オーケストレーテッド・コンテキスト","Orchestrate":"編成","Task description":"タスクの説明","session id (optional)":"セッションID(任意)",
+"Link two memories":"記憶をリンク","Link":"リンク","src memory id":"元の記憶ID","dst memory id":"先の記憶ID",
+"Consolidate":"統合","Run consolidation":"統合を実行",
+"Retention & archive":"保持とアーカイブ","Archive expired":"期限切れをアーカイブ","Also archive decayed":"減衰分も含める","Archive is empty.":"アーカイブは空です。","restore":"復元",
+"Federation":"フェデレーション","⬇ Download bundle":"⬇ バンドルをダウンロード","⬆ Import bundle":"⬆ バンドルをインポート","Add peer":"ピアを追加","⇆ Sync mesh now":"⇆ 今すぐメッシュ同期","peer url, e.g. http://host:8000":"ピアURL(例:http://host:8000)","peer token (optional)":"ピアトークン(任意)","No peers registered — this host syncs alone.":"ピア未登録——このホストは単独で動作します。","remove":"削除",
+"⚠ Danger zone — forget an agent":"⚠ 危険ゾーン——エージェントを忘却","Delete all memories":"全記憶を削除","agent / owner id (e.g. mizuki)":"エージェント/所有者ID(例:mizuki)",
+"✎ Edit":"✎ 編集","👍 Helpful":"👍 役立った","👎 Misleading":"👎 誤解を招く","🔗 Links":"🔗 リンク","⇢ Share":"⇢ 共有","⧉ Copy id":"⧉ IDコピー","🗑 Delete":"🗑 削除","why?":"理由は?","Save":"保存","Cancel":"キャンセル","No links yet.":"リンクはまだありません。","Loading…":"読み込み中……","Ready.":"準備完了。","🔒 private":"🔒 プライベート"
+},
+"ko": {
+"Dashboard":"대시보드","Search":"검색","Browse":"둘러보기","Graph":"그래프","Agents":"에이전트","Add memory":"기억 추가","Tools":"도구",
+"Acting as":"현재 신원","admin (all)":"관리자(전체)","Total memories":"기억 총수","Links":"연결",
+"Memories":"기억","Pinned":"고정됨","Expired":"만료됨","Archived":"보관됨",
+"By scope":"범위별","By type":"유형별","New memories · last 14 days":"신규 기억 · 최근 14일","Link relations":"연결 유형","Most recalled":"가장 많이 회상됨","Resonance health":"공명 상태",
+"linked memories":"연결된 기억","orphans (no links)":"고립(연결 없음)","avg links / memory":"평균 연결 수","stale links (90d+)":"오래된 연결(90일+)","Strongest hubs:":"최강 허브:",
+"No recall activity yet — feedback and auto-reinforce will populate this.":"아직 회상 활동이 없습니다 — 피드백과 자동 강화로 채워집니다.",
+"Search memories… (associative recall included)":"기억 검색…(연상 회상 포함)",
+"Search your agent's memory.":"에이전트의 기억을 검색하세요.","Results resonate through linked memories, gated by the acting identity.":"결과는 연결된 기억을 통해 공명하며, 현재 신원의 권한으로 제어됩니다.",
+"Searching…":"검색 중……","Nothing recalled for that query":"해당 쿼리로 회상된 기억이 없습니다",
+"all scopes":"모든 범위","all types":"모든 유형","owner…":"소유자……","Apply":"적용","Load more":"더 불러오기","No memories yet. Add the first one.":"아직 기억이 없습니다. 첫 기억을 추가하세요.",
+"Association graph for the acting identity — an edge is shown only when both memories are visible to it. Drag nodes to untangle; click to copy a memory id.":"현재 신원의 연관 그래프 — 양쪽 기억이 모두 보일 때만 엣지가 표시됩니다. 노드를 드래그해 정리하고, 클릭하면 기억 ID가 복사됩니다.",
+"Register / update an agent":"에이전트 등록/수정","Save agent":"에이전트 저장","agent id (e.g. neo)":"에이전트 ID(예: neo)","display name":"표시 이름","teams, comma separated (= projects)":"팀, 쉼표로 구분(=프로젝트)",
+"No agents registered yet.":"등록된 에이전트가 없습니다.","no teams":"팀 없음","never seen":"활동 기록 없음","👤 Act as":"👤 이 신원으로 전환","🗑 Remove":"🗑 제거","memories":"개의 기억",
+"One project can mix Claude Code, Codex, OpenClaw, and multiple Hermes profiles against this store. Register each with its teams — team members automatically see team:<id> memories, and MCP servers declare identity via AGENT_MEMORY_AGENT_ID.":"하나의 프로젝트에서 Claude Code, Codex, OpenClaw, 여러 Hermes 프로필을 함께 사용할 수 있습니다. 각 에이전트를 팀과 함께 등록하세요 — 팀원은 team:<id> 기억을 자동으로 볼 수 있고, MCP 서버는 AGENT_MEMORY_AGENT_ID로 신원을 선언합니다.",
+"Content":"내용","Owner":"소유자","Scope":"범위","Type":"유형","Tags":"태그","Visibility":"공개 범위","Importance":"중요도","Confidence":"신뢰도","Expires at":"만료 시각","Save memory":"기억 저장",
+"What should be remembered?":"무엇을 기억할까요?","owner only":"소유자 전용","Auto-link similar":"유사 기억 자동 연결",
+"Context pack preview":"컨텍스트 팩 미리보기","Build pack":"팩 생성","Query":"쿼리","auto-reinforce":"자동 강화",
+"Orchestrated context":"오케스트레이션 컨텍스트","Orchestrate":"오케스트레이션","Task description":"작업 설명","session id (optional)":"세션 ID(선택)",
+"Link two memories":"기억 두 개 연결","Link":"연결","src memory id":"원본 기억 ID","dst memory id":"대상 기억 ID",
+"Consolidate":"통합","Run consolidation":"통합 실행",
+"Retention & archive":"보존 및 보관","Archive expired":"만료 기억 보관","Also archive decayed":"감쇠 기억도 포함","Archive is empty.":"보관함이 비어 있습니다.","restore":"복원",
+"Federation":"페더레이션","⬇ Download bundle":"⬇ 번들 다운로드","⬆ Import bundle":"⬆ 번들 가져오기","Add peer":"피어 추가","⇆ Sync mesh now":"⇆ 지금 메시 동기화","peer url, e.g. http://host:8000":"피어 URL, 예: http://host:8000","peer token (optional)":"피어 토큰(선택)","No peers registered — this host syncs alone.":"등록된 피어가 없습니다 — 이 호스트는 단독으로 동작합니다.","remove":"제거",
+"⚠ Danger zone — forget an agent":"⚠ 위험 구역 — 에이전트 망각","Delete all memories":"모든 기억 삭제","agent / owner id (e.g. mizuki)":"에이전트/소유자 ID(예: mizuki)",
+"✎ Edit":"✎ 편집","👍 Helpful":"👍 도움됨","👎 Misleading":"👎 오해 유발","🔗 Links":"🔗 연결","⇢ Share":"⇢ 공유","⧉ Copy id":"⧉ ID 복사","🗑 Delete":"🗑 삭제","why?":"이유는?","Save":"저장","Cancel":"취소","No links yet.":"아직 연결이 없습니다.","Loading…":"불러오는 중……","Ready.":"준비 완료.","🔒 private":"🔒 비공개"
+}
+};
+let locale = localStorage.getItem("amos.locale") || (() => {
+  const nav = (navigator.language || "en");
+  if (/^zh-(TW|HK|Hant)/i.test(nav)) return "zh-TW";
+  if (/^zh/i.test(nav)) return "zh-CN";
+  if (/^ja/i.test(nav)) return "ja";
+  if (/^ko/i.test(nav)) return "ko";
+  return "en";
+})();
+function t(source) {
+  const dictionary = I18N[locale];
+  return (dictionary && dictionary[source]) || source;
+}
+function applyLocale() {
+  const selectors = "nav.tabs button, button, h2, .panel h3, .tool h3, .tilelabel, .hint, p.hint, .graphhint, .chip, .acting > span, .empty";
+  document.querySelectorAll(selectors).forEach((node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType !== Node.TEXT_NODE) continue;
+      const original = child.dataset === undefined
+        ? (child.__i18nOriginal ?? (child.__i18nOriginal = child.nodeValue.trim()))
+        : child.nodeValue.trim();
+      if (original) child.nodeValue = child.nodeValue.replace(child.nodeValue.trim(), t(original));
+    }
+  });
+  document.querySelectorAll("label.field, .checks label").forEach((node) => {
+    for (const child of node.childNodes) {
+      if (child.nodeType !== Node.TEXT_NODE) continue;
+      const original = child.__i18nOriginal ?? (child.__i18nOriginal = child.nodeValue.trim());
+      if (original) child.nodeValue = child.nodeValue.replace(child.nodeValue.trim(), t(original));
+    }
+  });
+  document.querySelectorAll("[placeholder]").forEach((node) => {
+    const original = node.dataset.i18nPh ?? (node.dataset.i18nPh = node.getAttribute("placeholder"));
+    node.setAttribute("placeholder", t(original));
+  });
+  document.querySelectorAll('option[value=""]').forEach((option) => {
+    const original = option.dataset.i18n ?? (option.dataset.i18n = option.textContent);
+    option.textContent = t(original);
+  });
+}
+(function mountLocalePicker() {
+  const acting = document.querySelector(".acting");
+  const picker = document.createElement("select");
+  picker.id = "locale-pick";
+  picker.style.cssText = "padding:6px 8px;border-radius:8px;border:1px solid var(--border);background:var(--panel);color:var(--text);font-size:12.5px";
+  for (const [code, name] of Object.entries(LOCALES)) {
+    const option = document.createElement("option");
+    option.value = code; option.textContent = name;
+    if (code === locale) option.selected = true;
+    picker.appendChild(option);
+  }
+  picker.addEventListener("change", () => {
+    locale = picker.value;
+    localStorage.setItem("amos.locale", locale);
+    applyLocale();
+  });
+  acting.appendChild(picker);
+})();
+
 const actingAs = () => $("acting-as").value.trim();
 $("acting-as").value = localStorage.getItem("amos.actingAs") || "";
 $("acting-as").addEventListener("change", () => localStorage.setItem("amos.actingAs", actingAs()));
@@ -633,7 +800,7 @@ async function loadDashboard() {
   const top = $("d-top");
   top.innerHTML = "";
   if (!data.top_recalled.length) {
-    top.appendChild(el("span", "sm", "No recall activity yet — feedback and auto-reinforce will populate this."));
+    top.appendChild(el("span", "sm", t("No recall activity yet — feedback and auto-reinforce will populate this.")));
   }
   for (const item of data.top_recalled) {
     const row = el("div", "toprow");
@@ -646,10 +813,10 @@ async function loadDashboard() {
   const healthRow = $("d-health");
   healthRow.innerHTML = "";
   const stats = [
-    [health.linked_memories, "linked memories"],
-    [health.orphan_memories, "orphans (no links)"],
-    [health.avg_degree, "avg links / memory"],
-    [health.stale_links, "stale links (90d+)"],
+    [health.linked_memories, t("linked memories")],
+    [health.orphan_memories, t("orphans (no links)")],
+    [health.avg_degree, t("avg links / memory")],
+    [health.stale_links, t("stale links (90d+)")],
   ];
   for (const [value, label] of stats) {
     const stat = el("div", "healthstat");
@@ -660,7 +827,7 @@ async function loadDashboard() {
   const hubs = $("d-hubs");
   hubs.innerHTML = "";
   if (health.top_hubs.length) {
-    hubs.appendChild(el("span", "sm", "Strongest hubs:"));
+    hubs.appendChild(el("span", "sm", t("Strongest hubs:")));
     for (const hub of health.top_hubs) {
       const row = el("div", "toprow");
       row.appendChild(el("span", "cnt", hub.degree + "⛓"));
@@ -681,7 +848,7 @@ async function refreshAgents() {
     if (!data.agents.length) {
       const empty = el("div", "empty");
       empty.appendChild(el("div", "big", "🤖"));
-      empty.appendChild(document.createTextNode("No agents registered yet."));
+      empty.appendChild(document.createTextNode(t("No agents registered yet.")));
       list.appendChild(empty);
       return;
     }
@@ -695,26 +862,26 @@ async function refreshAgents() {
       if (agent.display_name) name.appendChild(document.createTextNode(" · " + agent.display_name));
       top.appendChild(name);
       const meta = el("span", "scorewrap");
-      meta.appendChild(el("span", "scoreval", agent.memory_count + " memories"));
+      meta.appendChild(el("span", "scoreval", agent.memory_count + " " + t("memories")));
       top.appendChild(meta);
       card.appendChild(top);
       const teams = el("div", "meta");
       const chips = el("span", "tags");
       for (const team of agent.teams) chips.appendChild(el("span", "tag", "team:" + team));
-      if (!agent.teams.length) chips.appendChild(el("span", "sm", "no teams"));
+      if (!agent.teams.length) chips.appendChild(el("span", "sm", t("no teams")));
       teams.appendChild(chips);
-      teams.appendChild(el("span", null, agent.last_seen_at ? "last seen " + new Date(agent.last_seen_at).toLocaleString() : "never seen"));
+      teams.appendChild(el("span", null, agent.last_seen_at ? new Date(agent.last_seen_at).toLocaleString() : t("never seen")));
       card.appendChild(teams);
       const actions = el("div", "actions");
-      const actBtn = el("button", null, "👤 Act as");
+      const actBtn = el("button", null, t("👤 Act as"));
       actBtn.addEventListener("click", () => { $("acting-as").value = agent.id; localStorage.setItem("amos.actingAs", agent.id); toast("Acting as " + agent.id, "ok"); });
-      const editBtn = el("button", null, "✎ Edit");
+      const editBtn = el("button", null, t("✎ Edit"));
       editBtn.addEventListener("click", () => {
         $("ag-id").value = agent.id; $("ag-name").value = agent.display_name;
         $("ag-kind").value = agent.kind; $("ag-teams").value = agent.teams.join(", ");
         window.scrollTo({ top: 0, behavior: "smooth" });
       });
-      const removeBtn = el("button", "danger", "🗑 Remove");
+      const removeBtn = el("button", "danger", t("🗑 Remove"));
       removeBtn.addEventListener("click", async () => {
         if (!confirm("Unregister agent “" + agent.id + "”? Its memories stay; it loses registered team access.")) return;
         try { await api("/api/agents/" + encodeURIComponent(agent.id), { method: "DELETE" }); refreshAgents(); }
@@ -766,7 +933,7 @@ function renderCard(memory, extras) {
   top.appendChild(owner);
   if (memory.pinned) top.appendChild(el("span", "pin", "📌"));
   if (!memory.visibility || memory.visibility.length === 0) {
-    top.appendChild(el("span", "owner", "🔒 private"));
+    top.appendChild(el("span", "owner", t("🔒 private")));
   }
   if (extras && typeof extras.score === "number") {
     const wrap = el("span", "scorewrap");
@@ -794,14 +961,14 @@ function renderCard(memory, extras) {
   card.appendChild(meta);
 
   const actions = el("div", "actions");
-  const editBtn = el("button", null, "✎ Edit");
+  const editBtn = el("button", null, t("✎ Edit"));
   editBtn.addEventListener("click", () => enterEditMode(card, memory));
-  const helpfulBtn = el("button", null, "👍 Helpful");
+  const helpfulBtn = el("button", null, t("👍 Helpful"));
   helpfulBtn.addEventListener("click", () => feedback(memory.id, true));
-  const misleadingBtn = el("button", null, "👎 Misleading");
+  const misleadingBtn = el("button", null, t("👎 Misleading"));
   misleadingBtn.addEventListener("click", () => feedback(memory.id, false));
-  const linksBtn = el("button", null, "🔗 Links");
-  const shareBtn = el("button", null, "⇢ Share");
+  const linksBtn = el("button", null, t("🔗 Links"));
+  const shareBtn = el("button", null, t("⇢ Share"));
   shareBtn.addEventListener("click", async () => {
     const actor = actingAs() || memory.owner;
     const target = prompt(
@@ -823,9 +990,9 @@ function renderCard(memory, extras) {
         : "Shared with " + result.grant + " (audited).", "ok");
     } catch (e) { toast(e.message, "err"); }
   });
-  const copyBtn = el("button", null, "⧉ Copy id");
+  const copyBtn = el("button", null, t("⧉ Copy id"));
   copyBtn.addEventListener("click", () => { navigator.clipboard.writeText(memory.id); toast("Copied " + memory.id, "ok"); });
-  const deleteBtn = el("button", "danger", "🗑 Delete");
+  const deleteBtn = el("button", "danger", t("🗑 Delete"));
   deleteBtn.addEventListener("click", async () => {
     if (!confirm("Delete this memory permanently?\n\n" + memory.content.slice(0, 120))) return;
     try {
@@ -835,7 +1002,7 @@ function renderCard(memory, extras) {
   });
   actions.append(editBtn, helpfulBtn, misleadingBtn, linksBtn, shareBtn, copyBtn, deleteBtn);
   if (extras && extras.reason) {
-    const whyBtn = el("button", null, "why?");
+    const whyBtn = el("button", null, t("why?"));
     const reason = el("div", "reason", extras.reason);
     whyBtn.addEventListener("click", () => { reason.style.display = reason.style.display === "block" ? "none" : "block"; });
     actions.appendChild(whyBtn);
@@ -920,9 +1087,9 @@ function enterEditMode(card, memory) {
   form.appendChild(row2);
 
   const row3 = el("div", "erow");
-  const saveBtn = el("button", "primary", "Save");
+  const saveBtn = el("button", "primary", t("Save"));
   saveBtn.style.padding = "8px 18px";
-  const cancelBtn = el("button", "ghost", "Cancel");
+  const cancelBtn = el("button", "ghost", t("Cancel"));
   row3.append(saveBtn, cancelBtn);
   form.appendChild(row3);
 
@@ -966,7 +1133,7 @@ async function runSearch() {
   const query = $("q").value.trim();
   if (!query) return;
   const container = $("search-results");
-  container.innerHTML = ""; container.appendChild(el("div", "empty", "Searching…"));
+  container.innerHTML = ""; container.appendChild(el("div", "empty", t("Searching…")));
   const params = new URLSearchParams({ q: query, limit: "20" });
   if (actingAs()) params.set("requester_agent_id", actingAs());
   try {
@@ -975,7 +1142,7 @@ async function runSearch() {
     if (!data.results.length) {
       const empty = el("div", "empty");
       empty.appendChild(el("div", "big", "∅"));
-      empty.appendChild(document.createTextNode("Nothing recalled for that query" + (actingAs() ? " as “" + actingAs() + "”." : ".")));
+      empty.appendChild(document.createTextNode(t("Nothing recalled for that query") + (actingAs() ? " — " + actingAs() : "") + "."));
       container.appendChild(empty);
       return;
     }
@@ -1005,7 +1172,7 @@ async function refreshBrowse(more) {
     if (!data.memories.length && browseOffset === 0) {
       const empty = el("div", "empty");
       empty.appendChild(el("div", "big", "☁"));
-      empty.appendChild(document.createTextNode("No memories yet. Add the first one."));
+      empty.appendChild(document.createTextNode(t("No memories yet. Add the first one.")));
       container.appendChild(empty);
     }
     for (const memory of data.memories) container.appendChild(renderCard(memory, null));
@@ -1258,12 +1425,12 @@ async function refreshArchive() {
   try {
     const data = await api("/api/archive?limit=5");
     list.innerHTML = "";
-    if (!data.archived.length) { list.appendChild(el("span", "sm", "Archive is empty.")); return; }
+    if (!data.archived.length) { list.appendChild(el("span", "sm", t("Archive is empty."))); return; }
     for (const item of data.archived) {
       const row = el("div", "toprow");
       row.appendChild(el("span", "cnt", item.archive_reason));
       row.appendChild(el("span", "sm", item.summary));
-      const restoreBtn = el("button", "ghost", "restore");
+      const restoreBtn = el("button", "ghost", t("restore"));
       restoreBtn.style.cssText = "font-size:11px;padding:2px 10px;flex:0 0 auto";
       restoreBtn.addEventListener("click", async () => {
         try {
@@ -1317,11 +1484,11 @@ async function refreshPeers() {
   try {
     const data = await api("/api/peers");
     list.innerHTML = "";
-    if (!data.peers.length) { list.appendChild(el("span", "sm", "No peers registered — this host syncs alone.")); return; }
+    if (!data.peers.length) { list.appendChild(el("span", "sm", t("No peers registered — this host syncs alone."))); return; }
     for (const peer of data.peers) {
       const row = el("div", "toprow");
       row.appendChild(el("span", "sm", peer.url + (peer.last_synced_at ? " · last: " + peer.last_result : " · never synced")));
-      const removeBtn = el("button", "ghost", "remove");
+      const removeBtn = el("button", "ghost", t("remove"));
       removeBtn.style.cssText = "font-size:11px;padding:2px 10px;flex:0 0 auto";
       removeBtn.addEventListener("click", async () => {
         try { await api("/api/peers?url=" + encodeURIComponent(peer.url), { method: "DELETE" }); refreshPeers(); }
@@ -1409,6 +1576,7 @@ $("btn-consolidate").addEventListener("click", async () => {
   } catch (e) { out.textContent = ""; toast(e.message, "err"); }
 });
 
+applyLocale();
 loadStats();
 loadDashboard();
 </script>
