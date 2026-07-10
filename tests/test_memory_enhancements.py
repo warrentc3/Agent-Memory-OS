@@ -257,3 +257,144 @@ def _colink(src_id: str, dst_id: str):
         weight=0.7,
         activation_count=3,
     )
+
+
+# --- Regression tests for the code-review findings ---
+
+
+def test_negative_feedback_never_boosts_stale_memory(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    stale = client.add("Old server ip is 10.0.0.5 for deploy.", visibility=["global"])
+    client.store.conn.execute(
+        "UPDATE memories SET updated_at = ?, created_at = ? WHERE id = ?",
+        (BACKDATED, BACKDATED, stale.id),
+    )
+    client.store.conn.commit()
+    client.cache.clear()
+
+    before = client.search("server ip deploy", requester_agent_id="neo")[0].score
+    client.record_recall([stale.id], helpful=False)
+    after = client.search("server ip deploy", requester_agent_id="neo")[0].score
+
+    assert after <= before
+
+
+def test_bm25_stronger_match_ranks_higher(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    for i in range(10):
+        client.add(f"Noise document {i} about cats and weather patterns.", visibility=["global"])
+    strong = client.add(
+        "Deploy deploy deploy target port configuration for deploy pipeline.",
+        visibility=["global"],
+    )
+    weak = client.add(
+        "One passing mention of deploy inside a very long unrelated document "
+        + "filler words " * 40,
+        visibility=["global"],
+    )
+
+    hits = client.search("deploy", requester_agent_id="neo")
+    positions = {hit.record.id: index for index, hit in enumerate(hits)}
+
+    assert positions[strong.id] < positions[weak.id]
+
+
+def test_consolidate_does_not_merge_long_prefix_divergent_content(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    preamble = "Deployment checklist for service X after the database migration completes " * 4
+    client.add(preamble + "then restart nginx immediately.", visibility=["global"])
+    client.add(preamble + "then do NOT restart nginx under any circumstances.", visibility=["global"])
+
+    result = client.consolidate()
+
+    assert result["duplicates_merged"] == 0
+    assert client.stats()["total"] == 2
+
+
+def test_consolidate_keeps_pinned_authority_canonical(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    pinned = client.add(
+        "Bedrock rule: production deploys require approval.",
+        visibility=["global"],
+        confidence=0.8,
+        pinned=True,
+        source={"permanence": True, "weight": 10},
+    )
+    casual = client.add(
+        "Bedrock rule: production deploys require approval.",
+        visibility=["global"],
+        confidence=0.95,
+    )
+
+    result = client.consolidate()
+
+    assert result["duplicates_merged"] == 1
+    assert client.get(pinned.id) is not None
+    assert client.get(casual.id) is None
+
+
+def test_consolidate_merge_does_not_duplicate_edges(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    anchor = client.add("Unrelated anchor memory xyz.", visibility=["global"])
+    canonical = client.add("The deploy password rotation procedure.", visibility=["global"], confidence=0.9)
+    duplicate = client.add("The deploy password rotation procedure.", visibility=["global"], confidence=0.5)
+    client.link(anchor.id, canonical.id, weight=0.9)
+    client.link(duplicate.id, anchor.id, weight=0.2)
+
+    client.consolidate()
+
+    edges = client.links(anchor.id)
+    assert len(edges) == 1
+    assert edges[0].weight == 0.9
+
+
+def test_record_recall_never_touches_supersedes_edges(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    new = client.add("Deploy target is port 8000.", visibility=["global"])
+    old = client.add("Deploy target is port 8765.", visibility=["global"])
+    client.link(new.id, old.id, relation="supersedes", weight=1.0)
+
+    result = client.record_recall([new.id, old.id])
+
+    assert result["reinforced_links"] == 0
+    link = client.links(new.id)[0]
+    assert link.weight == 1.0
+    assert link.activation_count == 0
+
+
+def test_record_recall_requester_cannot_affect_invisible_memories(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    private = client.add("Private journal entry.", owner="mizuki", visibility=[], confidence=0.8)
+    public = client.add("Public checklist entry.", owner="mizuki", visibility=["global"], confidence=0.8)
+
+    result = client.record_recall(
+        [private.id, public.id], helpful=False, requester_agent_id="neo"
+    )
+
+    assert result["weakened_memories"] == 1
+    assert client.get(private.id).confidence == 0.8
+    assert client.get(public.id).confidence < 0.8
+
+
+def test_import_links_preserves_reinforced_weights(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    a = client.add("Turbovec semantic recall notes.", visibility=["global"])
+    b = client.add("Turbovec benchmark results.", visibility=["global"])
+    client.link(a.id, b.id, weight=0.9)
+
+    imported = client.import_links([(a.id, b.id, 0.3)])
+
+    assert imported == 0
+    assert client.links(a.id)[0].weight == 0.9
+
+
+def test_load_profile_sees_profiles_saved_by_another_client(tmp_path):
+    reader = MemoryClient(home=tmp_path)
+    assert reader.load_profile("neo") is None
+
+    writer = MemoryClient(home=tmp_path)
+    writer.save_profile(RecallProfile(agent_id="neo", type_weights={"procedure": 1.5}))
+
+    refreshed = reader.load_profile("neo")
+    assert refreshed is not None
+    assert refreshed.type_weights == {"procedure": 1.5}

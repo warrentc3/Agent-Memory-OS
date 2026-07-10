@@ -4,6 +4,7 @@ from collections import defaultdict
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import DefaultDict, Sequence
+import hashlib
 import json
 import math
 import re
@@ -329,6 +330,14 @@ class MemoryStore:
             scope_weights=json.loads(row["scope_weights"] or "{}"),
         )
 
+    def link_exists(self, memory_id: str, other_id: str) -> bool:
+        """Return whether any edge connects the two memories in either direction."""
+        row = self.conn.execute(
+            "SELECT 1 FROM memory_links WHERE (src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?) LIMIT 1",
+            (memory_id, other_id, other_id, memory_id),
+        ).fetchone()
+        return row is not None
+
     def links_for(self, memory_id: str) -> list[MemoryLink]:
         rows = self.conn.execute(
             "SELECT * FROM memory_links WHERE src_id = ? OR dst_id = ? ORDER BY weight DESC, src_id, dst_id",
@@ -342,6 +351,8 @@ class MemoryStore:
         *,
         create_colinks: bool = False,
         helpful: bool = True,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
     ) -> dict[str, int]:
         """Reinforce or weaken memories recalled together.
 
@@ -351,10 +362,22 @@ class MemoryStore:
         existing links between every co-recalled pair; `create_colinks=True`
         additionally creates weak `co_recalled` edges for pairs with no existing
         link. With `helpful=False` the recall misled the agent: link weights are
-        reduced, memory confidence drops slightly, and no reinforcement is
-        recorded — the self-correction path.
+        reduced and memory confidence drops slightly — the self-correction path.
+        Negative feedback deliberately leaves `updated_at` alone: touching it
+        would reset the freshness-decay clock and boost the memory instead.
+
+        `supersedes` edges carry truth-arbitration direction, not association
+        strength, so recall feedback never adjusts them.
+
+        When a requester is given, only memories that requester can see are
+        affected — feedback from untrusted surfaces (HTTP/MCP) cannot touch
+        another agent's private memories.
         """
-        ids = [memory_id for memory_id in dict.fromkeys(memory_ids) if self.get(memory_id) is not None]
+        ids = self._recall_eligible_ids(
+            memory_ids,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+        )
         now = utc_now()
         reinforced_links = 0
         created_links = 0
@@ -367,22 +390,26 @@ class MemoryStore:
                 )
             else:
                 self.conn.execute(
-                    "UPDATE memories SET confidence = max(0.0, confidence - ?), updated_at = ? WHERE id = ?",
-                    (NEGATIVE_FEEDBACK_CONFIDENCE_STEP, now, memory_id),
+                    "UPDATE memories SET confidence = max(0.0, confidence - ?) WHERE id = ?",
+                    (NEGATIVE_FEEDBACK_CONFIDENCE_STEP, memory_id),
                 )
+        pair_clause = (
+            "((src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?)) AND relation != 'supersedes'"
+        )
         for i, src_id in enumerate(ids):
             for dst_id in ids[i + 1:]:
+                pair_params = (src_id, dst_id, dst_id, src_id)
                 if helpful:
                     cur = self.conn.execute(
-                        """
+                        f"""
                         UPDATE memory_links
                         SET weight = min(1.0, weight + ?),
                             activation_count = activation_count + 1,
                             last_activated_at = ?,
                             updated_at = ?
-                        WHERE (src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?)
+                        WHERE {pair_clause}
                         """,
-                        (CO_RECALL_WEIGHT_STEP, now, now, src_id, dst_id, dst_id, src_id),
+                        (CO_RECALL_WEIGHT_STEP, now, now, *pair_params),
                     )
                     if cur.rowcount > 0:
                         reinforced_links += cur.rowcount
@@ -400,12 +427,12 @@ class MemoryStore:
                         created_links += 1
                 else:
                     cur = self.conn.execute(
-                        """
+                        f"""
                         UPDATE memory_links
                         SET weight = max(0.0, weight - ?), updated_at = ?
-                        WHERE (src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?)
+                        WHERE {pair_clause}
                         """,
-                        (CO_RECALL_WEAKEN_STEP, now, src_id, dst_id, dst_id, src_id),
+                        (CO_RECALL_WEAKEN_STEP, now, *pair_params),
                     )
                     weakened_links += cur.rowcount
         self.conn.commit()
@@ -416,6 +443,34 @@ class MemoryStore:
             "created_links": created_links,
             "weakened_links": weakened_links,
         }
+
+    def _recall_eligible_ids(
+        self,
+        memory_ids: Sequence[str],
+        *,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+    ) -> list[str]:
+        ordered = [memory_id for memory_id in dict.fromkeys(memory_ids) if memory_id]
+        if not ordered:
+            return []
+        placeholders = ",".join("?" for _ in ordered)
+        where = [f"id IN ({placeholders})"]
+        params: list[object] = [*ordered]
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="",
+        )
+        visible = {
+            row["id"]
+            for row in self.conn.execute(
+                f"SELECT id FROM memories WHERE {' AND '.join(where)}", params
+            ).fetchall()
+        }
+        return [memory_id for memory_id in ordered if memory_id in visible]
 
     def rebuild_indexes(self) -> dict[str, int]:
         """Rebuild disposable retrieval indexes from authoritative memories."""
@@ -472,8 +527,11 @@ class MemoryStore:
         )
         results: dict[str, SearchResult] = {}
         for row in rows:
-            rank = float(row["rank"])
-            text_score = 1.0 / (1.0 + abs(rank))
+            # bm25() returns more-negative values for stronger matches; map to
+            # (0.5, 1.0) so relevance rises with match strength instead of
+            # inverting it.
+            rank = min(float(row["rank"]), 0.0)
+            text_score = (1.0 - rank) / (2.0 - rank)
             result = self._score_row(row, text_score=text_score, now_dt=now_dt, reason_prefix="fts")
             results[result.record.id] = result
 
@@ -586,12 +644,16 @@ class MemoryStore:
         for group in groups.values():
             if len(group) < 2:
                 continue
-            group.sort(key=lambda row: (float(row["confidence"]), row["updated_at"], row["id"]), reverse=True)
+            # Pinned and authority-track records must never lose to a casual
+            # duplicate, regardless of confidence.
+            group.sort(key=_merge_priority, reverse=True)
             canonical = group[0]
             for duplicate in group[1:]:
                 for link in self.links_for(duplicate["id"]):
                     other_end = link.dst_id if link.src_id == duplicate["id"] else link.src_id
                     if other_end == canonical["id"]:
+                        continue
+                    if self.link_exists(canonical["id"], other_end):
                         continue
                     src, dst = (
                         (canonical["id"], other_end)
@@ -790,26 +852,14 @@ class MemoryStore:
                 break
 
             ids = list(activations)
-            placeholders = ",".join("?" for _ in ids)
-            where = [f"id IN ({placeholders})", "(expires_at IS NULL OR expires_at > ?)"]
-            params: list[object] = [*ids, now]
-            if owner:
-                where.append("owner = ?")
-                params.append(owner)
-            if scope:
-                where.append("scope = ?")
-                params.append(scope)
-            self._append_acl_filter(
-                where,
-                params,
+            rows = self._visible_rows_for_ids(
+                ids,
+                owner=owner,
+                scope=scope,
                 requester_agent_id=requester_agent_id,
                 requester_team_id=requester_team_id,
-                alias="",
+                now=now,
             )
-            rows = self.conn.execute(
-                f"SELECT * FROM memories WHERE {' AND '.join(where)}",
-                params,
-            ).fetchall()
 
             visited.update(ids)
             frontier = {}
@@ -927,6 +977,10 @@ class MemoryStore:
 
         candidates_by_id: dict[str, Candidate] = {}
         candidate_cap = max(1, min(MAX_SEMANTIC_CANDIDATES, max(limit * 10, limit)))
+        # Over-fetch from providers: the ACL/expiry hard gates run AFTER the
+        # provider returns, so asking for exactly `limit` can leave the whole
+        # semantic track empty for requesters who can't see the global top hits.
+        provider_fetch_limit = max(limit, min(candidate_cap, limit * 5))
         for provider in self.candidate_providers:
             provider_name = self._safe_provider_name(provider)
             provider_candidates: dict[str, Candidate] = {}
@@ -938,7 +992,7 @@ class MemoryStore:
                     scope=scope,
                     requester_agent_id=requester_agent_id,
                     requester_team_id=requester_team_id,
-                    limit=limit,
+                    limit=provider_fetch_limit,
                 )
                 for raw_candidate in candidates:
                     raw_seen += 1
@@ -969,7 +1023,34 @@ class MemoryStore:
         if not candidates_by_id:
             return []
 
-        ids = list(candidates_by_id)
+        rows = self._visible_rows_for_ids(
+            list(candidates_by_id),
+            owner=owner,
+            scope=scope,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            now=now,
+        )
+        return [(row, candidates_by_id[row["id"]]) for row in rows]
+
+    def _visible_rows_for_ids(
+        self,
+        ids: list[str],
+        *,
+        owner: str | None,
+        scope: str | None,
+        requester_agent_id: str | None,
+        requester_team_id: str | None,
+        now: str,
+    ) -> list[sqlite3.Row]:
+        """Rejoin untrusted candidate ids through the ACL/expiry hard gates.
+
+        This is the single security gate for every id-producing retrieval
+        track (semantic sidecars, resonance expansion): keep it in one place so
+        a future ACL change cannot diverge between tracks.
+        """
+        if not ids:
+            return []
         placeholders = ",".join("?" for _ in ids)
         where = [f"id IN ({placeholders})", "(expires_at IS NULL OR expires_at > ?)"]
         params: list[object] = [*ids, now]
@@ -986,14 +1067,10 @@ class MemoryStore:
             requester_team_id=requester_team_id,
             alias="",
         )
-        rows = self.conn.execute(
-            f"""
-            SELECT * FROM memories
-            WHERE {' AND '.join(where)}
-            """,
+        return self.conn.execute(
+            f"SELECT * FROM memories WHERE {' AND '.join(where)}",
             params,
         ).fetchall()
-        return [(row, candidates_by_id[row["id"]]) for row in rows]
 
     @classmethod
     def _coerce_semantic_candidate(cls, raw_candidate: object, *, provider_name: str) -> Candidate | None:
@@ -1214,5 +1291,22 @@ class MemoryStore:
 
 
 def _content_fingerprint(text: str) -> str:
+    """Hash the FULL normalized content for exact-duplicate detection.
+
+    Unlike context_pack's claim fingerprint (which truncates for cheap
+    comparison), consolidation deletes records, so two memories that share a
+    long prefix but diverge later must never collide.
+    """
     normalized = re.sub(r"\W+", " ", text.casefold()).strip()
-    return " ".join(normalized.split())[:160]
+    normalized = " ".join(normalized.split())
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+def _merge_priority(row: sqlite3.Row) -> tuple:
+    source = json.loads(row["source"] or "{}")
+    try:
+        weight = float(source.get("weight", 0) or 0)
+    except (TypeError, ValueError):
+        weight = 0.0
+    authority = 1 if (source.get("permanence") in (True, 1) and weight >= 10) else 0
+    return (int(row["pinned"] or 0), authority, float(row["confidence"]), row["updated_at"], row["id"])

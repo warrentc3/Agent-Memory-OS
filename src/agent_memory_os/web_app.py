@@ -12,6 +12,7 @@ import argparse
 import html
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,20 @@ class AddMemoryRequest(BaseModel):
             raise ValueError(f"type must be one of {sorted(VALID_TYPES)}")
         return value
 
+    @field_validator("expires_at")
+    @classmethod
+    def _valid_expires_at(cls, value: str | None) -> str | None:
+        # Expiry gates compare this lexicographically against ISO-8601 UTC
+        # "now"; a non-ISO value would silently make the memory permanently
+        # expired (or never-expiring) with no error anywhere.
+        if value is None:
+            return value
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("expires_at must be an ISO-8601 timestamp") from exc
+        return value
+
 
 class LinkRequest(BaseModel):
     src_id: str = Field(min_length=1)
@@ -75,6 +90,8 @@ class RecallFeedbackRequest(BaseModel):
     memory_ids: list[str] = Field(min_length=1)
     helpful: bool = True
     create_colinks: bool = False
+    requester_agent_id: str | None = None
+    requester_team_id: str | None = None
 
 
 def _record_payload(record: MemoryRecord) -> dict[str, Any]:
@@ -293,6 +310,8 @@ def create_app(home: str | Path | None = None) -> FastAPI:
                 request.memory_ids,
                 helpful=request.helpful,
                 create_colinks=request.create_colinks,
+                requester_agent_id=request.requester_agent_id or None,
+                requester_team_id=request.requester_team_id or None,
             )
 
     @app.post("/api/consolidate")

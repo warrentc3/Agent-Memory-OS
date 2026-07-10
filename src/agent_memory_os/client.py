@@ -75,6 +75,8 @@ class MemoryClient:
         *,
         create_colinks: bool = False,
         helpful: bool = True,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
     ) -> dict[str, int]:
         """Report that these memories were recalled together.
 
@@ -82,9 +84,17 @@ class MemoryClient:
         reinforces each memory and strengthens the association edges between
         them so future queries resonate along well-worn paths; with
         `helpful=False` the recall misled the agent, so links weaken and
-        confidence drops — the self-correction path.
+        confidence drops — the self-correction path. Pass the requester when
+        the feedback comes from an untrusted surface: only memories visible to
+        that requester are affected.
         """
-        result = self.store.record_recall(memory_ids, create_colinks=create_colinks, helpful=helpful)
+        result = self.store.record_recall(
+            memory_ids,
+            create_colinks=create_colinks,
+            helpful=helpful,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+        )
         self.cache.clear()
         return result
 
@@ -97,11 +107,14 @@ class MemoryClient:
     ) -> int:
         """Bulk-import derived association edges (e.g. from the ERA index).
 
-        Pairs whose endpoints no longer exist are skipped; existing edges with
-        the same relation are upserted.
+        Pairs whose endpoints no longer exist are skipped. Pairs already
+        connected (in either direction) are left untouched so a periodic sync
+        can never clobber reinforcement-learned weights.
         """
         imported = 0
         for src_id, dst_id, weight in pairs:
+            if self.store.link_exists(src_id, dst_id):
+                continue
             try:
                 self.store.add_link(
                     MemoryLink(
@@ -124,9 +137,15 @@ class MemoryClient:
         return saved
 
     def load_profile(self, agent_id: str) -> RecallProfile | None:
-        if agent_id not in self._profile_cache:
-            self._profile_cache[agent_id] = self.store.load_profile(agent_id)
-        return self._profile_cache[agent_id]
+        # Only cache hits: caching a miss forever would blind a long-running
+        # server to profiles saved later by another process.
+        cached = self._profile_cache.get(agent_id)
+        if cached is not None:
+            return cached
+        profile = self.store.load_profile(agent_id)
+        if profile is not None:
+            self._profile_cache[agent_id] = profile
+        return profile
 
     def consolidate(self, *, owner: str | None = None, scope: str | None = None) -> dict[str, int]:
         """Run the write-side hygiene pass: merge duplicates, synthesize concepts."""

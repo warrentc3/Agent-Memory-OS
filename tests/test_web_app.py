@@ -160,3 +160,36 @@ def test_web_api_get_memory_and_consolidate(tmp_path):
     assert consolidated.status_code == 200
     assert consolidated.json()["duplicates_merged"] == 1
     assert client.get("/api/stats").json()["total"] == 1
+
+
+def test_web_api_rejects_non_iso_expires_at(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+
+    bad = client.post("/api/memories", json={"content": "x", "expires_at": "12/31/2026"})
+    epoch = client.post("/api/memories", json={"content": "x", "expires_at": "1767225600"})
+    good = client.post(
+        "/api/memories", json={"content": "x", "expires_at": "2030-01-01T00:00:00+00:00"}
+    )
+
+    assert bad.status_code == 422
+    assert epoch.status_code == 422
+    assert good.status_code == 200
+
+
+def test_web_api_recall_respects_requester_acl(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    private = client.post(
+        "/api/memories", json={"content": "Private note.", "owner": "mizuki", "visibility": []}
+    ).json()
+
+    response = client.post(
+        "/api/recall",
+        json={"memory_ids": [private["id"]], "helpful": False, "requester_agent_id": "neo"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["weakened_memories"] == 0
+    fetched = client.get(f"/api/memories/{private['id']}").json()
+    assert fetched["confidence"] == 0.8

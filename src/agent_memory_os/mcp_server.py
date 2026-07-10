@@ -35,12 +35,27 @@ def create_server():  # pragma: no cover - optional integration scaffold
 
     @mcp.tool()
     def memory_link(src_id: str, dst_id: str, relation: str = "related_to", weight: float = 0.5) -> dict:
-        link = client.link(src_id, dst_id, relation=relation, weight=weight)
+        try:
+            link = client.link(src_id, dst_id, relation=relation, weight=weight)
+        except KeyError as exc:
+            return {"error": f"memory not found: {exc.args[0]}"}
+        except ValueError as exc:
+            return {"error": str(exc)}
         return {"src_id": link.src_id, "dst_id": link.dst_id, "relation": link.relation, "weight": link.weight}
 
     @mcp.tool()
-    def memory_recall_feedback(memory_ids: list[str], create_colinks: bool = False, helpful: bool = True) -> dict:
-        return client.record_recall(memory_ids, create_colinks=create_colinks, helpful=helpful)
+    def memory_recall_feedback(
+        memory_ids: list[str],
+        create_colinks: bool = False,
+        helpful: bool = True,
+        requester_agent_id: str | None = None,
+    ) -> dict:
+        return client.record_recall(
+            memory_ids,
+            create_colinks=create_colinks,
+            helpful=helpful,
+            requester_agent_id=requester_agent_id,
+        )
 
     @mcp.tool()
     def memory_consolidate(owner: str | None = None, scope: str | None = None) -> dict:
