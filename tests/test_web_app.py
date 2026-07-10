@@ -218,3 +218,50 @@ def test_web_api_delete_memory(tmp_path):
     assert client.delete(f"/api/memories/{created['id']}").status_code == 200
     assert client.get(f"/api/memories/{created['id']}").status_code == 404
     assert client.delete(f"/api/memories/{created['id']}").status_code == 404
+
+
+def test_web_api_graph_is_requester_gated(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    public_a = client.post(
+        "/api/memories", json={"content": "Public deploy checklist.", "owner": "mizuki", "visibility": ["global"]}
+    ).json()
+    private = client.post(
+        "/api/memories", json={"content": "Private reflection.", "owner": "mizuki", "visibility": []}
+    ).json()
+    public_b = client.post(
+        "/api/memories", json={"content": "Public retro notes.", "owner": "mizuki", "visibility": ["global"]}
+    ).json()
+    client.post("/api/links", json={"src_id": public_a["id"], "dst_id": private["id"]})
+    client.post("/api/links", json={"src_id": public_a["id"], "dst_id": public_b["id"]})
+
+    admin = client.get("/api/graph").json()
+    neo = client.get("/api/graph", params={"requester_agent_id": "neo"}).json()
+
+    assert len(admin["nodes"]) == 3 and len(admin["edges"]) == 2
+    neo_ids = {node["id"] for node in neo["nodes"]}
+    assert private["id"] not in neo_ids
+    assert len(neo["edges"]) == 1
+    assert all(edge["src"] in neo_ids and edge["dst"] in neo_ids for edge in neo["edges"])
+
+
+def test_web_api_list_type_filter(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    client.post("/api/memories", json={"content": "A procedure.", "type": "procedure", "visibility": ["global"]})
+    client.post("/api/memories", json={"content": "A note.", "type": "note", "visibility": ["global"]})
+
+    filtered = client.get("/api/memories", params={"type": "procedure"}).json()["memories"]
+
+    assert [m["content"] for m in filtered] == ["A procedure."]
+
+
+def test_web_api_token_gate(tmp_path):
+    app = create_app(home=tmp_path, token="s3cret")
+    client = TestClient(app)
+
+    assert client.get("/").status_code == 200
+    assert client.get("/health").status_code == 200
+    assert client.get("/api/stats").status_code == 401
+    assert client.get("/api/stats", headers={"Authorization": "Bearer wrong"}).status_code == 401
+    assert client.get("/api/stats", headers={"Authorization": "Bearer s3cret"}).status_code == 200

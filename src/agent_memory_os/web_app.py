@@ -9,6 +9,8 @@ the server to localhost only unless you front it with real authentication.
 from __future__ import annotations
 
 import argparse
+import hmac
+import os
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -16,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .client import MemoryClient
@@ -123,12 +125,13 @@ def _search_result_payload(result: SearchResult) -> dict[str, Any]:
     }
 
 
-def create_app(home: str | Path | None = None) -> FastAPI:
+def create_app(home: str | Path | None = None, *, token: str | None = None) -> FastAPI:
     # One shared client per app: the schema/migration cost is paid once and
     # the LRU cache actually works. SQLite access is serialized by `lock`
     # because sync endpoints run in a threadpool.
     client = MemoryClient(home=home, check_same_thread=False)
     lock = threading.Lock()
+    api_token = token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or None
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -136,6 +139,18 @@ def create_app(home: str | Path | None = None) -> FastAPI:
         client.close()
 
     app = FastAPI(title="AgentMemoryOS Web UI", lifespan=lifespan)
+
+    if api_token:
+        # Opt-in bearer-token gate for every API route. The page shell and
+        # /health stay open so the UI can load and ask for the token.
+        @app.middleware("http")
+        async def require_token(request, call_next):
+            if request.url.path.startswith("/api/"):
+                supplied = request.headers.get("authorization", "")
+                expected = f"Bearer {api_token}"
+                if not hmac.compare_digest(supplied.encode(), expected.encode()):
+                    return JSONResponse({"detail": "unauthorized"}, status_code=401)
+            return await call_next(request)
 
     @app.get("/health")
     def health() -> dict[str, str]:
@@ -162,6 +177,7 @@ def create_app(home: str | Path | None = None) -> FastAPI:
     def list_memories(
         owner: str | None = None,
         scope: str | None = None,
+        type: str | None = None,  # noqa: A002 - query param name mirrors the schema field
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
         limit: int = Query(default=20, ge=1, le=100),
@@ -171,12 +187,26 @@ def create_app(home: str | Path | None = None) -> FastAPI:
             records = client.list_recent(
                 owner=owner or None,
                 scope=scope or None,
+                memory_type=type or None,
                 requester_agent_id=requester_agent_id or None,
                 requester_team_id=requester_team_id or None,
                 limit=limit,
                 offset=offset,
             )
         return {"memories": [_record_payload(record) for record in records]}
+
+    @app.get("/api/graph")
+    def graph(
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = Query(default=300, ge=1, le=1000),
+    ) -> dict[str, Any]:
+        with lock:
+            return client.graph_snapshot(
+                requester_agent_id=requester_agent_id or None,
+                requester_team_id=requester_team_id or None,
+                limit=limit,
+            )
 
     @app.get("/api/memories/{memory_id}")
     def get_memory(memory_id: str) -> dict[str, Any]:
@@ -318,11 +348,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--home", default=None, help="Memory home directory; defaults to AGENT_MEMORY_HOME or ~/.agent-memory")
+    parser.add_argument(
+        "--token",
+        default=None,
+        help="Require this bearer token on all /api/ routes (also via AGENT_MEMORY_WEB_TOKEN)",
+    )
     args = parser.parse_args(argv)
 
     import uvicorn
 
-    uvicorn.run(create_app(home=args.home), host=args.host, port=args.port)
+    uvicorn.run(create_app(home=args.home, token=args.token), host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

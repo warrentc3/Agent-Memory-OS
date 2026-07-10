@@ -335,6 +335,7 @@ class MemoryStore:
         *,
         owner: str | None = None,
         scope: str | None = None,
+        memory_type: str | None = None,
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
         limit: int = 20,
@@ -349,6 +350,9 @@ class MemoryStore:
         if scope:
             where.append("scope = ?")
             params.append(scope)
+        if memory_type:
+            where.append("type = ?")
+            params.append(memory_type)
         self._append_acl_filter(
             where,
             params,
@@ -366,6 +370,64 @@ class MemoryStore:
             params,
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
+
+    def graph_snapshot(
+        self,
+        *,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 300,
+    ) -> dict[str, list[dict]]:
+        """Return the association graph for visualization, ACL-gated.
+
+        Only nodes visible to the requester are returned, and an edge survives
+        only when BOTH endpoints are visible — the same invariant as resonance
+        traversal, so the picture never leaks a private neighbor.
+        """
+        edges = self.conn.execute(
+            "SELECT src_id, dst_id, relation, weight FROM memory_links ORDER BY weight DESC LIMIT ?",
+            (max(1, limit),),
+        ).fetchall()
+        ids = list({edge["src_id"] for edge in edges} | {edge["dst_id"] for edge in edges})
+        rows = self._visible_rows_for_ids(
+            ids,
+            owner=None,
+            scope=None,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            now=utc_now(),
+        )
+        visible = {row["id"]: row for row in rows}
+        kept_edges = [
+            edge for edge in edges
+            if edge["src_id"] in visible and edge["dst_id"] in visible
+        ]
+        degree: DefaultDict[str, int] = defaultdict(int)
+        for edge in kept_edges:
+            degree[edge["src_id"]] += 1
+            degree[edge["dst_id"]] += 1
+        return {
+            "nodes": [
+                {
+                    "id": row["id"],
+                    "label": row["summary"],
+                    "scope": row["scope"],
+                    "type": row["type"],
+                    "pinned": bool(row["pinned"]),
+                    "degree": degree[row["id"]],
+                }
+                for row in visible.values()
+            ],
+            "edges": [
+                {
+                    "src": edge["src_id"],
+                    "dst": edge["dst_id"],
+                    "relation": edge["relation"],
+                    "weight": float(edge["weight"]),
+                }
+                for edge in kept_edges
+            ],
+        }
 
     def latest_snapshot_record(self, session_id: str) -> MemoryRecord | None:
         """Return the most recent context snapshot for a session.

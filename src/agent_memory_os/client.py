@@ -57,6 +57,7 @@ class MemoryClient:
         *,
         owner: str | None = None,
         scope: str | None = None,
+        memory_type: str | None = None,
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
         limit: int = 20,
@@ -65,10 +66,24 @@ class MemoryClient:
         return self.store.list_recent(
             owner=owner,
             scope=scope,
+            memory_type=memory_type,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
             limit=limit,
             offset=offset,
+        )
+
+    def graph_snapshot(
+        self,
+        *,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 300,
+    ) -> dict[str, list[dict]]:
+        return self.store.graph_snapshot(
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
         )
 
     def link(

@@ -187,6 +187,29 @@ PAGE = r"""<!doctype html>
   .decisions .no { color: var(--muted); }
 
   .loadmore { display: flex; justify-content: center; margin-top: 16px; }
+  .filterrow { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .filterrow select, .filterrow input {
+    padding: 8px 11px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text); font-size: 13px;
+  }
+  .filterrow input { width: 140px; }
+  .graphwrap {
+    position: relative; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 16px; box-shadow: var(--shadow); overflow: hidden;
+  }
+  #graph-canvas { display: block; width: 100%; height: 540px; cursor: grab; }
+  .graphlegend {
+    position: absolute; top: 12px; left: 14px; display: flex; gap: 10px; flex-wrap: wrap;
+    font-size: 11.5px; color: var(--muted); pointer-events: none;
+  }
+  .graphlegend .key { display: flex; align-items: center; gap: 5px; }
+  .graphlegend .dot { width: 9px; height: 9px; border-radius: 50%; }
+  .graphtip {
+    position: absolute; display: none; max-width: 320px; padding: 8px 12px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: var(--shadow); font-size: 12.5px; pointer-events: none; z-index: 5;
+  }
+  .graphhint { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
   #toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 99; }
   .toast {
     background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
@@ -218,6 +241,7 @@ PAGE = r"""<!doctype html>
   <nav class="tabs">
     <button data-tab="search" class="active">Search</button>
     <button data-tab="browse">Browse</button>
+    <button data-tab="graph">Graph</button>
     <button data-tab="add">Add memory</button>
     <button data-tab="tools">Tools</button>
   </nav>
@@ -235,8 +259,32 @@ PAGE = r"""<!doctype html>
   </section>
 
   <section class="tab" id="tab-browse">
+    <div class="filterrow">
+      <select id="filter-scope">
+        <option value="">all scopes</option>
+        <option>user</option><option>agent</option><option>project</option>
+        <option>team</option><option>global</option>
+      </select>
+      <select id="filter-type">
+        <option value="">all types</option>
+        <option>note</option><option>preference</option><option>fact</option>
+        <option>procedure</option><option>environment</option><option>decision</option>
+        <option>warning</option>
+      </select>
+      <input id="filter-owner" type="text" placeholder="owner…">
+      <button class="ghost" id="btn-filter">Apply</button>
+    </div>
     <div class="cards" id="browse-results"></div>
     <div class="loadmore"><button class="ghost" id="btn-more">Load more</button></div>
+  </section>
+
+  <section class="tab" id="tab-graph">
+    <div class="graphwrap">
+      <canvas id="graph-canvas"></canvas>
+      <div class="graphlegend" id="graph-legend"></div>
+      <div class="graphtip" id="graph-tip"></div>
+    </div>
+    <p class="graphhint">Association graph for the acting identity — an edge is shown only when both memories are visible to it. Drag nodes to untangle; click to copy a memory id.</p>
   </section>
 
   <section class="tab" id="tab-add">
@@ -339,8 +387,19 @@ function toast(message, kind) {
   setTimeout(() => node.remove(), 4200);
 }
 
-async function api(path, options) {
-  const response = await fetch(path, options);
+async function api(path, options, isRetry) {
+  const request = Object.assign({}, options);
+  request.headers = Object.assign({}, (options && options.headers) || {});
+  const token = localStorage.getItem("amos.token");
+  if (token) request.headers["Authorization"] = "Bearer " + token;
+  const response = await fetch(path, request);
+  if (response.status === 401 && !isRetry) {
+    const supplied = prompt("This server requires an API token:");
+    if (supplied) {
+      localStorage.setItem("amos.token", supplied.trim());
+      return api(path, options, true);
+    }
+  }
   let body = null;
   try { body = await response.json(); } catch (e) { /* empty body */ }
   if (!response.ok) {
@@ -373,6 +432,7 @@ document.querySelectorAll("nav.tabs button").forEach((button) => {
     button.classList.add("active");
     $("tab-" + button.dataset.tab).classList.add("active");
     if (button.dataset.tab === "browse" && !browseLoaded) refreshBrowse();
+    if (button.dataset.tab === "graph") loadGraph();
   });
 });
 
@@ -522,6 +582,9 @@ async function refreshBrowse(more) {
   if (!more) { browseOffset = 0; $("browse-results").innerHTML = ""; }
   const params = new URLSearchParams({ limit: "20", offset: String(browseOffset) });
   if (actingAs()) params.set("requester_agent_id", actingAs());
+  if ($("filter-scope").value) params.set("scope", $("filter-scope").value);
+  if ($("filter-type").value) params.set("type", $("filter-type").value);
+  if ($("filter-owner").value.trim()) params.set("owner", $("filter-owner").value.trim());
   try {
     const data = await api("/api/memories?" + params);
     const container = $("browse-results");
@@ -537,6 +600,176 @@ async function refreshBrowse(more) {
   } catch (e) { toast(e.message, "err"); }
 }
 $("btn-more").addEventListener("click", () => refreshBrowse(true));
+$("btn-filter").addEventListener("click", () => refreshBrowse(false));
+
+/* ---------- association graph ---------- */
+const SCOPE_COLORS = {
+  user: "#4d7fe8", agent: "#22a58c", project: "#d9962e", team: "#d9558f", global: "#3aa653",
+};
+let graphState = null;
+
+async function loadGraph() {
+  const params = new URLSearchParams({ limit: "300" });
+  if (actingAs()) params.set("requester_agent_id", actingAs());
+  let data;
+  try { data = await api("/api/graph?" + params); }
+  catch (e) { toast(e.message, "err"); return; }
+
+  const canvas = $("graph-canvas");
+  const dpr = window.devicePixelRatio || 1;
+  const width = canvas.clientWidth, height = 540;
+  canvas.width = width * dpr; canvas.height = height * dpr;
+  const context = canvas.getContext("2d");
+  context.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const legend = $("graph-legend");
+  legend.innerHTML = "";
+  for (const [scope, color] of Object.entries(SCOPE_COLORS)) {
+    const key = el("span", "key");
+    const dot = el("span", "dot"); dot.style.background = color;
+    key.appendChild(dot); key.appendChild(el("span", null, scope));
+    legend.appendChild(key);
+  }
+
+  if (!data.nodes.length) {
+    context.clearRect(0, 0, width, height);
+    context.fillStyle = getComputedStyle(document.body).getPropertyValue("color");
+    context.globalAlpha = 0.5; context.font = "14px sans-serif"; context.textAlign = "center";
+    context.fillText("No visible links yet — link memories or let co-recall build them.", width / 2, height / 2);
+    context.globalAlpha = 1;
+    graphState = null;
+    return;
+  }
+
+  const nodes = data.nodes.map((n, i) => ({
+    ...n,
+    x: width / 2 + Math.cos(i * 2.399) * (60 + 10 * i % 200),
+    y: height / 2 + Math.sin(i * 2.399) * (60 + 7 * i % 160),
+    vx: 0, vy: 0, r: 6 + Math.min(10, n.degree * 1.6),
+  }));
+  const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
+  const edges = data.edges.map((e) => ({ ...e, a: byId[e.src], b: byId[e.dst] }));
+  graphState = { nodes: nodes, edges: edges, ctx: context, w: width, h: height, frame: 0, drag: null, hover: null };
+  requestAnimationFrame(stepGraph);
+}
+
+function stepGraph() {
+  const g = graphState;
+  if (!g) return;
+  const settled = g.frame > 300;
+  if (!settled || g.drag) {
+    for (let i = 0; i < g.nodes.length; i++) {
+      const a = g.nodes[i];
+      for (let j = i + 1; j < g.nodes.length; j++) {
+        const b = g.nodes[j];
+        let dx = a.x - b.x, dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy || 1;
+        const force = Math.min(1600 / d2, 4);
+        const d = Math.sqrt(d2);
+        dx /= d; dy /= d;
+        a.vx += dx * force; a.vy += dy * force;
+        b.vx -= dx * force; b.vy -= dy * force;
+      }
+      a.vx += (g.w / 2 - a.x) * 0.002;
+      a.vy += (g.h / 2 - a.y) * 0.002;
+    }
+    for (const edge of g.edges) {
+      const dx = edge.b.x - edge.a.x, dy = edge.b.y - edge.a.y;
+      const d = Math.sqrt(dx * dx + dy * dy) || 1;
+      const pull = (d - 110) * 0.004 * (0.4 + edge.weight);
+      edge.a.vx += (dx / d) * pull; edge.a.vy += (dy / d) * pull;
+      edge.b.vx -= (dx / d) * pull; edge.b.vy -= (dy / d) * pull;
+    }
+    for (const node of g.nodes) {
+      if (g.drag && g.drag.node === node) { node.vx = 0; node.vy = 0; continue; }
+      node.vx *= 0.82; node.vy *= 0.82;
+      node.x = Math.max(node.r, Math.min(g.w - node.r, node.x + node.vx));
+      node.y = Math.max(node.r, Math.min(g.h - node.r, node.y + node.vy));
+    }
+  }
+  drawGraph();
+  g.frame += 1;
+  requestAnimationFrame(stepGraph);
+}
+
+function drawGraph() {
+  const g = graphState;
+  if (!g) return;
+  const context = g.ctx;
+  context.clearRect(0, 0, g.w, g.h);
+  for (const edge of g.edges) {
+    const highlighted = g.hover && (edge.a === g.hover || edge.b === g.hover);
+    context.strokeStyle = highlighted ? "#9a7bff" : "rgba(128,136,168,.35)";
+    context.lineWidth = 0.6 + edge.weight * 2.4;
+    context.setLineDash(edge.relation === "supersedes" ? [5, 4] : []);
+    context.beginPath();
+    context.moveTo(edge.a.x, edge.a.y);
+    context.lineTo(edge.b.x, edge.b.y);
+    context.stroke();
+  }
+  context.setLineDash([]);
+  for (const node of g.nodes) {
+    context.beginPath();
+    context.arc(node.x, node.y, node.r, 0, Math.PI * 2);
+    context.fillStyle = SCOPE_COLORS[node.scope] || "#888";
+    context.globalAlpha = g.hover && g.hover !== node ? 0.45 : 1;
+    context.fill();
+    context.globalAlpha = 1;
+    if (node.pinned) {
+      context.strokeStyle = "#ffffff";
+      context.lineWidth = 1.6;
+      context.stroke();
+    }
+  }
+}
+
+(function wireGraphPointer() {
+  const canvas = $("graph-canvas");
+  const tip = $("graph-tip");
+  const findNode = (event) => {
+    if (!graphState) return null;
+    const rect = canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left, y = event.clientY - rect.top;
+    return graphState.nodes.find((n) => (n.x - x) ** 2 + (n.y - y) ** 2 <= (n.r + 4) ** 2) || null;
+  };
+  canvas.addEventListener("mousemove", (event) => {
+    if (!graphState) return;
+    const rect = canvas.getBoundingClientRect();
+    if (graphState.drag) {
+      graphState.drag.moved = true;
+      graphState.drag.node.x = event.clientX - rect.left;
+      graphState.drag.node.y = event.clientY - rect.top;
+      return;
+    }
+    const node = findNode(event);
+    graphState.hover = node;
+    canvas.style.cursor = node ? "pointer" : "grab";
+    if (node) {
+      tip.style.display = "block";
+      tip.style.left = Math.min(node.x + 14, graphState.w - 330) + "px";
+      tip.style.top = (node.y + 14) + "px";
+      tip.textContent = node.scope + "/" + node.type + " · " + node.degree + " links — " + node.label;
+    } else {
+      tip.style.display = "none";
+    }
+  });
+  canvas.addEventListener("mousedown", (event) => {
+    const node = findNode(event);
+    if (node) graphState.drag = { node: node, moved: false };
+  });
+  canvas.addEventListener("mouseup", (event) => {
+    if (!graphState) return;
+    if (graphState.drag && !graphState.drag.moved) {
+      const node = findNode(event);
+      if (node) { navigator.clipboard.writeText(node.id); toast("Copied " + node.id, "ok"); }
+    }
+    if (graphState.drag) graphState.drag = null;
+  });
+  canvas.addEventListener("mouseleave", () => {
+    if (graphState) { graphState.hover = null; graphState.drag = null; }
+    tip.style.display = "none";
+  });
+})();
 
 /* ---------- add ---------- */
 $("f-importance").addEventListener("input", (e) => { $("o-importance").textContent = Number(e.target.value).toFixed(2); });

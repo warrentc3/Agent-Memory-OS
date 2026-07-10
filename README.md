@@ -99,9 +99,11 @@ pip install 'agent-memory-os[api]'
 agent-memory-web --host 127.0.0.1 --port 8000 --home ~/.agent-memory-web
 ```
 
-Endpoints: `GET /health`, `GET /api/stats`, `POST /api/memories`, `GET /api/memories/{id}`, `GET /api/memories/{id}/links`, `POST /api/links`, `POST /api/recall`, `POST /api/consolidate`, `GET /api/search`, `GET /api/context-pack`.
+The console ships with search and recency browsing (memory cards with feedback, links, and delete actions), an interactive association-graph view, a context-pack preview with per-memory decisions, and add/link/consolidate tools — all driven by a global "acting as" identity.
 
-Search and context-pack accept `requester_agent_id` and enforce the same ACL hard gates as the SDK. Requests without a requester run in unrestricted admin view — bind to localhost only, or front the server with real authentication.
+Endpoints: `GET /health`, `GET /api/stats`, `GET|POST /api/memories`, `GET|DELETE /api/memories/{id}`, `GET /api/memories/{id}/links`, `GET /api/graph`, `POST /api/links`, `POST /api/recall`, `POST /api/consolidate`, `GET /api/search`, `GET /api/context-pack`.
+
+Search, browse, graph, recall feedback, and context-pack accept `requester_agent_id` and enforce the same ACL hard gates as the SDK. Requests without a requester run in unrestricted admin view — bind to localhost only, or require a bearer token on every API route with `--token <secret>` (or `AGENT_MEMORY_WEB_TOKEN`).
 
 Note: keep the `--home` database on a local disk. Network filesystems (NFS/SMB) can fail SQLite FTS5 schema creation with `database is locked`.
 
