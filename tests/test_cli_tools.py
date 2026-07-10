@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+import pytest
+
 from agent_memory_os import MemoryClient
 from agent_memory_os.tokens import load_token, token_path
 from agent_memory_os.web_app import create_app
@@ -20,7 +22,8 @@ def test_token_lifecycle(tmp_path):
     assert created.returncode == 0
     token = load_token(home)
     assert token and token.startswith("amos_")
-    assert oct(token_path(home).stat().st_mode)[-3:] == "600"
+    if sys.platform != "win32":  # Windows has no POSIX mode bits
+        assert oct(token_path(home).stat().st_mode)[-3:] == "600"
 
     # create refuses to overwrite; rotate replaces
     assert run_cli("--home", home, "token", "create").returncode == 1

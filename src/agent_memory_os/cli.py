@@ -70,12 +70,43 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("check", help="Run database integrity and invariant checks")
 
+    service = sub.add_parser(
+        "service", help="Install the Web console as a login service (launchd/systemd/Task Scheduler)"
+    )
+    service.add_argument("action", choices=["install", "uninstall", "start", "stop", "status"])
+    service.add_argument("--host", default="127.0.0.1")
+    service.add_argument("--port", type=int, default=8000)
+    service.add_argument("--dry-run", action="store_true", help="Print actions without executing")
+
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
         "--half-lives", type=float, default=None,
         help="Also archive unpinned memories idle for N decay half-lives (default 4; 0 = expired only)",
     )
     return p
+
+
+def _cmd_service(args) -> int:
+    from . import service as svc
+
+    config = svc.make_config(args.home, args.host, args.port)
+    if args.action == "install":
+        actions = svc.install(config, dry_run=args.dry_run)
+        for action in actions:
+            print(("would: " if args.dry_run else "") + action)
+        if not args.dry_run:
+            print(f"installed — console at http://{args.host}:{args.port}/ (starts at login)")
+        return 0
+    if args.action == "uninstall":
+        for action in svc.uninstall(dry_run=args.dry_run):
+            print(("would: " if args.dry_run else "") + action)
+        return 0
+    result = svc.control(args.action)
+    output = (result.stdout or result.stderr or "").strip()
+    if output:
+        print(output.splitlines()[0] if args.action == "status" else output)
+    print(f"{args.action}: {'ok' if result.returncode == 0 else 'not running / not installed'}")
+    return 0 if result.returncode == 0 else 1
 
 
 def _cmd_token(args) -> int:
@@ -213,6 +244,8 @@ def _cmd_restore(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "service":
+        return _cmd_service(args)
     if args.command == "token":
         return _cmd_token(args)
     if args.command == "doctor":

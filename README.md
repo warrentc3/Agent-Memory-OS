@@ -187,6 +187,22 @@ Search, browse, graph, recall feedback, and context-pack accept `requester_agent
 
 Note: keep the `--home` database on a local disk. Network filesystems (NFS/SMB) can fail SQLite FTS5 schema creation with `database is locked`.
 
+### Run as a login service (macOS / Linux / Windows)
+
+```bash
+agent-memory service install [--host 127.0.0.1] [--port 8000]
+agent-memory service status | start | stop | uninstall
+```
+
+`install` registers the console with the native service manager so it starts
+automatically at login and restarts on failure — launchd LaunchAgent on
+macOS, a systemd user unit on Linux, a Task Scheduler logon task on Windows.
+No admin rights required; the service runs the exact Python environment it
+was installed from, and logs to `<home>/logs/web.log`. On Linux, run
+`loginctl enable-linger $USER` if it must start at boot without a login.
+Add `--dry-run` to preview the actions. CI runs the full test suite on
+Ubuntu, macOS, and Windows across Python 3.11–3.13.
+
 ## Development
 
 ```bash

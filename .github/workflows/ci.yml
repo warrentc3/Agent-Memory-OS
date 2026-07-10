@@ -7,10 +7,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
         python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -20,6 +21,9 @@ jobs:
       - name: Install package with test extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,api,semantic]' httpx
+          pip install -e ".[dev,api]" httpx numpy
+      - name: Install semantic extra (turbovec)
+        if: runner.os != 'Windows'
+        run: pip install -e ".[semantic]"
       - name: Run test suite
         run: pytest
