@@ -151,3 +151,74 @@ def test_feedback_telemetry_tunes_half_lives(tmp_path):
 
     # idempotent: rerunning without new feedback changes nothing
     assert client.run_retention()["tuned_half_lives"] == 0
+
+
+# ---------- peer HTTP sync transport ----------
+
+
+def test_sync_http_endpoints_move_memories_between_hosts(tmp_path):
+    host_a = TestClient(create_app(home=tmp_path / "a"))
+    host_b = TestClient(create_app(home=tmp_path / "b"))
+    created = host_a.post(
+        "/api/memories", json={"content": "Peer-synced memory.", "visibility": ["global"]}
+    ).json()
+
+    bundle = host_a.get("/api/sync/export")
+    assert bundle.status_code == 200
+    assert bundle.headers["content-type"].startswith("application/x-ndjson")
+
+    merged = host_b.post(
+        "/api/sync/import", content=bundle.text,
+        headers={"content-type": "application/x-ndjson"},
+    )
+    assert merged.status_code == 200
+    assert merged.json()["memories_added"] == 1
+    assert host_b.get(f"/api/memories/{created['id']}").status_code == 200
+
+    # importing garbage is rejected
+    bad = host_b.post("/api/sync/import", content='{"kind": "nope"}\n')
+    assert bad.status_code == 400
+
+
+def test_sync_endpoints_respect_token_gate(tmp_path):
+    app = create_app(home=tmp_path, token="s3cret")
+    web = TestClient(app)
+
+    assert web.get("/api/sync/export").status_code == 401
+    assert web.get(
+        "/api/sync/export", headers={"Authorization": "Bearer s3cret"}
+    ).status_code == 200
+
+
+# ---------- pluggable link extraction at consolidation ----------
+
+
+def test_consolidate_derive_links_uses_era_heuristic(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    a = client.add("AgentMemoryOS uses Turbovec for semantic recall.", visibility=["global"])
+    b = client.add("Turbovec semantic recall benchmark notes.", visibility=["global"])
+    client.add("Cooking pasta with garlic tonight.", visibility=["global"])
+
+    result = client.consolidate(derive_links=True)
+
+    assert result["links_derived"] >= 1
+    assert any({link.src_id, link.dst_id} == {a.id, b.id} for link in client.links(a.id))
+    # derived edges are marked and idempotent (existing pairs skipped)
+    assert client.links(a.id)[0].source == {"auto": "consolidation_extractor"}
+    assert client.consolidate(derive_links=True)["links_derived"] == 0
+
+
+def test_consolidate_accepts_custom_link_extractor(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    a = client.add("Alpha memory.", visibility=["global"])
+    b = client.add("Beta memory.", visibility=["global"])
+
+    def llm_like_extractor(records):
+        ids = [record.id for record in records]
+        assert a.id in ids and b.id in ids
+        return [(a.id, b.id, 0.9)]
+
+    result = client.consolidate(link_extractor=llm_like_extractor)
+
+    assert result["links_derived"] == 1
+    assert client.links(a.id)[0].weight == 0.9

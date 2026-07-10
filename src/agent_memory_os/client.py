@@ -346,11 +346,45 @@ class MemoryClient:
             self._profile_cache[agent_id] = profile
         return profile
 
-    def consolidate(self, *, owner: str | None = None, scope: str | None = None) -> dict[str, int]:
-        """Run the write-side hygiene pass: merge duplicates, synthesize concepts."""
+    def consolidate(
+        self,
+        *,
+        owner: str | None = None,
+        scope: str | None = None,
+        derive_links: bool = False,
+        link_extractor=None,
+    ) -> dict[str, int]:
+        """Run the write-side hygiene pass: merge duplicates, synthesize concepts.
+
+        `derive_links=True` additionally runs the built-in ERA heuristic over
+        all memories and imports the derived association edges. For deeper
+        extraction, pass `link_extractor`: a callable taking
+        `list[MemoryRecord]` and returning `(src_id, dst_id, weight)` tuples —
+        the plug point for an LLM-backed triplet extractor.
+        """
         result = self.store.consolidate(owner=owner, scope=scope)
+        links_derived = 0
+        if link_extractor is not None or derive_links:
+            records = self.list_recent(limit=100, offset=0)
+            offset = 100
+            while True:
+                batch = self.list_recent(limit=100, offset=offset)
+                if not batch:
+                    break
+                records.extend(batch)
+                offset += 100
+            if link_extractor is not None:
+                pairs = list(link_extractor(records))
+            else:
+                from .memory_resonance import ERATripletIndex, MemoryChunk
+
+                index = ERATripletIndex()
+                for record in records:
+                    index.add_chunk(MemoryChunk(id=record.id, text=record.content))
+                pairs = index.derive_links()
+            links_derived = self.import_links(pairs, source={"auto": "consolidation_extractor"})
         self.cache.clear()
-        return result
+        return result | {"links_derived": links_derived}
 
     def _resolve_profile(
         self, profile: RecallProfile | None, requester_agent_id: str | None

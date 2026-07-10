@@ -17,7 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -313,6 +313,46 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def integrity() -> dict[str, Any]:
         with lock:
             return client.integrity_check()
+
+    @app.get("/api/sync/export")
+    def sync_export(since: str | None = None) -> Any:
+        """Stream this host's memory bundle (peer pull / browser download)."""
+        import tempfile
+
+        from .sync import export_bundle
+
+        with lock:
+            with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False) as handle:
+                export_bundle(client.store, handle.name, since=since or None)
+                handle.seek(0)
+                body = Path(handle.name).read_text(encoding="utf-8")
+            Path(handle.name).unlink(missing_ok=True)
+        from fastapi.responses import PlainTextResponse
+
+        return PlainTextResponse(
+            body,
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": 'attachment; filename="agent-memory-bundle.jsonl"'},
+        )
+
+    @app.post("/api/sync/import")
+    async def sync_import(request: Request) -> dict[str, Any]:
+        """Accept a bundle body (peer push / browser upload) and merge it."""
+        import tempfile
+
+        from .sync import import_bundle
+
+        body = (await request.body()).decode("utf-8")
+        with lock:
+            with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+                handle.write(body)
+            try:
+                stats = import_bundle(client.store, handle.name)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            finally:
+                Path(handle.name).unlink(missing_ok=True)
+        return stats
 
     @app.get("/api/orchestrate")
     def orchestrate(

@@ -139,6 +139,53 @@ def _merge_link(store, entry: dict, stats: dict) -> None:
         stats["links_merged"] += 1
 
 
+def pull_from_peer(client, base_url: str, *, since: str | None = None,
+                   peer_token: str | None = None) -> dict[str, int]:
+    """Fetch a peer's bundle over HTTP and merge it locally."""
+    import tempfile
+
+    body = _http(base_url.rstrip("/") + "/api/sync/export"
+                 + (f"?since={since}" if since else ""), token=peer_token)
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+        handle.write(body)
+    try:
+        return client.import_bundle(handle.name)
+    finally:
+        Path(handle.name).unlink(missing_ok=True)
+
+
+def push_to_peer(client, base_url: str, *, since: str | None = None,
+                 peer_token: str | None = None) -> dict[str, int]:
+    """Export the local bundle and merge it into a peer over HTTP."""
+    import tempfile
+
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+        client.export_bundle(handle.name, since=since)
+    try:
+        payload = Path(handle.name).read_text(encoding="utf-8")
+    finally:
+        Path(handle.name).unlink(missing_ok=True)
+    response = _http(base_url.rstrip("/") + "/api/sync/import", token=peer_token, post=payload)
+    return json.loads(response)
+
+
+def _http(url: str, *, token: str | None, post: str | None = None) -> str:
+    import urllib.request
+
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("peer URL must start with http:// or https://")
+    request = urllib.request.Request(
+        url,
+        data=post.encode("utf-8") if post is not None else None,
+        method="POST" if post is not None else "GET",
+        headers={"Content-Type": "application/x-ndjson"},
+    )
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read().decode("utf-8")
+
+
 def _merge_profile(store, entry: dict, stats: dict) -> None:
     existing = store.conn.execute(
         "SELECT updated_at FROM recall_profiles WHERE agent_id = ?", (entry["agent_id"],)

@@ -66,9 +66,10 @@ not just what exists.
 4. **Mid-task recall loop** — SHIPPED (first form): with a `session_id`,
    repeated orchestrate calls exclude memories already delivered this
    session (bedrock constants exempt), logged in `session_recall_log`.
-5. **Resonance maturation** — LLM-assisted triplet extraction at
-   consolidation time replacing regex ERA; graph-quality metrics
-   (hub distribution, orphan rate) on the dashboard.
+5. **Resonance maturation** — SHIPPED (pluggable): graph-quality metrics
+   live on the dashboard; `consolidate(derive_links=True)` runs the ERA
+   heuristic automatically, and `consolidate(link_extractor=fn)` is the
+   documented plug point for LLM-backed triplet extraction.
 
 ## v0.5 — Memory federation & adaptive forgetting (in progress)
 
@@ -76,10 +77,10 @@ not just what exists.
    `share_memory` / `revoke_share` grants (agent or team), de-identified
    copies with the owner's name scrubbed, and a per-memory audit trail
    (`memory_audit`, migration 5). Console cards gain a Share action.
-2. **Federated sync** — SHIPPED (first form): `agent-memory sync export /
-   import` moves portable JSONL bundles between hosts with deterministic
-   merge rules — last-writer-wins on memories/profiles, strongest-wins on
-   links. Remaining: online peer-to-peer transport over the same rules.
+2. **Federated sync** — SHIPPED: file bundles (`sync export/import`) AND
+   online peer transport (`sync pull/push <peer-url> [--peer-token]`) over
+   `GET/POST /api/sync/export|import`, all sharing the same deterministic
+   merge rules; console gains a Federation card (bundle download / upload).
 3. **Telemetry-tuned forgetting** — SHIPPED (first form): helpful/unhelpful
    recall feedback is counted per memory (migration 6) and retention
    recomputes decay half-lives idempotently — proven-helpful memories forget

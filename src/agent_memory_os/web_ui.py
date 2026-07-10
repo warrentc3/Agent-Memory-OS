@@ -455,6 +455,16 @@ PAGE = r"""<!doctype html>
         <div id="retention-out" style="margin:6px 0;font-size:13px;color:var(--muted)"></div>
         <div class="toplist" id="archive-list"></div>
       </div>
+      <div class="tool" style="grid-column: 1 / -1;">
+        <h3>Federation</h3>
+        <p class="hint">Move memories between hosts. Download this host's bundle, or import a bundle exported elsewhere — memories and profiles merge last-writer-wins, links keep their strongest form.</p>
+        <div class="row">
+          <button class="ghost" id="btn-bundle-export">⬇ Download bundle</button>
+          <input type="file" id="bundle-file" accept=".jsonl" style="flex:1;min-width:160px">
+          <button class="ghost" id="btn-bundle-import">⬆ Import bundle</button>
+        </div>
+        <div id="sync-out" style="margin-top:6px;font-size:13px;color:var(--muted)"></div>
+      </div>
       <div class="tool danger" style="grid-column: 1 / -1;">
         <h3>⚠ Danger zone — forget an agent</h3>
         <p class="hint">Permanently deletes EVERY memory owned by the agent id, all links touching them, and its recall profile. This cannot be undone.</p>
@@ -1176,6 +1186,26 @@ async function runRetention(halfLives) {
 $("btn-retention").addEventListener("click", () => runRetention(null));
 $("btn-retention-decay").addEventListener("click", () => runRetention($("retention-halflives").value));
 refreshArchive();
+
+$("btn-bundle-export").addEventListener("click", () => { window.location.href = "/api/sync/export"; });
+$("btn-bundle-import").addEventListener("click", async () => {
+  const picker = $("bundle-file");
+  if (!picker.files.length) { toast("Choose a .jsonl bundle first.", "err"); return; }
+  const out = $("sync-out");
+  out.textContent = "Importing…";
+  try {
+    const body = await picker.files[0].text();
+    const headers = { "content-type": "application/x-ndjson" };
+    const token = localStorage.getItem("amos.token");
+    if (token) headers["Authorization"] = "Bearer " + token;
+    const response = await fetch("/api/sync/import", { method: "POST", headers: headers, body: body });
+    const stats = await response.json();
+    if (!response.ok) throw new Error(stats.detail || "import failed");
+    out.textContent = "Merged: " + stats.memories_added + " added, " + stats.memories_updated +
+      " updated, " + stats.memories_skipped + " skipped · links +" + stats.links_added + "/" + stats.links_merged + " merged";
+    loadStats(); loadDashboard(); browseLoaded = false;
+  } catch (e) { out.textContent = ""; toast(e.message, "err"); }
+});
 
 $("btn-purge").addEventListener("click", async () => {
   const owner = $("purge-owner").value.trim();

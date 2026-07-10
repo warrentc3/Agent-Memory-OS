@@ -78,10 +78,14 @@ def build_parser() -> argparse.ArgumentParser:
     service.add_argument("--port", type=int, default=8000)
     service.add_argument("--dry-run", action="store_true", help="Print actions without executing")
 
-    sync = sub.add_parser("sync", help="Export or import a portable memory bundle (federated sync)")
-    sync.add_argument("action", choices=["export", "import"])
-    sync.add_argument("file", help="Bundle .jsonl path")
-    sync.add_argument("--since", default=None, help="Export only records updated after this ISO timestamp")
+    sync = sub.add_parser("sync", help="Federated sync: file bundles or peer HTTP endpoints")
+    sync.add_argument("action", choices=["export", "import", "pull", "push"])
+    sync.add_argument(
+        "target",
+        help="Bundle .jsonl path (export/import) or peer base URL like http://host:8000 (pull/push)",
+    )
+    sync.add_argument("--since", default=None, help="Only records updated after this ISO timestamp")
+    sync.add_argument("--peer-token", default=None, help="Bearer token of the peer's Web API")
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -281,9 +285,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if report["ok"] else 1
         if args.command == "sync":
             if args.action == "export":
-                report = client.export_bundle(args.file, since=args.since)
+                report = client.export_bundle(args.target, since=args.since)
+            elif args.action == "import":
+                report = client.import_bundle(args.target)
             else:
-                report = client.import_bundle(args.file)
+                from .sync import pull_from_peer, push_to_peer
+
+                if args.action == "pull":
+                    report = pull_from_peer(
+                        client, args.target, since=args.since, peer_token=args.peer_token
+                    )
+                else:
+                    report = push_to_peer(
+                        client, args.target, since=args.since, peer_token=args.peer_token
+                    )
             print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
             return 0
         if args.command == "retention":
