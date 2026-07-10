@@ -101,6 +101,45 @@ class MemoryClient:
     def integrity_check(self) -> dict[str, object]:
         return self.store.integrity_check()
 
+    def snapshot_diff(self, session_id: str) -> dict:
+        """Diff the two most recent context snapshots of a session.
+
+        Answers "what changed since I last parked this work?" — top-level keys
+        added, removed, and changed between the previous and latest snapshot.
+        """
+        records = self.store.recent_snapshot_records(session_id, limit=2)
+        if not records:
+            raise ValueError(f"no snapshots for session {session_id}")
+
+        def state_of(record) -> dict:
+            raw = record.content
+            prefix = f"session_id:{session_id}\n"
+            if raw.startswith(prefix):
+                raw = raw[len(prefix):]
+            return json.loads(raw)
+
+        latest = state_of(records[0])
+        if len(records) == 1:
+            return {"session_id": session_id, "snapshots_compared": 1,
+                    "added": latest, "removed": {}, "changed": {}}
+        previous = state_of(records[1])
+        added = {key: latest[key] for key in latest.keys() - previous.keys()}
+        removed = {key: previous[key] for key in previous.keys() - latest.keys()}
+        changed = {
+            key: {"from": previous[key], "to": latest[key]}
+            for key in latest.keys() & previous.keys()
+            if latest[key] != previous[key]
+        }
+        return {
+            "session_id": session_id,
+            "snapshots_compared": 2,
+            "latest_snapshot_id": records[0].id,
+            "previous_snapshot_id": records[1].id,
+            "added": added,
+            "removed": removed,
+            "changed": changed,
+        }
+
     def orchestrate_context(
         self,
         task: str,

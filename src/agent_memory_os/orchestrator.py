@@ -31,6 +31,42 @@ DEFAULT_BUDGET_SPLIT = {
     "procedures": 0.12,
     "task": 0.46,
 }
+
+# Task-type detection: lightweight, deterministic emphasis shifts. Risky verbs
+# grow the warnings bucket; how-to intent grows procedures; both shifts come
+# out of the task bucket so the total split stays 1.0.
+RISK_TERMS = {
+    "delete", "drop", "purge", "wipe", "truncate", "overwrite", "force",
+    "deploy", "migrate", "migration", "rollback", "restart", "shutdown",
+    "destroy", "remove", "reset", "revoke",
+}
+HOWTO_TERMS = {
+    "how", "procedure", "steps", "setup", "install", "configure",
+    "configuration", "guide", "walkthrough", "run", "execute", "perform",
+}
+EMPHASIS_SHIFT = 0.08
+
+
+def detect_emphasis(task: str) -> list[str]:
+    words = {word.lower() for word in task.replace("/", " ").split()}
+    emphasis = []
+    if words & RISK_TERMS:
+        emphasis.append("risk")
+    if words & HOWTO_TERMS:
+        emphasis.append("howto")
+    return emphasis
+
+
+def budget_split_for(task: str) -> tuple[dict[str, float], list[str]]:
+    split = dict(DEFAULT_BUDGET_SPLIT)
+    emphasis = detect_emphasis(task)
+    if "risk" in emphasis:
+        split["warnings"] += EMPHASIS_SHIFT
+        split["task"] -= EMPHASIS_SHIFT
+    if "howto" in emphasis:
+        split["procedures"] += EMPHASIS_SHIFT
+        split["task"] -= EMPHASIS_SHIFT
+    return split, emphasis
 SECTION_ORDER = ["session", "bedrock", "warnings", "procedures", "task"]
 SECTION_HEADERS = {
     "session": "## SESSION STATE",
@@ -50,6 +86,7 @@ class OrchestratedContext:
     max_tokens: int = 0
     session_id: str | None = None
     delivered_ids: list[str] = field(default_factory=list)
+    emphasis: list[str] = field(default_factory=list)
 
 
 def _line(record: MemoryRecord) -> str:
@@ -133,7 +170,8 @@ def orchestrate_context(
                 f"memory_reload_context before resuming interrupted work."
             )
 
-    caps = {name: int(max_tokens * share) for name, share in DEFAULT_BUDGET_SPLIT.items()}
+    split, emphasis = budget_split_for(task)
+    caps = {name: int(max_tokens * share) for name, share in split.items()}
     sections: dict[str, dict] = {}
     lines: list[str] = []
     used_total = 0
@@ -192,4 +230,5 @@ def orchestrate_context(
         max_tokens=max_tokens,
         session_id=session_id,
         delivered_ids=delivered,
+        emphasis=emphasis,
     )

@@ -120,3 +120,47 @@ def test_web_api_orchestrate_with_session_dedup(tmp_path):
         params={"task": "staging deploy", "session_id": "web-s1", "requester_agent_id": "neo"},
     ).json()
     assert relevant["id"] not in second["delivered_ids"]
+
+
+def test_task_type_emphasis_shifts_budgets(tmp_path):
+    from agent_memory_os.orchestrator import budget_split_for, DEFAULT_BUDGET_SPLIT
+
+    risky, risky_emphasis = budget_split_for("delete the staging database and rollback")
+    howto, howto_emphasis = budget_split_for("how to configure the deploy pipeline")
+    neutral, neutral_emphasis = budget_split_for("summarize recent activity")
+
+    assert risky_emphasis[0] == "risk"
+    assert risky["warnings"] > DEFAULT_BUDGET_SPLIT["warnings"]
+    assert "howto" in howto_emphasis
+    assert howto["procedures"] > DEFAULT_BUDGET_SPLIT["procedures"]
+    assert neutral_emphasis == [] and neutral == DEFAULT_BUDGET_SPLIT
+    for split in (risky, howto, neutral):
+        assert abs(sum(split.values()) - 1.0) < 1e-9
+
+    client, _ = seeded_client(tmp_path)
+    result = client.orchestrate_context(
+        "delete stale rows and restart the service", requester_agent_id="neo"
+    )
+    assert "risk" in result.emphasis
+
+
+def test_snapshot_diff_reports_state_changes(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    client.offload_context(
+        {"phase": "build", "attempts": 1, "worker": "neo"}, session_id="diff-1"
+    )
+    client.offload_context(
+        {"phase": "canary", "attempts": 2, "queue": ["a", "b"]}, session_id="diff-1"
+    )
+
+    diff = client.snapshot_diff("diff-1")
+
+    assert diff["snapshots_compared"] == 2
+    assert diff["added"] == {"queue": ["a", "b"]}
+    assert diff["removed"] == {"worker": "neo"}
+    assert diff["changed"]["phase"] == {"from": "build", "to": "canary"}
+    assert diff["changed"]["attempts"] == {"from": 1, "to": 2}
+
+    import pytest as _pytest
+    with _pytest.raises(ValueError):
+        client.snapshot_diff("no-such-session")

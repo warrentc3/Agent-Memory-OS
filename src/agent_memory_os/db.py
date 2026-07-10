@@ -689,6 +689,19 @@ class MemoryStore:
             ],
         }
 
+    def recent_snapshot_records(self, session_id: str, *, limit: int = 2) -> list[MemoryRecord]:
+        """Newest-first context snapshots for a session."""
+        rows = self.conn.execute(
+            """
+            SELECT * FROM memories
+            WHERE type = 'snapshot' AND json_extract(source, '$.session_id') = ?
+            ORDER BY json_extract(source, '$.snapshot_index') DESC, created_at DESC, rowid DESC
+            LIMIT ?
+            """,
+            (session_id, max(1, limit)),
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
     def latest_snapshot_record(self, session_id: str) -> MemoryRecord | None:
         """Return the most recent context snapshot for a session.
 

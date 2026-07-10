@@ -102,7 +102,16 @@ def create_server():  # pragma: no cover - optional integration scaffold
             "sections": result.sections,
             "used_tokens": result.used_tokens,
             "max_tokens": result.max_tokens,
+            "emphasis": result.emphasis,
         }
+
+    @mcp.tool()
+    def memory_snapshot_diff(session_id: str) -> dict:
+        """What changed between the two most recent context snapshots of a session."""
+        try:
+            return client.snapshot_diff(session_id)
+        except ValueError as exc:
+            return {"error": str(exc)}
 
     @mcp.tool()
     def memory_reload_context(session_id: str, snapshot_id: str | None = None) -> dict:

@@ -331,6 +331,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
             "max_tokens": result.max_tokens,
             "session_id": result.session_id,
             "delivered_ids": result.delivered_ids,
+            "emphasis": result.emphasis,
         }
 
     @app.delete("/api/owners/{owner}/memories")

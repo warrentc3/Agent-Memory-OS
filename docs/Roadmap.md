@@ -51,16 +51,18 @@ Goal: a memory you can trust with years of an agent's life.
 Goal: the memory system decides *what enters the context window, when* —
 not just what exists.
 
-1. **Session working memory** — `ContextSnapshot` offload/reload shipped
-   with MCP tools and snapshot rotation in retention (keep newest 5 per
-   session). Remaining: snapshot diffing.
+1. **Session working memory** — SHIPPED: `ContextSnapshot` offload/reload
+   with MCP tools, snapshot rotation in retention (keep newest 5 per
+   session), and `snapshot_diff()` / `memory_snapshot_diff` reporting what
+   changed between the two most recent snapshots.
 2. **Budget-aware orchestration** — SHIPPED: `orchestrate_context()` splits
    the token budget across session / bedrock / warnings / procedures / task
    buckets with surplus flowing to task recall; exposed via SDK, MCP
    (`memory_orchestrate_context`), `GET /api/orchestrate`, and the console.
-3. **Proactive recall** — SHIPPED (first form): warnings and procedures
-   surface via dedicated buckets with importance-ranked top-up even when the
-   task wording never matches them. Remaining: task-type detection triggers.
+3. **Proactive recall** — SHIPPED: warnings and procedures surface via
+   dedicated buckets with importance-ranked top-up even when the task
+   wording never matches them; task-type detection (risk / how-to terms)
+   shifts bucket budgets and is reported as `emphasis`.
 4. **Mid-task recall loop** — SHIPPED (first form): with a `session_id`,
    repeated orchestrate calls exclude memories already delivered this
    session (bedrock constants exempt), logged in `session_recall_log`.
