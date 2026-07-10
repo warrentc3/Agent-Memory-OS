@@ -4,6 +4,26 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.10.1] — 2026-07-11
+
+Security & correctness fixes from the full v0.10.0 review
+(`docs/reviews/20260711-v0.10.0-review.md`).
+
+- **MCP identity escape (security)**: `memory_orchestrate_context` and
+  `memory_recall_feedback` no longer accept a caller-supplied
+  `requester_agent_id` that overrode the env-pinned agent identity.
+- **Web ACL gate**: `GET /api/memories/{id}` and `/links` now enforce the
+  same visibility gate as `/api/search` (new `get_visible()`).
+- **Right-to-forget**: `purge_owner` now also destroys cold-archive rows and
+  the recall/audit logs, so purged content is not restorable.
+- `resonance_search` no longer raises on a found seed; LLM link extractor
+  survives a non-string reply; `agents.toml` rejects a string `teams` and
+  validates the whole file before applying (no half-registered fleet).
+- share/revoke no longer reset the freshness/decay clock; the auto semantic
+  index rebuilds after an in-place same-second edit; `rotate_snapshots` never
+  archives pinned snapshots; `import_bundle` rolls back on a corrupt line;
+  bundle temp files are written UTF-8 (Windows non-ASCII).
+
 ## [0.10.0] — 2026-07-11
 
 - **Validation milestone**: `docs/VALIDATION_PLAN.md` (G1 security / G2
