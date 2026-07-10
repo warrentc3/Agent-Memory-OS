@@ -272,9 +272,17 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
             )
 
     @app.get("/api/memories/{memory_id}")
-    def get_memory(memory_id: str) -> dict[str, Any]:
+    def get_memory(
+        memory_id: str,
+        requester_agent_id: str = Query(default=""),
+        requester_team_id: str = Query(default=""),
+    ) -> dict[str, Any]:
         with lock:
-            record = client.get(memory_id)
+            record = client.get_visible(
+                memory_id,
+                requester_agent_id=requester_agent_id or None,
+                requester_team_id=requester_team_id or None,
+            )
         if record is None:
             raise HTTPException(status_code=404, detail=f"memory not found: {memory_id}")
         return _record_payload(record)
@@ -387,7 +395,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         from .sync import export_bundle
 
         with lock:
-            with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False) as handle:
+            with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
                 export_bundle(client.store, handle.name, since=since or None)
                 handle.seek(0)
                 body = Path(handle.name).read_text(encoding="utf-8")
@@ -409,7 +417,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
 
         body = (await request.body()).decode("utf-8")
         with lock:
-            with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
                 handle.write(body)
             try:
                 stats = import_bundle(client.store, handle.name)
@@ -511,9 +519,17 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
             return {"memory_id": memory_id, "audit": client.audit_log(memory_id)}
 
     @app.get("/api/memories/{memory_id}/links")
-    def memory_links(memory_id: str) -> dict[str, Any]:
+    def memory_links(
+        memory_id: str,
+        requester_agent_id: str = Query(default=""),
+        requester_team_id: str = Query(default=""),
+    ) -> dict[str, Any]:
         with lock:
-            if client.get(memory_id) is None:
+            if client.get_visible(
+                memory_id,
+                requester_agent_id=requester_agent_id or None,
+                requester_team_id=requester_team_id or None,
+            ) is None:
                 raise HTTPException(status_code=404, detail=f"memory not found: {memory_id}")
             links = client.links(memory_id)
         return {

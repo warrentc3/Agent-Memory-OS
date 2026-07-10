@@ -89,19 +89,26 @@ def import_bundle(store, path: str | Path) -> dict[str, int]:
         "memories_added": 0, "memories_updated": 0, "memories_skipped": 0,
         "links_added": 0, "links_merged": 0, "profiles_upserted": 0,
     }
-    with path.open("r", encoding="utf-8") as handle:
-        header = json.loads(handle.readline())
-        if header.get("kind") != "bundle" or header.get("version") != BUNDLE_VERSION:
-            raise ValueError("not a compatible agent-memory-os bundle")
-        for line in handle:
-            entry = json.loads(line)
-            kind = entry.pop("kind")
-            if kind == "memory":
-                _merge_memory(store, entry, stats)
-            elif kind == "link":
-                _merge_link(store, entry, stats)
-            elif kind == "profile":
-                _merge_profile(store, entry, stats)
+    # A bundle merges atomically: a truncated/corrupt line rolls the whole
+    # import back, so a half-applied merge can never be persisted by some
+    # later unrelated commit on the shared connection.
+    try:
+        with path.open("r", encoding="utf-8") as handle:
+            header = json.loads(handle.readline())
+            if header.get("kind") != "bundle" or header.get("version") != BUNDLE_VERSION:
+                raise ValueError("not a compatible agent-memory-os bundle")
+            for line in handle:
+                entry = json.loads(line)
+                kind = entry.pop("kind")
+                if kind == "memory":
+                    _merge_memory(store, entry, stats)
+                elif kind == "link":
+                    _merge_link(store, entry, stats)
+                elif kind == "profile":
+                    _merge_profile(store, entry, stats)
+    except Exception:
+        store.conn.rollback()
+        raise
     store.conn.commit()
     return stats
 
@@ -177,7 +184,7 @@ def pull_from_peer(client, base_url: str, *, since: str | None = None,
 
     body = _http(base_url.rstrip("/") + "/api/sync/export"
                  + (f"?since={since}" if since else ""), token=peer_token)
-    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
         handle.write(body)
     try:
         return client.import_bundle(handle.name)
@@ -190,7 +197,7 @@ def push_to_peer(client, base_url: str, *, since: str | None = None,
     """Export the local bundle and merge it into a peer over HTTP."""
     import tempfile
 
-    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
         client.export_bundle(handle.name, since=since)
     try:
         payload = Path(handle.name).read_text(encoding="utf-8")

@@ -51,12 +51,18 @@ def load_agents_config(home: str | Path | None) -> list[dict]:
     for agent_id, fields in agents.items():
         if not isinstance(fields, dict):
             raise ValueError(f"invalid {path}: [agents.{agent_id}] must be a table")
+        teams = fields.get("teams", [])
+        if isinstance(teams, str) or not isinstance(teams, (list, tuple)):
+            raise ValueError(
+                f"invalid {path}: [agents.{agent_id}] teams must be a list, "
+                f'e.g. teams = ["apollo", "ops"]'
+            )
         entries.append(
             {
                 "id": agent_id,
                 "display_name": str(fields.get("display_name", "")),
                 "kind": str(fields.get("kind", "custom")),
-                "teams": [str(team) for team in fields.get("teams", [])],
+                "teams": [str(team) for team in teams],
                 "notes": str(fields.get("notes", "")),
             }
         )
@@ -64,18 +70,29 @@ def load_agents_config(home: str | Path | None) -> list[dict]:
 
 
 def apply_agents_config(store, home: str | Path | None) -> list[str]:
-    """Upsert every configured agent; returns the applied agent ids."""
-    applied: list[str] = []
-    for entry in load_agents_config(home):
-        try:
-            store.register_agent(
-                entry["id"],
-                display_name=entry["display_name"],
-                kind=entry["kind"],
-                teams=entry["teams"],
-                notes=entry["notes"],
+    """Upsert every configured agent; returns the applied agent ids.
+
+    Every entry is validated up front, so a single malformed entry aborts the
+    whole apply before any write — the file never lands the fleet half-registered.
+    """
+    entries = load_agents_config(home)
+    valid_kinds = getattr(store, "AGENT_KINDS", None)
+    for entry in entries:
+        if not entry["id"].strip():
+            raise ValueError(f"{config_path(home)}: an [agents.<id>] table has an empty id")
+        if valid_kinds is not None and entry["kind"] not in valid_kinds:
+            raise ValueError(
+                f"{config_path(home)}: agent {entry['id']!r}: "
+                f"kind must be one of {sorted(valid_kinds)}"
             )
-        except ValueError as exc:
-            raise ValueError(f"{config_path(home)}: agent {entry['id']!r}: {exc}") from exc
+    applied: list[str] = []
+    for entry in entries:
+        store.register_agent(
+            entry["id"],
+            display_name=entry["display_name"],
+            kind=entry["kind"],
+            teams=entry["teams"],
+            notes=entry["notes"],
+        )
         applied.append(entry["id"])
     return applied

@@ -1017,14 +1017,15 @@ function renderCard(memory, extras) {
     if (linksBox.style.display === "block") { linksBox.style.display = "none"; return; }
     linksBox.textContent = "Loading…"; linksBox.style.display = "block";
     try {
-      const data = await api("/api/memories/" + memory.id + "/links");
+      const rq = actingAs() ? "?requester_agent_id=" + encodeURIComponent(actingAs()) : "";
+      const data = await api("/api/memories/" + memory.id + "/links" + rq);
       linksBox.textContent = "";
       if (!data.links.length) { linksBox.textContent = "No links yet."; return; }
       for (const link of data.links) {
         const other = link.src_id === memory.id ? link.dst_id : link.src_id;
         const row = el("div", "linkrow");
         row.appendChild(el("span", "rel", link.relation));
-        const detail = await api("/api/memories/" + other).catch(() => null);
+        const detail = await api("/api/memories/" + other + rq).catch(() => null);
         row.appendChild(el("span", null, detail ? detail.content.slice(0, 80) : other));
         row.appendChild(el("span", null, "w=" + link.weight.toFixed(2)));
         linksBox.appendChild(row);

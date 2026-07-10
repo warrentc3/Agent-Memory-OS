@@ -52,9 +52,11 @@ def make_llm_link_extractor(
             )
             try:
                 reply = complete(PROMPT_TEMPLATE.format(catalog=catalog))
+                if not isinstance(reply, str):
+                    continue
+                pairs.extend(_parse_pairs(reply, known_ids))
             except Exception:  # noqa: BLE001 - extractor must never break consolidation
                 continue
-            pairs.extend(_parse_pairs(reply, known_ids))
         return pairs
 
     return extract

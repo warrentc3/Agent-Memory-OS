@@ -66,6 +66,20 @@ class MemoryClient:
     def get(self, memory_id: str) -> MemoryRecord | None:
         return self.store.get(memory_id)
 
+    def get_visible(
+        self,
+        memory_id: str,
+        *,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+    ) -> MemoryRecord | None:
+        """ACL-gated single-memory fetch (see MemoryStore.get_visible)."""
+        return self.store.get_visible(
+            memory_id,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+        )
+
     def delete(self, memory_id: str) -> bool:
         removed = self.store.delete(memory_id)
         if removed:
@@ -628,7 +642,7 @@ class MemoryClient:
         resonant_ids = idx.resonance_cluster(seed_ids, hops=resonance_hops)
         
         final_results = []
-        id_map = {res.id: res for res in seeds}
+        id_map = {res.record.id: res for res in seeds}
         for rid in resonant_ids:
             if rid in id_map:
                 final_results.append(id_map[rid])

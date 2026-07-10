@@ -1,0 +1,225 @@
+{
+  "version": "0.10.0",
+  "mode": "full",
+  "generated_at": "2026-07-10T20:58:29+00:00",
+  "environment": {
+    "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
+    "python": "3.14.4",
+    "machine": "arm64",
+    "semantic_backend": true
+  },
+  "corpus": {
+    "memories": 5055,
+    "links": 2022,
+    "agents": 6,
+    "teams": 3
+  },
+  "g1": [
+    {
+      "check": "private isolation (search)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "private isolation (pack)",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "team member sees team memory",
+      "ok": true,
+      "detail": "cc-main ∈ apollo"
+    },
+    {
+      "check": "non-member blocked",
+      "ok": true,
+      "detail": "mizuki ∉ apollo"
+    },
+    {
+      "check": "membership edit immediate",
+      "ok": true,
+      "detail": "after leaving apollo"
+    },
+    {
+      "check": "resonance non-traversal",
+      "ok": true,
+      "detail": "private cannot bridge"
+    },
+    {
+      "check": "graph hides private",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "non-owner share rejected",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "share grants / revoke removes",
+      "ok": true,
+      "detail": "audited"
+    },
+    {
+      "check": "de-identified copy scrubbed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "feedback gate",
+      "ok": true,
+      "detail": "invisible memory untouched"
+    },
+    {
+      "check": "team export boundary",
+      "ok": true,
+      "detail": "526 rows"
+    }
+  ],
+  "g2": [
+    {
+      "check": "full test suite",
+      "ok": true,
+      "detail": "-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html"
+    },
+    {
+      "check": "needle top-3 recall ≥95%",
+      "ok": true,
+      "detail": "25/25"
+    },
+    {
+      "check": "linked-neighbor surfacing ≥90%",
+      "ok": true,
+      "detail": "20/20 via resonance"
+    },
+    {
+      "check": "orchestrator budget + buckets",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "check": "session dedup",
+      "ok": true,
+      "detail": "0 repeats"
+    },
+    {
+      "check": "retention archives expired set",
+      "ok": true,
+      "detail": "{'archived_expired': 5, 'archived_decayed': 0, 'archived_snapshots': 0, 'tuned_half_lives': 1}"
+    },
+    {
+      "check": "feedback tunes half-life",
+      "ok": true,
+      "detail": "180.0d"
+    },
+    {
+      "check": "backup/restore parity",
+      "ok": true,
+      "detail": "5055 rows"
+    },
+    {
+      "check": "integrity + schema",
+      "ok": true,
+      "detail": "schema v8"
+    },
+    {
+      "check": "federation convergence",
+      "ok": true,
+      "detail": "5055 memories, 2022 links"
+    }
+  ],
+  "g3": [
+    {
+      "metric": "write throughput",
+      "actual": 8404.29,
+      "target": 200,
+      "unit": "memories/s",
+      "status": "PASS"
+    },
+    {
+      "metric": "search p50 (requester+teams+resonance)",
+      "actual": 11.08,
+      "target": 25,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "search p95",
+      "actual": 12.05,
+      "target": 80,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "context pack p95",
+      "actual": 13.08,
+      "target": 100,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "orchestrate p95",
+      "actual": 20.66,
+      "target": 150,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "graph snapshot avg",
+      "actual": 3.29,
+      "target": 250,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "dashboard avg",
+      "actual": 10.85,
+      "target": 250,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "retention full pass",
+      "actual": 11.37,
+      "target": 5000,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "consolidation",
+      "actual": 35.65,
+      "target": 10000,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "bundle export",
+      "actual": 64.94,
+      "target": 10000,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "bundle import",
+      "actual": 195.09,
+      "target": 10000,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "semantic index build",
+      "actual": 492.49,
+      "target": 30000,
+      "unit": "ms",
+      "status": "PASS"
+    },
+    {
+      "metric": "semantic query p95",
+      "actual": 1.49,
+      "target": 50,
+      "unit": "ms",
+      "status": "PASS"
+    }
+  ],
+  "verdict": "PASS"
+}

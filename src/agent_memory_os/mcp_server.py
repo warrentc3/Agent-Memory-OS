@@ -58,13 +58,15 @@ def create_server():  # pragma: no cover - optional integration scaffold
         memory_ids: list[str],
         create_colinks: bool = False,
         helpful: bool = True,
-        requester_agent_id: str | None = None,
     ) -> dict:
+        # Identity is the env-declared agent, never caller-supplied: an agent
+        # must not weaken/reinforce (or even name) memories under another
+        # identity's ACL. This is the gate _recall_eligible_ids relies on.
         return client.record_recall(
             memory_ids,
             create_colinks=create_colinks,
             helpful=helpful,
-            requester_agent_id=requester_agent_id or agent_id,
+            requester_agent_id=agent_id,
         )
 
     @mcp.tool()
@@ -95,17 +97,18 @@ def create_server():  # pragma: no cover - optional integration scaffold
         task: str,
         session_id: str | None = None,
         max_tokens: int = 2000,
-        requester_agent_id: str | None = None,
     ) -> dict:
         """Budget-aware context for a task: bedrock constants, proactive warnings
         and procedures, and relevance recall in one prompt-ready block. With a
         session_id, repeated calls skip memories already delivered (iterative
         deepening); bedrock constants always repeat."""
+        # Identity is the env-declared agent, never caller-supplied, so a tool
+        # call cannot pull another identity's private context.
         result = client.orchestrate_context(
             task,
             session_id=session_id,
             max_tokens=max_tokens,
-            requester_agent_id=requester_agent_id or agent_id,
+            requester_agent_id=agent_id,
         )
         return {
             "text": result.text,

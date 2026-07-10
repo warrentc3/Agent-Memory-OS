@@ -366,6 +366,28 @@ class MemoryStore:
         row = self.conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
         return self._row_to_record(row) if row else None
 
+    def get_visible(
+        self,
+        memory_id: str,
+        *,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+    ) -> MemoryRecord | None:
+        """get() through the same ACL/expiry gate as search.
+
+        A requester never resolves a memory it could not have found by
+        searching — invisible ids return None, indistinguishable from absent.
+        """
+        rows = self._visible_rows_for_ids(
+            [memory_id],
+            owner=None,
+            scope=None,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            now=utc_now(),
+        )
+        return self._row_to_record(rows[0]) if rows else None
+
     UPDATABLE_FIELDS = {
         "content", "summary", "tags", "visibility", "source", "confidence",
         "importance", "type", "scope", "pinned", "expires_at",
@@ -660,7 +682,11 @@ class MemoryStore:
         self.conn.commit()
 
     def rotate_snapshots(self, *, keep_per_session: int = 5) -> int:
-        """Archive all but the newest N context snapshots per session."""
+        """Archive all but the newest N context snapshots per session.
+
+        Pinned snapshots are never rotated out — they follow the same rule as
+        the rest of retention, where only a hard expiry retires a pinned row.
+        """
         rows = self.conn.execute(
             """
             SELECT id FROM (
@@ -670,6 +696,7 @@ class MemoryStore:
               ) AS rank
               FROM memories
               WHERE type = 'snapshot' AND json_extract(source, '$.session_id') IS NOT NULL
+                AND pinned = 0
             ) WHERE rank > ?
             """,
             (max(1, keep_per_session),),
@@ -814,11 +841,20 @@ class MemoryStore:
         ]
 
     def semantic_signature(self) -> tuple:
-        """Cheap change signature used to decide when the auto index rebuilds."""
+        """Cheap change signature used to decide when the auto index rebuilds.
+
+        Includes a content/summary length sum so an in-place edit whose
+        updated_at lands in the same second as the current max (second
+        granularity) still changes the signature; reinforcement writes, which
+        never touch content or summary, leave it unchanged (no spurious
+        rebuild).
+        """
         row = self.conn.execute(
-            "SELECT COUNT(*), COALESCE(MAX(rowid), 0), COALESCE(MAX(updated_at), '') FROM memories"
+            "SELECT COUNT(*), COALESCE(MAX(rowid), 0), COALESCE(MAX(updated_at), ''), "
+            "COALESCE(SUM(LENGTH(content)), 0), COALESCE(SUM(LENGTH(COALESCE(summary, ''))), 0) "
+            "FROM memories"
         ).fetchone()
-        return (int(row[0]), int(row[1]), row[2])
+        return (int(row[0]), int(row[1]), row[2], int(row[3]), int(row[4]))
 
     def graph_snapshot(
         self,
@@ -1131,7 +1167,7 @@ class MemoryStore:
 
         if grant not in record.visibility:
             visibility = list(record.visibility) + [grant]
-            self.update_memory(memory_id, visibility=visibility)
+            self._set_visibility(memory_id, visibility)
         self._audit(memory_id, actor, "share", grant)
         return {"shared_as": memory_id, "grant": grant, "deidentified": False}
 
@@ -1153,9 +1189,21 @@ class MemoryStore:
         grant = f"agent:{to_agent}" if to_agent else f"team:{to_team}"
         visibility = [entry for entry in record.visibility if entry != grant]
         if len(visibility) != len(record.visibility):
-            self.update_memory(memory_id, visibility=visibility)
+            self._set_visibility(memory_id, visibility)
         self._audit(memory_id, actor, "revoke", grant)
         return {"memory_id": memory_id, "revoked": grant}
+
+    def _set_visibility(self, memory_id: str, visibility: list[str]) -> None:
+        """Change only the ACL of a memory, leaving updated_at untouched.
+
+        Sharing/revoking is not a content edit, so it must not restart the
+        freshness or decay-archival clock (same discipline as record_recall).
+        """
+        self.conn.execute(
+            "UPDATE memories SET visibility = ? WHERE id = ?",
+            (json.dumps(visibility, ensure_ascii=False), memory_id),
+        )
+        self.conn.commit()
 
     def audit_log(self, memory_id: str) -> list[dict[str, str]]:
         rows = self.conn.execute(
@@ -1286,6 +1334,17 @@ class MemoryStore:
         if not owner or not owner.strip():
             raise ValueError("owner must be non-empty")
         owner = owner.strip()
+        # Right-to-forget must also reach the cold archive and the id-keyed
+        # side tables, otherwise purged content survives in memories_archive
+        # (restorable via restore_archived) and in the recall/audit logs.
+        owned_ids = [
+            row[0]
+            for row in self.conn.execute(
+                "SELECT id FROM memories WHERE owner = ? "
+                "UNION SELECT id FROM memories_archive WHERE owner = ?",
+                (owner, owner),
+            ).fetchall()
+        ]
         links_removed = self.conn.execute(
             """
             DELETE FROM memory_links
@@ -1297,9 +1356,26 @@ class MemoryStore:
         memories_removed = self.conn.execute(
             "DELETE FROM memories WHERE owner = ?", (owner,)
         ).rowcount
+        archived_removed = self.conn.execute(
+            "DELETE FROM memories_archive WHERE owner = ?", (owner,)
+        ).rowcount
+        if owned_ids:
+            placeholders = ", ".join("?" for _ in owned_ids)
+            self.conn.execute(
+                f"DELETE FROM session_recall_log WHERE memory_id IN ({placeholders})",
+                owned_ids,
+            )
+            self.conn.execute(
+                f"DELETE FROM memory_audit WHERE memory_id IN ({placeholders})",
+                owned_ids,
+            )
         self.conn.execute("DELETE FROM recall_profiles WHERE agent_id = ?", (owner,))
         self.conn.commit()
-        return {"memories_deleted": int(memories_removed), "links_deleted": int(links_removed)}
+        return {
+            "memories_deleted": int(memories_removed),
+            "links_deleted": int(links_removed),
+            "archived_deleted": int(archived_removed),
+        }
 
     def rebuild_indexes(self) -> dict[str, int]:
         """Rebuild disposable retrieval indexes from authoritative memories."""
