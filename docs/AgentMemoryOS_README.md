@@ -1,3 +1,5 @@
+<p align="center"><img src="../assets/logo-header.png" alt="Agent Memory OS" width="480"></p>
+
 # AgentMemoryOS
 
 ## 🚀 Project Overview

@@ -1,4 +1,6 @@
-# AgentMemoryOS
+<p align="center">
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/logo-header.png" alt="Agent Memory OS" width="560">
+</p>
 
 A **local-first memory engine for AI agents** — single or multi-agent, with shared and private memories, associative recall, and context-budgeted retrieval. One SQLite file, zero required dependencies, Apache-2.0.
 
