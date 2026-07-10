@@ -4,6 +4,23 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.10.0] — 2026-07-11
+
+- **Validation milestone**: `docs/VALIDATION_PLAN.md` (G1 security / G2
+  functional / G3 performance / G4 deployment gate matrix) supersedes the
+  v0.2.x-era Hermes shadow gates; reproducible harness
+  `scripts/validation_run.py` generates professional reports into
+  `docs/reports/` and runs in CI (`--quick`).
+- First full run: **PASS** — 12/12 security, 10/10 functional, 13/13
+  performance on a 5k-memory fleet corpus (search p95 11.9 ms,
+  orchestrate p95 20.4 ms, writes 8.3k/s).
+- **Ranking fix found by validation**: the query-independent authority
+  (bedrock) track could crowd resonance results out of the result window
+  at scale; its share is now capped at limit/4.
+- Documentation sweep: new `docs/USER_GUIDE.md` (full CLI/API/MCP
+  reference), CHANGELOG as release history, SPEC current through v0.9,
+  INSTALLATION rewritten, status docs refreshed.
+
 ## [0.9.0] — 2026-07-11
 
 - **Fleet as code**: `<home>/agents.toml` declares the whole multi-agent,
