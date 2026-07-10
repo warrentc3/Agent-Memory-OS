@@ -20,6 +20,7 @@ args = ["-m", "agent_memory_os.mcp_server"]
 
 [mcp_servers.agent-memory.env]
 AGENT_MEMORY_HOME = "/Users/you/.agent-memory"
+AGENT_MEMORY_AGENT_ID = "codex-1"
 ```
 
 Restart Codex; the `memory_*` tools appear in its tool list.
@@ -41,3 +42,10 @@ Add a note to your `AGENTS.md` (or project instructions):
 - Use one `AGENT_MEMORY_HOME` across your agents if you want shared team
   memory; per-agent privacy still holds through owner/visibility ACL.
 - The same home can be inspected live with `agent-memory-web`.
+
+## Agent identity (multi-agent projects)
+
+Set `AGENT_MEMORY_AGENT_ID` in the MCP server env so this agent's reads and
+writes carry its identity: memories default to it as owner, and searches
+automatically include every team the agent belongs to (register agents and
+teams in the Web console's **Agents** tab, or via `POST /api/agents`).

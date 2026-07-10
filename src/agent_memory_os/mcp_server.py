@@ -14,24 +14,34 @@ def create_server():  # pragma: no cover - optional integration scaffold
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError("Install agent-memory-os[mcp] to run the MCP server") from exc
 
+    import os
+
     mcp = FastMCP("agent-memory-os")
     client = MemoryClient()
+    # Each connected agent declares WHO it is via env, so a project can mix
+    # Claude Code / Codex / OpenClaw / Hermes profiles against one store and
+    # every read/write carries the right identity and team ACL.
+    agent_id = os.getenv("AGENT_MEMORY_AGENT_ID") or None
+    if agent_id:
+        client.store.touch_agent(agent_id)
 
     @mcp.tool()
-    def memory_add(content: str, owner: str = "default", scope: str = "user", type: str = "note") -> dict:
-        rec = client.add(content, owner=owner, scope=scope, type=type)
+    def memory_add(content: str, owner: str | None = None, scope: str = "user", type: str = "note") -> dict:
+        rec = client.add(content, owner=owner or agent_id or "default", scope=scope, type=type)
         return {"id": rec.id, "content": rec.content}
 
     @mcp.tool()
     def memory_search(query: str, owner: str | None = None, limit: int = 10) -> list[dict]:
         return [
             {"id": r.record.id, "score": r.score, "content": r.record.content, "scope": r.record.scope, "type": r.record.type}
-            for r in client.search(query, owner=owner, limit=limit)
+            for r in client.search(query, owner=owner, limit=limit, requester_agent_id=agent_id)
         ]
 
     @mcp.tool()
     def memory_context_pack(query: str, owner: str | None = None, max_tokens: int = 1200) -> str:
-        return client.context_pack(query, owner=owner, max_tokens=max_tokens)
+        return client.context_pack(
+            query, owner=owner, max_tokens=max_tokens, requester_agent_id=agent_id
+        )
 
     @mcp.tool()
     def memory_link(src_id: str, dst_id: str, relation: str = "related_to", weight: float = 0.5) -> dict:
@@ -54,7 +64,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
             memory_ids,
             create_colinks=create_colinks,
             helpful=helpful,
-            requester_agent_id=requester_agent_id,
+            requester_agent_id=requester_agent_id or agent_id,
         )
 
     @mcp.tool()
@@ -95,7 +105,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
             task,
             session_id=session_id,
             max_tokens=max_tokens,
-            requester_agent_id=requester_agent_id,
+            requester_agent_id=requester_agent_id or agent_id,
         )
         return {
             "text": result.text,

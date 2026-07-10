@@ -86,6 +86,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync.add_argument("--since", default=None, help="Only records updated after this ISO timestamp")
     sync.add_argument("--peer-token", default=None, help="Bearer token of the peer's Web API")
+    sync.add_argument("--team", default=None, help="Export only one team/project's shared memory")
 
     peers = sub.add_parser("peers", help="Manage federated sync peers")
     peers.add_argument("action", choices=["add", "remove", "list"])
@@ -311,7 +312,7 @@ def main(argv: list[str] | None = None) -> int:
                 print("sync export/import/pull/push require a target")
                 return 2
             if args.action == "export":
-                report = client.export_bundle(args.target, since=args.since)
+                report = client.export_bundle(args.target, since=args.since, team=args.team)
             elif args.action == "import":
                 report = client.import_bundle(args.target)
             else:

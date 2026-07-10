@@ -101,6 +101,20 @@ class MemoryClient:
     def integrity_check(self) -> dict[str, object]:
         return self.store.integrity_check()
 
+    def register_agent(self, agent_id: str, **fields) -> dict[str, object]:
+        result = self.store.register_agent(agent_id, **fields)
+        self.cache.clear()  # team membership changes what this agent can see
+        return result
+
+    def list_agents(self) -> list[dict[str, object]]:
+        return self.store.list_agents()
+
+    def remove_agent(self, agent_id: str) -> bool:
+        removed = self.store.remove_agent(agent_id)
+        if removed:
+            self.cache.clear()
+        return removed
+
     def share_memory(
         self,
         memory_id: str,
@@ -133,10 +147,10 @@ class MemoryClient:
     def audit_log(self, memory_id: str) -> list[dict[str, str]]:
         return self.store.audit_log(memory_id)
 
-    def export_bundle(self, path, *, since: str | None = None) -> dict[str, int]:
+    def export_bundle(self, path, *, since: str | None = None, team: str | None = None) -> dict[str, int]:
         from .sync import export_bundle
 
-        return export_bundle(self.store, path, since=since)
+        return export_bundle(self.store, path, since=since, team=team)
 
     def import_bundle(self, path) -> dict[str, int]:
         from .sync import import_bundle

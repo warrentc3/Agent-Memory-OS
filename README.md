@@ -147,6 +147,23 @@ agent-memory restore ~/backups/memories-2026-07-11.db --force
 Backups use SQLite's online backup API, so they are consistent even while
 agents are writing. Disposable indexes rebuild automatically after a restore.
 
+## Multi-agent projects
+
+One project can mix **Claude Code, Codex, OpenClaw, and multiple Hermes
+profiles** against a single store. Register each agent with its teams —
+in the console's **Agents** tab or via API — and team members automatically
+see `team:<project>` memories with no extra wiring:
+
+```bash
+curl -X POST localhost:8000/api/agents -H 'content-type: application/json' \
+  -d '{"id": "cc-main", "kind": "claude-code", "teams": ["apollo"]}'
+```
+
+Each MCP server declares its identity with `AGENT_MEMORY_AGENT_ID`, so
+memories default to that agent as owner and every recall carries its team
+ACL. Ship one project's shared memory to another host with
+`agent-memory sync export apollo.jsonl --team apollo`.
+
 ## Federation (multi-host sync)
 
 ```bash

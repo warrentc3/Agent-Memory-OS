@@ -17,6 +17,7 @@ Project-scoped (recommended — the whole team gets it via `.mcp.json`):
 ```bash
 claude mcp add agent-memory --scope project \
   --env AGENT_MEMORY_HOME=$HOME/.agent-memory \
+  --env AGENT_MEMORY_AGENT_ID=cc-main \
   -- python -m agent_memory_os.mcp_server
 ```
 
@@ -30,7 +31,7 @@ Equivalent `.mcp.json` entry if you prefer editing the file directly:
     "agent-memory": {
       "command": "python",
       "args": ["-m", "agent_memory_os.mcp_server"],
-      "env": { "AGENT_MEMORY_HOME": "~/.agent-memory" }
+      "env": { "AGENT_MEMORY_HOME": "~/.agent-memory", "AGENT_MEMORY_AGENT_ID": "cc-main" }
     }
   }
 }
@@ -65,3 +66,10 @@ right moments:
 - Keep `AGENT_MEMORY_HOME` on a local disk (not NFS/SMB).
 - Run the Web console (`agent-memory-web`) beside it to inspect what the
   agent remembers, browse the association graph, and prune.
+
+## Agent identity (multi-agent projects)
+
+Set `AGENT_MEMORY_AGENT_ID` in the MCP server env so this agent's reads and
+writes carry its identity: memories default to it as owner, and searches
+automatically include every team the agent belongs to (register agents and
+teams in the Web console's **Agents** tab, or via `POST /api/agents`).

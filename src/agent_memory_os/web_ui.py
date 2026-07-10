@@ -118,6 +118,11 @@ PAGE = r"""<!doctype html>
     .badge.scope-global  { background: #14311c; color: #6fd487; }
   }
   .badge.type { background: none; border-color: var(--border); color: var(--muted); }
+  .badge.kind-claude-code { background: #3a2218; color: #e8977a; }
+  .badge.kind-codex       { background: #22282a; color: #c7d3d0; }
+  .badge.kind-openclaw    { background: #3a1a12; color: #f08a68; }
+  .badge.kind-hermes      { background: #241d4e; color: #a897f0; }
+  .badge.kind-custom      { background: var(--panel-2); color: var(--muted); }
   .owner { font-size: 12.5px; color: var(--muted); }
   .owner b { color: var(--text); font-weight: 600; }
   .pin { font-size: 13px; }
@@ -278,7 +283,8 @@ PAGE = r"""<!doctype html>
     </div>
     <div class="acting">
       <span title="Requester identity used for search, context packs and feedback. Empty = unrestricted admin view.">Acting as</span>
-      <input id="acting-as" type="text" placeholder="admin (all)" autocomplete="off">
+      <input id="acting-as" type="text" placeholder="admin (all)" autocomplete="off" list="agent-ids">
+      <datalist id="agent-ids"></datalist>
     </div>
   </div>
   <nav class="tabs">
@@ -286,6 +292,7 @@ PAGE = r"""<!doctype html>
     <button data-tab="search">Search</button>
     <button data-tab="browse">Browse</button>
     <button data-tab="graph">Graph</button>
+    <button data-tab="agents">Agents</button>
     <button data-tab="add">Add memory</button>
     <button data-tab="tools">Tools</button>
   </nav>
@@ -352,6 +359,24 @@ PAGE = r"""<!doctype html>
       <div class="graphtip" id="graph-tip"></div>
     </div>
     <p class="graphhint">Association graph for the acting identity — an edge is shown only when both memories are visible to it. Drag nodes to untangle; click to copy a memory id.</p>
+  </section>
+
+  <section class="tab" id="tab-agents">
+    <div class="panel">
+      <h3>Register / update an agent</h3>
+      <p class="hint" style="font-size:12.5px;color:var(--muted);margin:0 0 12px">One project can mix Claude Code, Codex, OpenClaw, and multiple Hermes profiles against this store. Register each with its teams — team members automatically see <code>team:&lt;id&gt;</code> memories, and MCP servers declare identity via <code>AGENT_MEMORY_AGENT_ID</code>.</p>
+      <div class="filterrow">
+        <input id="ag-id" type="text" placeholder="agent id (e.g. neo)">
+        <input id="ag-name" type="text" placeholder="display name">
+        <select id="ag-kind">
+          <option>claude-code</option><option>codex</option><option>openclaw</option>
+          <option>hermes</option><option selected>custom</option>
+        </select>
+        <input id="ag-teams" type="text" placeholder="teams, comma separated (= projects)">
+        <button class="ghost" id="btn-agent-save">Save agent</button>
+      </div>
+    </div>
+    <div class="cards" id="agents-list"></div>
   </section>
 
   <section class="tab" id="tab-add">
@@ -549,6 +574,7 @@ document.querySelectorAll("nav.tabs button").forEach((button) => {
     if (button.dataset.tab === "browse" && !browseLoaded) refreshBrowse();
     if (button.dataset.tab === "graph") loadGraph();
     if (button.dataset.tab === "dashboard") loadDashboard();
+    if (button.dataset.tab === "agents") refreshAgents();
   });
 });
 
@@ -643,6 +669,78 @@ async function loadDashboard() {
     }
   }
 }
+
+/* ---------- agents ---------- */
+async function refreshAgents() {
+  const list = $("agents-list");
+  try {
+    const data = await api("/api/agents");
+    const datalist = $("agent-ids");
+    datalist.innerHTML = "";
+    list.innerHTML = "";
+    if (!data.agents.length) {
+      const empty = el("div", "empty");
+      empty.appendChild(el("div", "big", "🤖"));
+      empty.appendChild(document.createTextNode("No agents registered yet."));
+      list.appendChild(empty);
+      return;
+    }
+    for (const agent of data.agents) {
+      datalist.appendChild(Object.assign(document.createElement("option"), { value: agent.id }));
+      const card = el("article", "card");
+      const top = el("div", "top");
+      top.appendChild(el("span", "badge kind-" + agent.kind, agent.kind));
+      const name = el("span", "owner");
+      name.appendChild(el("b", null, agent.id));
+      if (agent.display_name) name.appendChild(document.createTextNode(" · " + agent.display_name));
+      top.appendChild(name);
+      const meta = el("span", "scorewrap");
+      meta.appendChild(el("span", "scoreval", agent.memory_count + " memories"));
+      top.appendChild(meta);
+      card.appendChild(top);
+      const teams = el("div", "meta");
+      const chips = el("span", "tags");
+      for (const team of agent.teams) chips.appendChild(el("span", "tag", "team:" + team));
+      if (!agent.teams.length) chips.appendChild(el("span", "sm", "no teams"));
+      teams.appendChild(chips);
+      teams.appendChild(el("span", null, agent.last_seen_at ? "last seen " + new Date(agent.last_seen_at).toLocaleString() : "never seen"));
+      card.appendChild(teams);
+      const actions = el("div", "actions");
+      const actBtn = el("button", null, "👤 Act as");
+      actBtn.addEventListener("click", () => { $("acting-as").value = agent.id; localStorage.setItem("amos.actingAs", agent.id); toast("Acting as " + agent.id, "ok"); });
+      const editBtn = el("button", null, "✎ Edit");
+      editBtn.addEventListener("click", () => {
+        $("ag-id").value = agent.id; $("ag-name").value = agent.display_name;
+        $("ag-kind").value = agent.kind; $("ag-teams").value = agent.teams.join(", ");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+      const removeBtn = el("button", "danger", "🗑 Remove");
+      removeBtn.addEventListener("click", async () => {
+        if (!confirm("Unregister agent “" + agent.id + "”? Its memories stay; it loses registered team access.")) return;
+        try { await api("/api/agents/" + encodeURIComponent(agent.id), { method: "DELETE" }); refreshAgents(); }
+        catch (e) { toast(e.message, "err"); }
+      });
+      actions.append(actBtn, editBtn, removeBtn);
+      card.appendChild(actions);
+      list.appendChild(card);
+    }
+  } catch (e) { /* pre-auth */ }
+}
+$("btn-agent-save").addEventListener("click", async () => {
+  const id = $("ag-id").value.trim();
+  if (!id) { toast("Agent id is required.", "err"); return; }
+  try {
+    await api("/api/agents", { method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: id, display_name: $("ag-name").value.trim(), kind: $("ag-kind").value,
+        teams: $("ag-teams").value.split(",").map(t => t.trim()).filter(Boolean),
+      }) });
+    toast("Agent saved.", "ok");
+    $("ag-id").value = ""; $("ag-name").value = ""; $("ag-teams").value = "";
+    refreshAgents();
+  } catch (e) { toast(e.message, "err"); }
+});
+refreshAgents();
 
 /* ---------- memory cards ---------- */
 function gauge(label, value) {

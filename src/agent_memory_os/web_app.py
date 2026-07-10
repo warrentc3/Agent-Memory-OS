@@ -129,6 +129,14 @@ class LinkRequest(BaseModel):
         return value
 
 
+class AgentRequest(BaseModel):
+    id: str = Field(min_length=1)
+    display_name: str = ""
+    kind: str = "custom"
+    teams: list[str] = Field(default_factory=list)
+    notes: str = ""
+
+
 class PeerRequest(BaseModel):
     url: str = Field(min_length=8)
     token: str | None = None
@@ -318,6 +326,30 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def integrity() -> dict[str, Any]:
         with lock:
             return client.integrity_check()
+
+    @app.get("/api/agents")
+    def agents_list() -> dict[str, Any]:
+        with lock:
+            return {"agents": client.list_agents()}
+
+    @app.post("/api/agents")
+    def agents_register(request: AgentRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                return client.register_agent(
+                    request.id, display_name=request.display_name, kind=request.kind,
+                    teams=request.teams, notes=request.notes,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/agents/{agent_id}")
+    def agents_remove(agent_id: str) -> dict[str, Any]:
+        with lock:
+            removed = client.remove_agent(agent_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"agent not registered: {agent_id}")
+        return {"removed": agent_id}
 
     @app.get("/api/peers")
     def peers_list() -> dict[str, Any]:

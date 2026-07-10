@@ -31,22 +31,53 @@ _LINK_KEYS = (
 )
 
 
-def export_bundle(store, path: str | Path, *, since: str | None = None) -> dict[str, int]:
+def export_bundle(
+    store, path: str | Path, *, since: str | None = None, team: str | None = None
+) -> dict[str, int]:
+    """Write a bundle; `team` restricts it to one project/team's shared memory.
+
+    A team-scoped bundle carries only memories granted to that team, links
+    whose BOTH endpoints are in the bundle, and the recall profiles of that
+    team's registered members — a portable "project memory" unit.
+    """
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     counts = {"memories": 0, "links": 0, "profiles": 0}
+    clauses, params = [], []
+    if since:
+        clauses.append("updated_at > ?")
+        params.append(since)
+    if team:
+        clauses.append(
+            "(EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)"
+            " OR EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = 'team'"
+            "            AND json_extract(source, '$.team_id') = ?))"
+        )
+        params.extend([f"team:{team}", team])
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    exported_ids: set[str] = set()
     with path.open("w", encoding="utf-8") as handle:
         handle.write(json.dumps({"kind": "bundle", "version": BUNDLE_VERSION}) + "\n")
-        where, params = ("WHERE updated_at > ?", [since]) if since else ("", [])
         for row in store.conn.execute(f"SELECT * FROM memories {where}", params):
             payload = {key: row[key] for key in _MEMORY_KEYS}
+            exported_ids.add(row["id"])
             handle.write(json.dumps({"kind": "memory", **payload}, ensure_ascii=False) + "\n")
             counts["memories"] += 1
-        for row in store.conn.execute(f"SELECT * FROM memory_links {where}", params):
+        link_where, link_params = ("WHERE updated_at > ?", [since]) if since else ("", [])
+        for row in store.conn.execute(f"SELECT * FROM memory_links {link_where}", link_params):
+            if team and not (row["src_id"] in exported_ids and row["dst_id"] in exported_ids):
+                continue
             payload = {key: row[key] for key in _LINK_KEYS}
             handle.write(json.dumps({"kind": "link", **payload}, ensure_ascii=False) + "\n")
             counts["links"] += 1
+        members = None
+        if team:
+            members = {
+                agent["id"] for agent in store.list_agents() if team in agent["teams"]
+            }
         for row in store.conn.execute("SELECT * FROM recall_profiles"):
+            if members is not None and row["agent_id"] not in members:
+                continue
             handle.write(json.dumps({"kind": "profile", **dict(row)}, ensure_ascii=False) + "\n")
             counts["profiles"] += 1
     return counts

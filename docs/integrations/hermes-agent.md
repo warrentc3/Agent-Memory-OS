@@ -60,3 +60,10 @@ client.save_profile(RecallProfile(agent_id="neo",
 ```
 
 Searches with `requester_agent_id=<profile>` auto-apply the stored profile.
+
+## Agent identity (multi-agent projects)
+
+Set `AGENT_MEMORY_AGENT_ID` in the MCP server env so this agent's reads and
+writes carry its identity: memories default to it as owner, and searches
+automatically include every team the agent belongs to (register agents and
+teams in the Web console's **Agents** tab, or via `POST /api/agents`).

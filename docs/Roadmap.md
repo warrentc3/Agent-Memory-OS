@@ -97,4 +97,18 @@ not just what exists.
    wraps any completion callable into a consolidation link extractor with
    defensive JSON parsing (bad output degrades to zero links).
 
+## v0.7 — Multi-agent collaboration (in progress)
+
+1. **Agent registry** — SHIPPED (migration 8): agents are first-class
+   entities (id, kind: claude-code/codex/openclaw/hermes/custom, teams,
+   last-seen), managed in the console's Agents tab and `/api/agents`.
+2. **Team auto-resolution ACL** — SHIPPED: the ACL hard gate resolves a
+   requester's registered teams automatically; project memory
+   (`team:<project>` grants) is visible to every fleet member with no
+   per-call team wiring, and membership changes apply immediately.
+3. **Per-agent MCP identity** — SHIPPED: `AGENT_MEMORY_AGENT_ID` in each
+   MCP server env; adds default owner, requester identity, and last-seen.
+4. **Project-scoped sync** — SHIPPED: `sync export --team <project>`
+   bundles one team's memories, boundary-safe links, and member profiles.
+
 ## Later / research

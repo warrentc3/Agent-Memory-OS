@@ -222,6 +222,22 @@ def _migration_sync_peers(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_agents_registry(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS agents (
+          id TEXT PRIMARY KEY,
+          display_name TEXT NOT NULL DEFAULT '',
+          kind TEXT NOT NULL DEFAULT 'custom',
+          teams TEXT NOT NULL DEFAULT '[]',
+          notes TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          last_seen_at TEXT
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -230,6 +246,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (5, "memory sharing audit trail", _migration_memory_audit),
     (6, "recall feedback counters", _migration_feedback_counts),
     (7, "federated sync peer registry", _migration_sync_peers),
+    (8, "agent registry with team memberships", _migration_agents_registry),
 ]
 
 
@@ -662,6 +679,81 @@ class MemoryStore:
             return 0
         placeholders = ",".join("?" for _ in ids)
         return self._archive_where(f"id IN ({placeholders})", ids, reason="snapshot_rotation")
+
+    AGENT_KINDS = {"claude-code", "codex", "openclaw", "hermes", "custom"}
+
+    def register_agent(
+        self,
+        agent_id: str,
+        *,
+        display_name: str = "",
+        kind: str = "custom",
+        teams: Sequence[str] | None = None,
+        notes: str = "",
+    ) -> dict[str, object]:
+        agent_id = agent_id.strip()
+        if not agent_id:
+            raise ValueError("agent id must be non-empty")
+        if kind not in self.AGENT_KINDS:
+            raise ValueError(f"kind must be one of {sorted(self.AGENT_KINDS)}")
+        team_list = sorted({team.strip() for team in (teams or []) if team.strip()})
+        self.conn.execute(
+            """
+            INSERT INTO agents(id, display_name, kind, teams, notes, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              display_name = excluded.display_name,
+              kind = excluded.kind,
+              teams = excluded.teams,
+              notes = excluded.notes
+            """,
+            (agent_id, display_name, kind, json.dumps(team_list), notes, utc_now()),
+        )
+        self.conn.commit()
+        self._teams_cache = {}
+        return self.get_agent(agent_id)
+
+    def get_agent(self, agent_id: str) -> dict[str, object] | None:
+        row = self.conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row["id"], "display_name": row["display_name"], "kind": row["kind"],
+            "teams": json.loads(row["teams"] or "[]"), "notes": row["notes"],
+            "created_at": row["created_at"], "last_seen_at": row["last_seen_at"],
+        }
+
+    def list_agents(self) -> list[dict[str, object]]:
+        rows = self.conn.execute("SELECT id FROM agents ORDER BY id").fetchall()
+        agents = []
+        for row in rows:
+            agent = self.get_agent(row["id"])
+            agent["memory_count"] = self.conn.execute(
+                "SELECT COUNT(*) FROM memories WHERE owner = ?", (row["id"],)
+            ).fetchone()[0]
+            agents.append(agent)
+        return agents
+
+    def remove_agent(self, agent_id: str) -> bool:
+        cur = self.conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        self.conn.commit()
+        self._teams_cache = {}
+        return cur.rowcount > 0
+
+    def touch_agent(self, agent_id: str) -> None:
+        """Record activity for a registered agent (no-op for unknown ids)."""
+        self.conn.execute(
+            "UPDATE agents SET last_seen_at = ? WHERE id = ?", (utc_now(), agent_id)
+        )
+        self.conn.commit()
+
+    def teams_for(self, agent_id: str | None) -> list[str]:
+        if not agent_id:
+            return []
+        row = self.conn.execute(
+            "SELECT teams FROM agents WHERE id = ?", (agent_id,)
+        ).fetchone()
+        return json.loads(row["teams"] or "[]") if row else []
 
     def add_peer(self, url: str, *, token: str | None = None) -> dict[str, object]:
         url = url.strip().rstrip("/")
@@ -1894,15 +1986,30 @@ class MemoryStore:
             f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = ?)",
         ]
         params.extend([requester_agent_id, f"agent:{requester_agent_id}"])
-        if requester_team_id:
+        # Registered team memberships resolve automatically: an agent in the
+        # registry sees its teams' memories without callers wiring
+        # requester_team_id through every call site.
+        team_ids = list(dict.fromkeys(
+            ([requester_team_id] if requester_team_id else [])
+            + self._cached_teams_for(requester_agent_id)
+        ))
+        for team_id in team_ids:
             acl_clauses.extend(
                 [
                     f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = 'team' AND json_extract({alias}source, '$.team_id') = ?)",
                     f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = ?)",
                 ]
             )
-            params.extend([requester_team_id, f"team:{requester_team_id}"])
+            params.extend([team_id, f"team:{team_id}"])
         where.append("(" + " OR ".join(acl_clauses) + ")")
+
+    def _cached_teams_for(self, agent_id: str) -> list[str]:
+        cache = getattr(self, "_teams_cache", None)
+        if cache is None:
+            cache = self._teams_cache = {}
+        if agent_id not in cache:
+            cache[agent_id] = self.teams_for(agent_id)
+        return cache[agent_id]
 
     def _score_row(
         self,
@@ -1947,22 +2054,13 @@ class MemoryStore:
         if scope:
             where.append("scope = ?")
             params.append(scope)
-        if requester_agent_id:
-            acl_clauses = [
-                "owner = ?",
-                "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = 'global')",
-                "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)",
-            ]
-            params.extend([requester_agent_id, f"agent:{requester_agent_id}"])
-            if requester_team_id:
-                acl_clauses.extend(
-                    [
-                        "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = 'team' AND json_extract(source, '$.team_id') = ?)",
-                        "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)",
-                    ]
-                )
-                params.extend([requester_team_id, f"team:{requester_team_id}"])
-            where.append("(" + " OR ".join(acl_clauses) + ")")
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="",
+        )
         params.append(max(limit, 1))
         rows = self.conn.execute(
             f"""

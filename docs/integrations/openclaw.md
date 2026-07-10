@@ -65,3 +65,10 @@ Inject `recall(...)` output at the top of the prompt each turn; call
 Point every agent at the same `AGENT_MEMORY_HOME` (or the same HTTP server)
 and give each a distinct `owner` / `requester_agent_id`. Private memories
 stay private; `visibility: ["global"]` shares knowledge fleet-wide.
+
+## Agent identity (multi-agent projects)
+
+Set `AGENT_MEMORY_AGENT_ID` in the MCP server env so this agent's reads and
+writes carry its identity: memories default to it as owner, and searches
+automatically include every team the agent belongs to (register agents and
+teams in the Web console's **Agents** tab, or via `POST /api/agents`).
