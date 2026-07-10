@@ -1,0 +1,162 @@
+from fastapi.testclient import TestClient
+
+from agent_memory_os.web_app import create_app
+
+
+def test_web_ui_root_is_openable_and_shows_stats(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+
+    response = client.get("/")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "AgentMemoryOS Web UI" in response.text
+    assert "Total memories" in response.text
+
+
+def test_web_api_can_add_and_search_memory(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+
+    add_response = client.post(
+        "/api/memories",
+        json={
+            "content": "Web UI smoke test memory for Traditional Chinese output.",
+            "owner": "mizuki",
+            "scope": "user",
+            "type": "preference",
+            "tags": ["ui", "smoke"],
+            "importance": 0.9,
+        },
+    )
+    assert add_response.status_code == 200
+    assert add_response.json()["id"].startswith("mem_")
+
+    search_response = client.get("/api/search", params={"q": "Traditional Chinese", "owner": "mizuki"})
+
+    assert search_response.status_code == 200
+    payload = search_response.json()
+    assert payload["query"] == "Traditional Chinese"
+    assert payload["results"][0]["content"] == "Web UI smoke test memory for Traditional Chinese output."
+    assert payload["results"][0]["owner"] == "mizuki"
+
+
+def test_web_api_search_enforces_requester_acl(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    secret = "Private emotional preference only for the owner."
+    client.post(
+        "/api/memories",
+        json={"content": secret, "owner": "mizuki", "visibility": []},
+    )
+    client.post(
+        "/api/memories",
+        json={"content": "Public preference note.", "owner": "mizuki", "visibility": ["global"]},
+    )
+
+    neo_view = client.get(
+        "/api/search", params={"q": "preference", "requester_agent_id": "neo"}
+    ).json()
+    mizuki_view = client.get(
+        "/api/search", params={"q": "preference", "requester_agent_id": "mizuki"}
+    ).json()
+
+    neo_contents = [result["content"] for result in neo_view["results"]]
+    mizuki_contents = [result["content"] for result in mizuki_view["results"]]
+    assert secret not in neo_contents
+    assert "Public preference note." in neo_contents
+    assert secret in mizuki_contents
+
+
+def test_web_api_context_pack_enforces_requester_acl(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    secret = "Private ritual reflection kept for the owner."
+    client.post("/api/memories", json={"content": secret, "owner": "mizuki", "visibility": []})
+    client.post(
+        "/api/memories",
+        json={"content": "Public ritual checklist.", "owner": "mizuki", "visibility": ["global"]},
+    )
+
+    response = client.get(
+        "/api/context-pack", params={"q": "ritual", "requester_agent_id": "neo"}
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert secret not in payload["text"]
+    assert "Public ritual checklist." in payload["text"]
+    assert all(decision["memory_id"] for decision in payload["decisions"])
+
+
+def test_web_api_validates_inputs(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+
+    bad_scope = client.post("/api/memories", json={"content": "x", "scope": "kingdom"})
+    bad_type = client.post("/api/memories", json={"content": "x", "type": "gossip"})
+    bad_confidence = client.post("/api/memories", json={"content": "x", "confidence": 5.0})
+    bad_decay = client.post("/api/memories", json={"content": "x", "decay_policy": "sideways"})
+
+    assert bad_scope.status_code == 422
+    assert bad_type.status_code == 422
+    assert bad_confidence.status_code == 422
+    assert bad_decay.status_code == 400
+
+
+def test_web_api_links_and_recall_roundtrip(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    a = client.post(
+        "/api/memories",
+        json={"content": "Staging deploy failed with database lock.", "visibility": ["global"]},
+    ).json()
+    b = client.post(
+        "/api/memories",
+        json={"content": "Snapshot rule before schema changes.", "visibility": ["global"]},
+    ).json()
+
+    link_response = client.post(
+        "/api/links",
+        json={"src_id": a["id"], "dst_id": b["id"], "relation": "caused_by", "weight": 0.8},
+    )
+    assert link_response.status_code == 200
+
+    links_response = client.get(f"/api/memories/{a['id']}/links")
+    assert links_response.status_code == 200
+    assert links_response.json()["links"][0]["relation"] == "caused_by"
+
+    recall_response = client.post("/api/recall", json={"memory_ids": [a["id"], b["id"]]})
+    assert recall_response.status_code == 200
+    assert recall_response.json()["reinforced_links"] == 1
+
+    missing_link = client.post("/api/links", json={"src_id": a["id"], "dst_id": "mem_missing"})
+    assert missing_link.status_code == 404
+    bad_relation = client.post(
+        "/api/links", json={"src_id": a["id"], "dst_id": b["id"], "relation": "friends"}
+    )
+    assert bad_relation.status_code == 422
+
+
+def test_web_api_get_memory_and_consolidate(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    created = client.post(
+        "/api/memories",
+        json={"content": "Docker deploy uses port 8000.", "visibility": ["global"]},
+    ).json()
+    client.post(
+        "/api/memories",
+        json={"content": "Docker deploy uses port 8000.", "visibility": ["global"]},
+    )
+
+    fetched = client.get(f"/api/memories/{created['id']}")
+    assert fetched.status_code == 200
+    assert fetched.json()["visibility"] == ["global"]
+    assert client.get("/api/memories/mem_missing").status_code == 404
+
+    consolidated = client.post("/api/consolidate")
+    assert consolidated.status_code == 200
+    assert consolidated.json()["duplicates_merged"] == 1
+    assert client.get("/api/stats").json()["total"] == 1
