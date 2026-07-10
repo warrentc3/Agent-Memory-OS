@@ -14,3 +14,5 @@ build/
 .hermes/
 shadow_recall*.jsonl
 *.pyc
+.claude/launch.json
+dist/
