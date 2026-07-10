@@ -63,7 +63,7 @@ Global flag: `--home <dir>`.
 | `service install\|uninstall\|start\|stop\|status [--host --port --dry-run]` | Native login service. |
 | `backup <dest>` / `restore <src> [--force]` | WAL-safe online backup / restore. |
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
-| `peers add\|remove\|list [url] [--peer-token]` | Federation peer registry. |
+| `peers add\|remove\|list [url] [--peer-token] [--policy shared\|full\|team:<id>]` | Federation peer registry; `--policy` scopes what syncs to the peer. |
 | `sync export <file> [--since --team]` | Write a bundle (optionally one project's memory). |
 | `sync import <file>` | Merge a bundle (last-writer-wins / strongest-wins). |
 | `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP. |
@@ -144,18 +144,31 @@ MCP tools (11): `memory_add`, `memory_search`, `memory_context_pack`,
 
 ```bash
 # each host: register the others (their web token authenticates you)
-agent-memory peers add http://host-b:8000 --peer-token <b-token>
+# --policy controls what leaves for this peer:
+agent-memory peers add http://host-b:8000 --peer-token <b-token>            # 'shared' (default)
+agent-memory peers add http://my-laptop:8000 --peer-token <t> --policy full # own trusted node
+agent-memory peers add http://team-hub:8000 --peer-token <t> --policy team:apollo
 agent-memory sync auto            # pull + push with every peer
 
-# ship one project's memory
+# ship one project's memory as a file
 agent-memory sync export apollo.jsonl --team apollo
 ```
 
+**Peer policy** decides what a peer receives: `shared` (default — everything
+except private `visibility=[]` memories), `full` (the whole store *including
+private* — use only for your own trusted replica nodes), or `team:<id>` (one
+project). Private memories never leave under `shared`/`team`, and the HTTP
+`/api/sync/export` a peer pulls is always `shared`-scoped — full private
+replication travels only over the push leg between your own `full` nodes.
+
 Merge rules (identical for files, HTTP, and mesh): memories & profiles —
-last-writer-wins on `updated_at`; links — strongest weight / highest
-activation / latest activation. Unreachable peers fail individually. Pair
-`service install` with a cron/timer entry running `sync auto` for a
-continuously converging federation.
+last-writer-wins on normalized `updated_at` with a content tie-break so
+same-second edits converge; links — strongest weight / highest activation /
+latest activation. **Deletions propagate** via tombstones (a purged/deleted
+memory will not resurrect from a peer). Imports from a non-`full` peer record
+`source.synced_from` and cannot impersonate your local agents. Unreachable
+peers fail individually. Pair `service install` with a cron/timer entry running
+`sync auto` for a continuously converging federation.
 
 ---
 

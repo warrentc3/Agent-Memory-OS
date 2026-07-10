@@ -356,3 +356,34 @@ deepening) — bedrock and session pointers always repeat. Snapshot rotation in
 - The console ships five locales (en, zh-TW, zh-CN, ja, ko): an
   English-keyed dictionary layer over unchanged markup, browser-detected,
   live-switchable, persisted per user.
+
+## v0.11 Federation trust model
+
+Peer sync is no longer all-or-nothing. Each registered peer carries a
+**policy** that governs what leaves the machine for it:
+
+- `shared` (default for new peers) — every visibility EXCEPT private
+  (`visibility=[]`). Private memories never leave.
+- `full` — the entire store, including private memories. For your own trusted
+  replica nodes only. Existing peers migrate to `full` so no deployment changes
+  behaviour silently.
+- `team:<id>` — only that one team/project's shared memory.
+
+Enforcement and invariants:
+
+- The HTTP `GET /api/sync/export` endpoint is **always `shared`-scoped**: it
+  cannot authenticate which peer is pulling, so it never serves private
+  memories. Full private replication happens only over the authenticated push
+  leg (`POST /api/sync/import`) between own `full`-policy nodes.
+- **Tombstones** (migration 9): `delete()` and `purge_owner()` record a
+  tombstone `(id, deleted_at)` that travels in the bundle. On import a tombstone
+  deletes a local row no newer than `deleted_at` and is retained so the deletion
+  re-propagates and blocks resurrection.
+- **Provenance & anti-impersonation**: an import from a semi-trusted peer
+  (`trusted=False`, i.e. any non-`full` policy) records `source.synced_from` on
+  each row and may NOT create a new memory whose `owner` is one of the importing
+  host's locally-registered agents.
+- **Convergent last-writer-wins**: `updated_at` is normalized before comparison
+  (`Z` and `+00:00` resolve to the same instant); a same-instant conflict is
+  broken deterministically by content, so two nodes converge on the same winner
+  instead of diverging.

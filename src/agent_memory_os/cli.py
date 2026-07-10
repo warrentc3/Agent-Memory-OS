@@ -92,6 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
     peers.add_argument("action", choices=["add", "remove", "list"])
     peers.add_argument("url", nargs="?", default=None)
     peers.add_argument("--peer-token", default=None, help="Bearer token of the peer's Web API")
+    peers.add_argument(
+        "--policy", dest="peer_policy", default="shared",
+        help="What to sync to this peer: 'shared' (no private memory, default), "
+             "'full' (whole store — own trusted nodes only), or 'team:<id>'",
+    )
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -308,7 +313,9 @@ def main(argv: list[str] | None = None) -> int:
                 print("peers add/remove require a URL")
                 return 2
             if args.action == "add":
-                print(json.dumps(client.store.add_peer(args.url, token=args.peer_token)))
+                print(json.dumps(client.store.add_peer(
+                    args.url, token=args.peer_token, policy=args.peer_policy
+                )))
             else:
                 removed = client.store.remove_peer(args.url)
                 print("removed" if removed else "not registered")

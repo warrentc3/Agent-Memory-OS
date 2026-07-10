@@ -140,6 +140,7 @@ class AgentRequest(BaseModel):
 class PeerRequest(BaseModel):
     url: str = Field(min_length=8)
     token: str | None = None
+    policy: str = "shared"
 
 
 class ShareRequest(BaseModel):
@@ -368,7 +369,9 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def peers_add(request: PeerRequest) -> dict[str, Any]:
         with lock:
             try:
-                return client.store.add_peer(request.url, token=request.token)
+                return client.store.add_peer(
+                    request.url, token=request.token, policy=request.policy
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -389,14 +392,20 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
 
     @app.get("/api/sync/export")
     def sync_export(since: str | None = None) -> Any:
-        """Stream this host's memory bundle (peer pull / browser download)."""
+        """Stream this host's memory bundle (peer pull / browser download).
+
+        Private (`visibility=[]`) memories are never served here: the endpoint
+        cannot authenticate which peer is pulling, so it always exports at
+        'shared' scope. Full replication of private memory happens only over
+        the authenticated push leg (POST /api/sync/import) between own nodes.
+        """
         import tempfile
 
         from .sync import export_bundle
 
         with lock:
             with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
-                export_bundle(client.store, handle.name, since=since or None)
+                export_bundle(client.store, handle.name, since=since or None, include_private=False)
                 handle.seek(0)
                 body = Path(handle.name).read_text(encoding="utf-8")
             Path(handle.name).unlink(missing_ok=True)

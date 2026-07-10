@@ -116,7 +116,7 @@ def test_team_scoped_bundle_export(tmp_path):
 
     bundle = tmp_path / "apollo.jsonl"
     counts = host.export_bundle(bundle, team="apollo")
-    assert counts == {"memories": 2, "links": 1, "profiles": 1}
+    assert counts == {"memories": 2, "links": 1, "profiles": 1, "tombstones": 0}
 
     target = MemoryClient(home=tmp_path / "dst")
     stats = target.import_bundle(bundle)

@@ -95,7 +95,7 @@ def test_bundle_roundtrip_with_last_writer_wins(tmp_path):
 
     bundle = tmp_path / "bundle.jsonl"
     exported = host_a.export_bundle(bundle)
-    assert exported == {"memories": 2, "links": 1, "profiles": 1}
+    assert exported == {"memories": 2, "links": 1, "profiles": 1, "tombstones": 0}
 
     stats = host_b.import_bundle(bundle)
     assert stats["memories_added"] == 2 and stats["links_added"] == 1

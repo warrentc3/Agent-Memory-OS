@@ -166,15 +166,26 @@ class MemoryClient:
     def audit_log(self, memory_id: str) -> list[dict[str, str]]:
         return self.store.audit_log(memory_id)
 
-    def export_bundle(self, path, *, since: str | None = None, team: str | None = None) -> dict[str, int]:
+    def export_bundle(
+        self,
+        path,
+        *,
+        since: str | None = None,
+        team: str | None = None,
+        include_private: bool = True,
+    ) -> dict[str, int]:
         from .sync import export_bundle
 
-        return export_bundle(self.store, path, since=since, team=team)
+        return export_bundle(
+            self.store, path, since=since, team=team, include_private=include_private
+        )
 
-    def import_bundle(self, path) -> dict[str, int]:
+    def import_bundle(
+        self, path, *, source_peer: str | None = None, trusted: bool = True
+    ) -> dict[str, int]:
         from .sync import import_bundle
 
-        stats = import_bundle(self.store, path)
+        stats = import_bundle(self.store, path, source_peer=source_peer, trusted=trusted)
         self.cache.clear()
         return stats
 

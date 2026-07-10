@@ -4,6 +4,30 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.11.0] — unreleased
+
+**Federation trust model** (migration 9) — resolves review findings D1–D4.
+
+- **Per-peer sync policy**: each peer declares what leaves for it — `shared`
+  (default: everything except private `visibility=[]` memories), `full` (whole
+  store, own trusted replica nodes only), or `team:<id>` (one project). Private
+  memories never leave the machine under `shared`/`team`. Existing peers migrate
+  to `full` (no behaviour change); new peers default to `shared`.
+- **HTTP export is always `shared`-scoped**: `GET /api/sync/export` never serves
+  private memories (it cannot authenticate the puller); full private replication
+  flows only over the authenticated push leg between own nodes.
+- **Tombstones**: deletions and owner purges record a tombstone that propagates
+  over sync, so a deleted memory no longer resurrects from a peer that still
+  holds it.
+- **Provenance + anti-impersonation**: imports from a semi-trusted peer record
+  `source.synced_from` and may not create a memory authored by one of your local
+  registered agents.
+- **Convergent LWW**: conflict timestamps are normalized (`Z` vs `+00:00`) and a
+  same-second edit is resolved by a deterministic content tie-break, so two
+  nodes converge instead of diverging silently.
+- CLI `peers add --policy`, `PeerRequest.policy`, and a console policy selector
+  (with a warning that `full` shares private memory) keep parity across surfaces.
+
 ## [0.10.1] — 2026-07-11
 
 Security & correctness fixes from the full v0.10.0 review

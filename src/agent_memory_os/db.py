@@ -238,6 +238,27 @@ def _migration_agents_registry(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_federation_trust(conn: sqlite3.Connection) -> None:
+    # Per-peer push policy. Existing peers keep today's behaviour ('full'
+    # replication) so no deployment silently changes; new peers default to
+    # 'shared' at the add_peer call site (private memories never leave).
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_peers)")}
+    if "policy" not in cols:
+        conn.execute(
+            "ALTER TABLE sync_peers ADD COLUMN policy TEXT NOT NULL DEFAULT 'full'"
+        )
+    # Tombstones let deletions propagate across a mesh instead of resurrecting
+    # from any peer that still holds the row.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tombstones (
+          id TEXT PRIMARY KEY,
+          deleted_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -247,6 +268,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (6, "recall feedback counters", _migration_feedback_counts),
     (7, "federated sync peer registry", _migration_sync_peers),
     (8, "agent registry with team memberships", _migration_agents_registry),
+    (9, "federation trust: peer policy + tombstones", _migration_federation_trust),
 ]
 
 
@@ -458,8 +480,35 @@ class MemoryStore:
             "DELETE FROM memory_links WHERE src_id = ? OR dst_id = ?", (memory_id, memory_id)
         )
         cur = self.conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        self._record_tombstone(memory_id, commit=False)
         self.conn.commit()
         return cur.rowcount > 0
+
+    def _record_tombstone(self, memory_id: str, *, commit: bool = True) -> None:
+        """Mark an id as deleted so the deletion propagates over sync instead
+        of the row resurrecting from a peer that still holds it."""
+        self.conn.execute(
+            "INSERT INTO tombstones(id, deleted_at) VALUES (?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET deleted_at = excluded.deleted_at",
+            (memory_id, utc_now()),
+        )
+        if commit:
+            self.conn.commit()
+
+    def list_tombstones(self, *, since: str | None = None) -> list[tuple[str, str]]:
+        if since:
+            rows = self.conn.execute(
+                "SELECT id, deleted_at FROM tombstones WHERE deleted_at > ?", (since,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute("SELECT id, deleted_at FROM tombstones").fetchall()
+        return [(row["id"], row["deleted_at"]) for row in rows]
+
+    def tombstone_for(self, memory_id: str) -> str | None:
+        row = self.conn.execute(
+            "SELECT deleted_at FROM tombstones WHERE id = ?", (memory_id,)
+        ).fetchone()
+        return row["deleted_at"] if row else None
 
     def add_link(self, link: MemoryLink) -> MemoryLink:
         """Upsert an authoritative association edge between two existing memories."""
@@ -782,19 +831,57 @@ class MemoryStore:
         ).fetchone()
         return json.loads(row["teams"] or "[]") if row else []
 
-    def add_peer(self, url: str, *, token: str | None = None) -> dict[str, object]:
+    PEER_POLICIES = {"full", "shared"}  # plus dynamic "team:<id>"
+
+    @classmethod
+    def _validate_peer_policy(cls, policy: str) -> str:
+        policy = (policy or "").strip()
+        if policy in cls.PEER_POLICIES or policy.startswith("team:") and len(policy) > 5:
+            return policy
+        raise ValueError(
+            "peer policy must be 'full', 'shared', or 'team:<id>' "
+            f"(got {policy!r})"
+        )
+
+    def add_peer(
+        self, url: str, *, token: str | None = None, policy: str = "shared"
+    ) -> dict[str, object]:
+        """Register a sync peer.
+
+        `policy` decides what leaves for this peer:
+        - 'shared' (default): every visibility EXCEPT private (visibility=[]).
+          Private memories never leave the machine.
+        - 'full': the entire store — use only for your own trusted replica nodes.
+        - 'team:<id>': just that one team/project's shared memory.
+        """
         url = url.strip().rstrip("/")
         if not url.startswith(("http://", "https://")):
             raise ValueError("peer URL must start with http:// or https://")
+        policy = self._validate_peer_policy(policy)
         self.conn.execute(
             """
-            INSERT INTO sync_peers(url, token, added_at) VALUES (?, ?, ?)
-            ON CONFLICT(url) DO UPDATE SET token = excluded.token
+            INSERT INTO sync_peers(url, token, added_at, policy) VALUES (?, ?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET token = excluded.token, policy = excluded.policy
             """,
-            (url, token, utc_now()),
+            (url, token, utc_now(), policy),
         )
         self.conn.commit()
-        return {"url": url, "has_token": token is not None}
+        return {"url": url, "has_token": token is not None, "policy": policy}
+
+    def set_peer_policy(self, url: str, policy: str) -> bool:
+        policy = self._validate_peer_policy(policy)
+        cur = self.conn.execute(
+            "UPDATE sync_peers SET policy = ? WHERE url = ?",
+            (policy, url.strip().rstrip("/")),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def peer_policy(self, url: str) -> str:
+        row = self.conn.execute(
+            "SELECT policy FROM sync_peers WHERE url = ?", (url.strip().rstrip("/"),)
+        ).fetchone()
+        return row["policy"] if row else "shared"
 
     def remove_peer(self, url: str) -> bool:
         cur = self.conn.execute("DELETE FROM sync_peers WHERE url = ?", (url.strip().rstrip("/"),))
@@ -803,14 +890,14 @@ class MemoryStore:
 
     def list_peers(self) -> list[dict[str, object]]:
         rows = self.conn.execute(
-            "SELECT url, token IS NOT NULL AS has_token, added_at, last_synced_at, last_result "
-            "FROM sync_peers ORDER BY added_at"
+            "SELECT url, token IS NOT NULL AS has_token, added_at, last_synced_at, "
+            "last_result, policy FROM sync_peers ORDER BY added_at"
         ).fetchall()
         return [
             {
                 "url": row["url"], "has_token": bool(row["has_token"]),
                 "added_at": row["added_at"], "last_synced_at": row["last_synced_at"],
-                "last_result": row["last_result"],
+                "last_result": row["last_result"], "policy": row["policy"],
             }
             for row in rows
         ]
@@ -1370,6 +1457,8 @@ class MemoryStore:
                 owned_ids,
             )
         self.conn.execute("DELETE FROM recall_profiles WHERE agent_id = ?", (owner,))
+        for mem_id in owned_ids:
+            self._record_tombstone(mem_id, commit=False)
         self.conn.commit()
         return {
             "memories_deleted": int(memories_removed),
