@@ -265,3 +265,62 @@ def test_web_api_token_gate(tmp_path):
     assert client.get("/api/stats").status_code == 401
     assert client.get("/api/stats", headers={"Authorization": "Bearer wrong"}).status_code == 401
     assert client.get("/api/stats", headers={"Authorization": "Bearer s3cret"}).status_code == 200
+
+
+def test_web_api_update_memory_and_reindex(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    created = client.post(
+        "/api/memories", json={"content": "Original zebra content.", "visibility": ["global"]}
+    ).json()
+
+    updated = client.patch(
+        f"/api/memories/{created['id']}",
+        json={"content": "Updated flamingo content.", "importance": 0.9, "pinned": True,
+              "tags": ["updated"], "type": "fact"},
+    )
+    assert updated.status_code == 200
+    payload = updated.json()
+    assert payload["content"] == "Updated flamingo content."
+    assert payload["pinned"] is True
+    assert payload["type"] == "fact"
+    assert payload["tags"] == ["updated"]
+
+    # FTS reindexed: the old term no longer matches lexically (any results are
+    # the zero-hit fallback safety net, never an fts hit)
+    zebra_hits = client.get("/api/search", params={"q": "zebra"}).json()["results"]
+    assert all(hit["reason"].startswith("fallback") for hit in zebra_hits)
+    hits = client.get("/api/search", params={"q": "flamingo"}).json()["results"]
+    assert hits and hits[0]["id"] == created["id"]
+
+    assert client.patch("/api/memories/mem_missing", json={"content": "x"}).status_code == 404
+    assert client.patch(f"/api/memories/{created['id']}", json={}).status_code == 400
+    assert client.patch(
+        f"/api/memories/{created['id']}", json={"scope": "kingdom"}
+    ).status_code == 422
+
+
+def test_web_api_dashboard(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    a = client.post(
+        "/api/memories",
+        json={"content": "Pinned deploy fact.", "scope": "project", "type": "fact",
+              "visibility": ["global"], "pinned": True},
+    ).json()
+    b = client.post(
+        "/api/memories", json={"content": "A note.", "visibility": ["global"]}
+    ).json()
+    client.post("/api/links", json={"src_id": a["id"], "dst_id": b["id"], "relation": "caused_by"})
+    client.post("/api/recall", json={"memory_ids": [a["id"]]})
+
+    data = client.get("/api/dashboard").json()
+
+    assert data["total"] == 2
+    assert data["pinned"] == 1
+    assert data["links"] == 1
+    assert data["by_relation"] == {"caused_by": 1}
+    assert data["by_scope"]["project"] == 1
+    assert len(data["activity"]) == 14
+    assert data["activity"][-1]["count"] == 2
+    assert data["top_recalled"][0]["id"] == a["id"]

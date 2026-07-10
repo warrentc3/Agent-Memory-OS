@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import DefaultDict, Sequence
 import hashlib
 import json
@@ -188,6 +188,56 @@ class MemoryStore:
     def get(self, memory_id: str) -> MemoryRecord | None:
         row = self.conn.execute("SELECT * FROM memories WHERE id = ?", (memory_id,)).fetchone()
         return self._row_to_record(row) if row else None
+
+    UPDATABLE_FIELDS = {
+        "content", "summary", "tags", "visibility", "source", "confidence",
+        "importance", "type", "scope", "pinned", "expires_at",
+        "decay_policy", "decay_half_life_days",
+    }
+
+    def update_memory(self, memory_id: str, **fields) -> MemoryRecord:
+        """Update selected fields of a memory; validation runs through MemoryRecord.
+
+        The updated_at bump is intentional here (unlike recall feedback):
+        editing content IS new information, so the freshness clock restarts.
+        """
+        unknown = set(fields) - self.UPDATABLE_FIELDS
+        if unknown:
+            raise ValueError(f"cannot update fields: {sorted(unknown)}")
+        existing = self.get(memory_id)
+        if existing is None:
+            raise KeyError(memory_id)
+        for name, value in fields.items():
+            setattr(existing, name, value)
+        if "content" in fields and "summary" not in fields:
+            existing.summary = None
+        existing.summary = existing.normalized_summary()
+        existing.updated_at = utc_now()
+        # Re-run dataclass validation on the mutated record
+        MemoryRecord(**{
+            "content": existing.content, "owner": existing.owner, "scope": existing.scope,
+            "type": existing.type, "confidence": existing.confidence,
+            "importance": existing.importance, "decay_policy": existing.decay_policy,
+            "decay_half_life_days": existing.decay_half_life_days,
+            "access_count": existing.access_count,
+        })
+        self.conn.execute(
+            """
+            UPDATE memories SET content=?, summary=?, tags=?, visibility=?, source=?,
+                                confidence=?, importance=?, type=?, scope=?, pinned=?,
+                                expires_at=?, decay_policy=?, decay_half_life_days=?, updated_at=?
+            WHERE id=?
+            """,
+            (
+                existing.content, existing.summary, existing.tags_json(),
+                existing.visibility_json(), existing.source_json(),
+                existing.confidence, existing.importance, existing.type, existing.scope,
+                int(existing.pinned), existing.expires_at, existing.decay_policy,
+                existing.decay_half_life_days, existing.updated_at, memory_id,
+            ),
+        )
+        self.conn.commit()
+        return existing
 
     def update_content(self, memory_id: str, content: str, *, summary: str | None = None) -> MemoryRecord:
         now = utc_now()
@@ -1369,6 +1419,47 @@ class MemoryStore:
         by_type = dict(self.conn.execute("SELECT type, COUNT(*) FROM memories GROUP BY type").fetchall())
         links = self.conn.execute("SELECT COUNT(*) FROM memory_links").fetchone()[0]
         return {"total": total, "by_scope": by_scope, "by_type": by_type, "links": links}
+
+    def dashboard_stats(self, *, activity_days: int = 14) -> dict[str, object]:
+        """Aggregate figures for the console dashboard."""
+        now = utc_now()
+        base = self.stats()
+        pinned = self.conn.execute("SELECT COUNT(*) FROM memories WHERE pinned = 1").fetchone()[0]
+        expired = self.conn.execute(
+            "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
+        ).fetchone()[0]
+        by_owner = dict(
+            self.conn.execute(
+                "SELECT owner, COUNT(*) FROM memories GROUP BY owner ORDER BY COUNT(*) DESC LIMIT 6"
+            ).fetchall()
+        )
+        by_relation = dict(
+            self.conn.execute("SELECT relation, COUNT(*) FROM memory_links GROUP BY relation").fetchall()
+        )
+        top_recalled = [
+            {"id": row["id"], "summary": row["summary"], "access_count": int(row["access_count"])}
+            for row in self.conn.execute(
+                "SELECT id, summary, access_count FROM memories WHERE access_count > 0 "
+                "ORDER BY access_count DESC, updated_at DESC LIMIT 5"
+            ).fetchall()
+        ]
+        today = datetime.now(timezone.utc).date()
+        days = [(today - timedelta(days=offset)).isoformat() for offset in range(activity_days - 1, -1, -1)]
+        counted = dict(
+            self.conn.execute(
+                "SELECT substr(created_at, 1, 10) AS day, COUNT(*) FROM memories "
+                "WHERE substr(created_at, 1, 10) >= ? GROUP BY day",
+                (days[0],),
+            ).fetchall()
+        )
+        return base | {
+            "pinned": int(pinned),
+            "expired": int(expired),
+            "by_owner": by_owner,
+            "by_relation": by_relation,
+            "top_recalled": top_recalled,
+            "activity": [{"day": day, "count": int(counted.get(day, 0))} for day in days],
+        }
 
     def _row_to_link(self, row: sqlite3.Row) -> MemoryLink:
         return MemoryLink(

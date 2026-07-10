@@ -52,6 +52,14 @@ class MemoryClient:
             self.cache.clear()
         return removed
 
+    def update(self, memory_id: str, **fields) -> MemoryRecord:
+        updated = self.store.update_memory(memory_id, **fields)
+        self.cache.clear()
+        return updated
+
+    def dashboard_stats(self) -> dict[str, object]:
+        return self.store.dashboard_stats() | {"cache_items": len(self.cache)}
+
     def list_recent(
         self,
         *,

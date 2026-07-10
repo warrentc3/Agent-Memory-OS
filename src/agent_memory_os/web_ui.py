@@ -210,6 +210,43 @@ PAGE = r"""<!doctype html>
     box-shadow: var(--shadow); font-size: 12.5px; pointer-events: none; z-index: 5;
   }
   .graphhint { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
+  .tile {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    padding: 16px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 2px;
+  }
+  .tilelabel { font-size: 12px; font-weight: 650; color: var(--muted); letter-spacing: .3px; }
+  .tileval { font-size: 30px; font-weight: 750; font-variant-numeric: tabular-nums; }
+  .panelgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+  .panel {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
+    padding: 18px; box-shadow: var(--shadow); margin-bottom: 16px;
+  }
+  .panelgrid .panel { margin-bottom: 0; }
+  .panel h3 { margin: 0 0 14px; font-size: 13.5px; color: var(--muted); font-weight: 650; letter-spacing: .3px; }
+  .hbars { display: flex; flex-direction: column; gap: 9px; }
+  .hbar { display: grid; grid-template-columns: 88px 1fr 34px; align-items: center; gap: 10px; font-size: 12.5px; }
+  .hbar .name { color: var(--text); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hbar .track { height: 12px; border-radius: 0 4px 4px 0; background: var(--panel-2); overflow: hidden; }
+  .hbar .track i { display: block; height: 100%; border-radius: 0 4px 4px 0; background: var(--accent); }
+  .hbar .val { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cols { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding-top: 6px; }
+  .cols .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
+  .cols .col i { display: block; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 2px; }
+  .cols .col span { font-size: 9.5px; color: var(--muted); text-align: center; margin-top: 5px; }
+  .toplist { display: flex; flex-direction: column; gap: 9px; font-size: 13px; }
+  .toplist .toprow { display: flex; gap: 10px; align-items: baseline; }
+  .toplist .cnt { font-weight: 750; color: var(--accent); min-width: 30px; font-variant-numeric: tabular-nums; }
+  .toplist .sm { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .editform { display: grid; gap: 10px; margin-top: 4px; }
+  .editform textarea, .editform input[type=text], .editform select {
+    padding: 9px 11px; border-radius: 9px; border: 1px solid var(--border);
+    background: var(--panel-2); color: var(--text); font-size: 13.5px; font-family: inherit; width: 100%;
+  }
+  .editform textarea { min-height: 90px; resize: vertical; }
+  .editform .erow { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .editform .erow > * { flex: 1; min-width: 110px; }
+  @media (max-width: 720px) { .tiles, .panelgrid { grid-template-columns: 1fr 1fr; } }
   #toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 99; }
   .toast {
     background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent);
@@ -239,7 +276,8 @@ PAGE = r"""<!doctype html>
     </div>
   </div>
   <nav class="tabs">
-    <button data-tab="search" class="active">Search</button>
+    <button data-tab="dashboard" class="active">Dashboard</button>
+    <button data-tab="search">Search</button>
     <button data-tab="browse">Browse</button>
     <button data-tab="graph">Graph</button>
     <button data-tab="add">Add memory</button>
@@ -248,7 +286,25 @@ PAGE = r"""<!doctype html>
 </header>
 
 <main>
-  <section class="tab active" id="tab-search">
+  <section class="tab active" id="tab-dashboard">
+    <div class="tiles">
+      <div class="tile"><span class="tilelabel">Memories</span><span class="tileval" id="d-total">–</span></div>
+      <div class="tile"><span class="tilelabel">Links</span><span class="tileval" id="d-links">–</span></div>
+      <div class="tile"><span class="tilelabel">Pinned</span><span class="tileval" id="d-pinned">–</span></div>
+      <div class="tile"><span class="tilelabel">Expired</span><span class="tileval" id="d-expired">–</span></div>
+    </div>
+    <div class="panelgrid">
+      <div class="panel"><h3>By scope</h3><div class="hbars" id="d-scope"></div></div>
+      <div class="panel"><h3>By type</h3><div class="hbars" id="d-type"></div></div>
+    </div>
+    <div class="panel"><h3>New memories · last 14 days</h3><div class="cols" id="d-activity"></div></div>
+    <div class="panelgrid">
+      <div class="panel"><h3>Link relations</h3><div class="hbars" id="d-relations"></div></div>
+      <div class="panel"><h3>Most recalled</h3><div class="toplist" id="d-top"></div></div>
+    </div>
+  </section>
+
+  <section class="tab" id="tab-search">
     <div class="searchrow">
       <input id="q" type="search" placeholder="Search memories… (associative recall included)">
       <button class="primary" id="btn-search">Search</button>
@@ -433,8 +489,73 @@ document.querySelectorAll("nav.tabs button").forEach((button) => {
     $("tab-" + button.dataset.tab).classList.add("active");
     if (button.dataset.tab === "browse" && !browseLoaded) refreshBrowse();
     if (button.dataset.tab === "graph") loadGraph();
+    if (button.dataset.tab === "dashboard") loadDashboard();
   });
 });
+
+/* ---------- dashboard ---------- */
+function hbarRow(name, value, maxValue, color) {
+  const row = el("div", "hbar");
+  row.appendChild(el("span", "name", name));
+  const track = el("span", "track");
+  const fill = el("i");
+  fill.style.width = Math.max(2, Math.round((value / maxValue) * 100)) + "%";
+  if (color) fill.style.background = color;
+  track.appendChild(fill);
+  row.appendChild(track);
+  row.appendChild(el("span", "val", String(value)));
+  return row;
+}
+
+function fillBars(containerId, entries, colorFor) {
+  const container = $(containerId);
+  container.innerHTML = "";
+  const items = Object.entries(entries).sort((a, b) => b[1] - a[1]);
+  if (!items.length) { container.appendChild(el("span", "sm", "—")); return; }
+  const maxValue = Math.max(...items.map(([, v]) => v));
+  for (const [name, value] of items) {
+    container.appendChild(hbarRow(name, value, maxValue, colorFor ? colorFor(name) : null));
+  }
+}
+
+async function loadDashboard() {
+  let data;
+  try { data = await api("/api/dashboard"); }
+  catch (e) { toast(e.message, "err"); return; }
+  $("d-total").textContent = data.total;
+  $("d-links").textContent = data.links;
+  $("d-pinned").textContent = data.pinned;
+  $("d-expired").textContent = data.expired;
+  fillBars("d-scope", data.by_scope, (scope) => SCOPE_COLORS[scope]);
+  fillBars("d-type", data.by_type, null);
+  fillBars("d-relations", data.by_relation, null);
+
+  const activity = $("d-activity");
+  activity.innerHTML = "";
+  const maxCount = Math.max(...data.activity.map((d) => d.count), 1);
+  for (const dayEntry of data.activity) {
+    const col = el("div", "col");
+    col.title = dayEntry.day + ": " + dayEntry.count;
+    const bar = el("i");
+    bar.style.height = Math.round((dayEntry.count / maxCount) * 92) + "%";
+    if (dayEntry.count === 0) bar.style.opacity = "0.25";
+    col.appendChild(bar);
+    col.appendChild(el("span", null, dayEntry.day.slice(5)));
+    activity.appendChild(col);
+  }
+
+  const top = $("d-top");
+  top.innerHTML = "";
+  if (!data.top_recalled.length) {
+    top.appendChild(el("span", "sm", "No recall activity yet — feedback and auto-reinforce will populate this."));
+  }
+  for (const item of data.top_recalled) {
+    const row = el("div", "toprow");
+    row.appendChild(el("span", "cnt", "×" + item.access_count));
+    row.appendChild(el("span", "sm", item.summary));
+    top.appendChild(row);
+  }
+}
 
 /* ---------- memory cards ---------- */
 function gauge(label, value) {
@@ -488,6 +609,8 @@ function renderCard(memory, extras) {
   card.appendChild(meta);
 
   const actions = el("div", "actions");
+  const editBtn = el("button", null, "✎ Edit");
+  editBtn.addEventListener("click", () => enterEditMode(card, memory));
   const helpfulBtn = el("button", null, "👍 Helpful");
   helpfulBtn.addEventListener("click", () => feedback(memory.id, true));
   const misleadingBtn = el("button", null, "👎 Misleading");
@@ -503,7 +626,7 @@ function renderCard(memory, extras) {
       card.remove(); loadStats(); toast("Memory deleted", "ok");
     } catch (e) { toast(e.message, "err"); }
   });
-  actions.append(helpfulBtn, misleadingBtn, linksBtn, copyBtn, deleteBtn);
+  actions.append(editBtn, helpfulBtn, misleadingBtn, linksBtn, copyBtn, deleteBtn);
   if (extras && extras.reason) {
     const whyBtn = el("button", null, "why?");
     const reason = el("div", "reason", extras.reason);
@@ -536,6 +659,90 @@ function renderCard(memory, extras) {
   });
   card.appendChild(linksBox);
   return card;
+}
+
+function enterEditMode(card, memory) {
+  const form = el("div", "editform");
+  const contentInput = el("textarea");
+  contentInput.value = memory.content;
+  form.appendChild(contentInput);
+
+  const row1 = el("div", "erow");
+  const scopeSelect = el("select");
+  for (const scope of ["user", "agent", "project", "team", "global"]) {
+    const option = el("option", null, scope);
+    if (scope === memory.scope) option.selected = true;
+    scopeSelect.appendChild(option);
+  }
+  const typeSelect = el("select");
+  for (const type of ["note", "preference", "fact", "procedure", "environment", "decision", "warning"]) {
+    const option = el("option", null, type);
+    if (type === memory.type) option.selected = true;
+    typeSelect.appendChild(option);
+  }
+  row1.append(scopeSelect, typeSelect);
+  form.appendChild(row1);
+
+  const tagsInput = el("input");
+  tagsInput.type = "text"; tagsInput.placeholder = "tags (comma separated)";
+  tagsInput.value = (memory.tags || []).join(", ");
+  form.appendChild(tagsInput);
+
+  const visibilityInput = el("input");
+  visibilityInput.type = "text"; visibilityInput.placeholder = "visibility (empty = owner only)";
+  visibilityInput.value = (memory.visibility || []).join(", ");
+  form.appendChild(visibilityInput);
+
+  const row2 = el("div", "erow");
+  const importanceWrap = el("label", null, "imp ");
+  const importanceInput = el("input"); importanceInput.type = "range";
+  importanceInput.min = "0"; importanceInput.max = "1"; importanceInput.step = "0.05";
+  importanceInput.value = String(memory.importance);
+  importanceInput.style.accentColor = "var(--accent)";
+  importanceWrap.appendChild(importanceInput);
+  const confidenceWrap = el("label", null, "conf ");
+  const confidenceInput = el("input"); confidenceInput.type = "range";
+  confidenceInput.min = "0"; confidenceInput.max = "1"; confidenceInput.step = "0.05";
+  confidenceInput.value = String(memory.confidence);
+  confidenceInput.style.accentColor = "var(--accent)";
+  confidenceWrap.appendChild(confidenceInput);
+  const pinnedWrap = el("label", null, " 📌 pinned ");
+  const pinnedInput = el("input"); pinnedInput.type = "checkbox"; pinnedInput.checked = memory.pinned;
+  pinnedWrap.appendChild(pinnedInput);
+  row2.append(importanceWrap, confidenceWrap, pinnedWrap);
+  form.appendChild(row2);
+
+  const row3 = el("div", "erow");
+  const saveBtn = el("button", "primary", "Save");
+  saveBtn.style.padding = "8px 18px";
+  const cancelBtn = el("button", "ghost", "Cancel");
+  row3.append(saveBtn, cancelBtn);
+  form.appendChild(row3);
+
+  saveBtn.addEventListener("click", async () => {
+    try {
+      const updated = await api("/api/memories/" + memory.id, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          content: contentInput.value,
+          scope: scopeSelect.value,
+          type: typeSelect.value,
+          tags: tagsInput.value.split(",").map((t) => t.trim()).filter(Boolean),
+          visibility: visibilityInput.value.split(",").map((v) => v.trim()).filter(Boolean),
+          importance: Number(importanceInput.value),
+          confidence: Number(confidenceInput.value),
+          pinned: pinnedInput.checked,
+        }),
+      });
+      card.replaceWith(renderCard(updated, null));
+      toast("Memory updated", "ok");
+    } catch (e) { toast(e.message, "err"); }
+  });
+  cancelBtn.addEventListener("click", () => card.replaceWith(renderCard(memory, null)));
+
+  card.innerHTML = "";
+  card.appendChild(form);
 }
 
 async function feedback(memoryId, helpful) {
@@ -604,7 +811,7 @@ $("btn-filter").addEventListener("click", () => refreshBrowse(false));
 
 /* ---------- association graph ---------- */
 const SCOPE_COLORS = {
-  user: "#4d7fe8", agent: "#22a58c", project: "#d9962e", team: "#d9558f", global: "#3aa653",
+  user: "#4d7fe8", agent: "#22a58c", project: "#c07f1f", team: "#d9558f", global: "#3aa653",
 };
 let graphState = null;
 
@@ -850,6 +1057,7 @@ $("btn-consolidate").addEventListener("click", async () => {
 });
 
 loadStats();
+loadDashboard();
 </script>
 </body>
 </html>"""

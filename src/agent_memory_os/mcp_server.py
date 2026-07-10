@@ -58,6 +58,19 @@ def create_server():  # pragma: no cover - optional integration scaffold
         )
 
     @mcp.tool()
+    def memory_update(memory_id: str, content: str | None = None, importance: float | None = None,
+                      confidence: float | None = None, pinned: bool | None = None) -> dict:
+        fields = {k: v for k, v in {"content": content, "importance": importance,
+                                    "confidence": confidence, "pinned": pinned}.items() if v is not None}
+        try:
+            rec = client.update(memory_id, **fields)
+        except KeyError:
+            return {"error": f"memory not found: {memory_id}"}
+        except ValueError as exc:
+            return {"error": str(exc)}
+        return {"id": rec.id, "content": rec.content, "updated_at": rec.updated_at}
+
+    @mcp.tool()
     def memory_consolidate(owner: str | None = None, scope: str | None = None) -> dict:
         return client.consolidate(owner=owner, scope=scope)
 

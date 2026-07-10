@@ -74,6 +74,46 @@ class AddMemoryRequest(BaseModel):
         return value
 
 
+class UpdateMemoryRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1)
+    summary: str | None = None
+    scope: str | None = None
+    type: str | None = None
+    tags: list[str] | None = None
+    visibility: list[str] | None = None
+    source: dict[str, Any] | None = None
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    importance: float | None = Field(default=None, ge=0.0, le=1.0)
+    expires_at: str | None = None
+    pinned: bool | None = None
+    decay_policy: str | None = None
+
+    @field_validator("scope")
+    @classmethod
+    def _valid_scope(cls, value: str | None) -> str | None:
+        if value is not None and value not in VALID_SCOPES:
+            raise ValueError(f"scope must be one of {sorted(VALID_SCOPES)}")
+        return value
+
+    @field_validator("type")
+    @classmethod
+    def _valid_type(cls, value: str | None) -> str | None:
+        if value is not None and value not in VALID_TYPES:
+            raise ValueError(f"type must be one of {sorted(VALID_TYPES)}")
+        return value
+
+    @field_validator("expires_at")
+    @classmethod
+    def _valid_expires_at(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        try:
+            datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError as exc:
+            raise ValueError("expires_at must be an ISO-8601 timestamp") from exc
+        return value
+
+
 class LinkRequest(BaseModel):
     src_id: str = Field(min_length=1)
     dst_id: str = Field(min_length=1)
@@ -215,6 +255,25 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         if record is None:
             raise HTTPException(status_code=404, detail=f"memory not found: {memory_id}")
         return _record_payload(record)
+
+    @app.patch("/api/memories/{memory_id}")
+    def update_memory(memory_id: str, request: UpdateMemoryRequest) -> dict[str, Any]:
+        fields = {name: value for name, value in request.model_dump().items() if value is not None}
+        if not fields:
+            raise HTTPException(status_code=400, detail="no fields to update")
+        with lock:
+            try:
+                record = client.update(memory_id, **fields)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"memory not found: {exc.args[0]}") from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return _record_payload(record)
+
+    @app.get("/api/dashboard")
+    def dashboard() -> dict[str, Any]:
+        with lock:
+            return client.dashboard_stats()
 
     @app.delete("/api/memories/{memory_id}")
     def delete_memory(memory_id: str) -> dict[str, Any]:
