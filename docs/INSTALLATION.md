@@ -1,77 +1,50 @@
-# Installation and Deployment Guide: Agent Memory OS v0.4
+# Installation & Deployment
 
-This guide provides detailed instructions for installing and deploying Agent Memory OS v0.4.
+Current for v0.9.x. Requirements: Python 3.11+ with SQLite FTS5 (standard
+CPython builds include it); Linux, macOS, or Windows.
 
-## 📋 System Requirements
-- **Operating System:** Linux, macOS, or Windows (WSL2 recommended).
-- **Python Version:** Python 3.11 or higher.
-- **Hardware:** Minimum 4GB RAM (Recommended 8GB+ for large memory graphs).
+## Install
 
-## 🛠 Installation Steps
-
-### 1. Clone the Repository
 ```bash
-git clone git@gitlab.com:hermes-agent-bastet/agent-memory-os.git
-cd agent-memory-os
+pip install 'agent-memory-os[full]'   # Web console + MCP + turbovec
+agent-memory doctor                   # verify (add --install to auto-fix)
 ```
 
-### 2. Set Up Virtual Environment
-It is highly recommended to use a virtual environment to avoid dependency conflicts.
+Minimal alternatives: `agent-memory-os` (zero-dependency core), `[api]`,
+`[mcp]`, `[semantic]`.
+
+## First-run setup
+
 ```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+agent-memory token create      # bearer token for the Web API (mode 600)
+agent-memory service install   # start at login; launchd/systemd/schtasks
 ```
 
-### 3. Install the Package
-Install the core package and its optional dependencies for MCP and API support:
+Console: http://127.0.0.1:8000/ — bind localhost, or rely on the token.
+Keep the memory home (default `~/.agent-memory`) on a **local disk**;
+NFS/SMB homes can fail FTS5 with `database is locked`.
+
+## Declare your fleet (optional, recommended for multi-agent)
+
+`~/.agent-memory/agents.toml`:
+
+```toml
+[agents.cc-main]
+kind = "claude-code"
+teams = ["apollo"]
+```
+
+Then set `AGENT_MEMORY_AGENT_ID` in each agent's MCP config — see the
+[integration guides](integrations/claude-code.md).
+
+## Operations
+
 ```bash
-pip install .[mcp,api,dev]
-```
-*For developers who intend to modify the source code, use editable mode:*
-```bash
-pip install -e .[mcp,api,dev]
-```
-
-## ⚙️ Configuration
-
-### Environment Variables
-The system relies on the `AGENT_MEMORY_HOME` environment variable to determine where memory stores and configuration files are located.
-
-**Linux/macOS:**
-```bash
-export AGENT_MEMORY_HOME="~/agent_memory_data"
+agent-memory backup ~/backups/memories-$(date +%F).db
+agent-memory retention          # archive expired / deeply idle; tune decay
+agent-memory check              # integrity + schema version
+agent-memory sync auto          # converge the federation mesh
 ```
 
-**Windows (PowerShell):**
-```powershell
-$env:AGENT_MEMORY_HOME = "$HOME\agent_memory_data"
-```
-
-### Initializing the Memory Store
-Run the initialization command to set up the local SQLite/Graph database structure:
-```bash
-agent-memory init
-```
-
-## 🚀 Usage Example
-
-### Running the CLI Tool
-You can interact with the memory system directly via the `agent-memory` CLI.
-
-**Add a memory:**
-```bash
-agent-memory add "The capital of France is Paris."
-```
-
-**Retrieve a memory (Resonance Recall):**
-```bash
-agent-memory recall "Where is Paris?"
-```
-
-**Check System Status:**
-```bash
-agent-memory status
-```
-
-## 🚢 Deployment Notes
-For production deployment, it is recommended to run Agent Memory OS as a background service using `systemd` or within a Docker container. Ensure that the `AGENT_MEMORY_HOME` directory is mounted on a persistent volume to avoid data loss.
+Upgrades: `pip install -U 'agent-memory-os[full]'` — databases self-migrate
+forward. Full reference: [User Guide](USER_GUIDE.md).

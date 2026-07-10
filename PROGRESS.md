@@ -1,8 +1,19 @@
 # AgentMemoryOS Progress
 
-Last updated: 2026-06-17 22:17:42 CST (+0800)
+Last updated: 2026-07-11
 
 ## Current project status
+
+- Released: **v0.9.0** on PyPI (Trusted Publishing) with GitHub Releases
+  v0.2.3 → v0.9.0; see `CHANGELOG.md` for the full arc (association layer,
+  orchestration, retention, service install, federation mesh, agent
+  registry/team ACL, agents.toml fleet config, five-language console).
+- Test suite: 184 passed; CI on Ubuntu/macOS/Windows × Python 3.11–3.13.
+- Remotes converged: GitHub `yamantaka520/agent-memory-os` + GitLab.
+- Hermes production activation remains gated (shadow evidence + product
+  acceptance outstanding) — see `docs/hermes-activation-gates.md`.
+
+## Status at 2026-06-17 (historical)
 
 - Status: running
 - Project root: `/mnt/nas/Hermes-Gitlab/agent-memory-os`
@@ -56,13 +67,18 @@ Last updated: 2026-06-17 22:17:42 CST (+0800)
 - blocked — Production prompt influence from turbovec semantic candidates.
   - Blocker: ADR hold decision keeps PR3 optional-off / shadow-evidence-only.
   - Required input/evidence: golden recall, ACL/expiry, rollback, latency, consistency, killswitch, and product acceptance gates.
-- blocked — Claiming `v0.3-awakened` as an actual release tag.
-  - Blocker: `git tag --list` currently shows only `v0.1.0-stable`.
-  - Required input/evidence: create/push a matching release tag through normal review/release process, or keep v0.3 language as roadmap/validation.
+- resolved — Release tags now exist through the normal release process:
+  `v0.2.3` … `v0.9.0` on GitHub/GitLab with matching PyPI artifacts; the
+  historical `v0.3-awakened` claim stays retired.
 
 ## Next milestones
 
-1. Complete PR3 review for `feat/pr3-turbovec-provider` with tests and docs evidence.
+1. Hermes shadow integration evidence + Mizuki/Product acceptance (the two
+   remaining activation gates).
+2. v1.0 readiness: public API freeze review, deprecation policy, and a
+   performance baseline.
+3. (historical) Complete PR3 review for `feat/pr3-turbovec-provider` — done;
+   merged via GitHub PR #1 with code + security review evidence.
 2. Run full test suite on the active branch after current documentation changes.
 3. Produce activation-gate evidence bundle before any Hermes production/default backend discussion.
 4. Keep `PROJECT_STATUS.md` and this `PROGRESS.md` updated at each handoff, blocker, review, and release decision.

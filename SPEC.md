@@ -1,4 +1,6 @@
-# AgentMemoryOS SPEC v0.2.3
+# Agent Memory OS SPEC
+
+Current through v0.9.x. Sections are additive by milestone.
 
 ## Product thesis
 
@@ -317,3 +319,40 @@ deepening) — bedrock and session pointers always repeat. Snapshot rotation in
   `half_life = type_base * clamp(sqrt((1+h)/(1+u)), 0.5, 4)` (bounded to
   7–730 days), so utility telemetry — not just time — shapes the forgetting
   curve. The formula is a pure function of the counters, hence idempotent.
+
+
+## v0.6–v0.9 Federation mesh, fleet identity, and console
+
+### Mesh federation (v0.7)
+- `sync_peers` registry (URL + bearer token) per home; `sync auto` converges
+  bidirectionally with every peer using the v0.5 merge rules. Per-peer
+  failure isolation; last outcome recorded per peer.
+- Peer HTTP transport: `GET /api/sync/export`, `POST /api/sync/import`,
+  behind the console token gate. Peer URLs are operator-configured only.
+
+### Link-extraction plumbing (v0.7)
+- `consolidate(derive_links=True)` runs the ERA heuristic over all memories;
+  `consolidate(link_extractor=fn)` accepts any callable over MemoryRecords
+  returning `(src_id, dst_id, weight)`. `make_llm_link_extractor(complete)`
+  adapts any LLM completion function with defensive JSON parsing — invalid
+  output degrades to zero links, never an exception.
+
+### Agent registry & team ACL (v0.8)
+- `agents` table: id, display_name, kind (claude-code|codex|openclaw|hermes|
+  custom), teams, notes, last_seen_at. Console Agents tab + `/api/agents`.
+- **Team auto-resolution**: the ACL hard gate unions the requester's
+  registered teams with any explicit `requester_team_id`. `team:<id>`
+  grants therefore reach every member with no per-call wiring; membership
+  edits invalidate the per-store team cache immediately.
+- Per-agent MCP identity: `AGENT_MEMORY_AGENT_ID` supplies default owner
+  and requester identity for all MCP tools and stamps last-seen.
+- Team-scoped bundles: `export_bundle(team=…)` carries only that team's
+  memories, links with both endpoints inside, and member profiles.
+
+### Fleet configuration & console i18n (v0.9)
+- `<home>/agents.toml` declares agents (`[agents.<id>]` with kind/teams);
+  applied on every store open. The file is authoritative for listed agents;
+  agents it does not list are never touched. Errors fail fast with context.
+- The console ships five locales (en, zh-TW, zh-CN, ja, ko): an
+  English-keyed dictionary layer over unchanged markup, browser-detected,
+  live-switchable, persisted per user.

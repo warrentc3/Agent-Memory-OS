@@ -218,7 +218,7 @@ pip install 'agent-memory-os[mcp]'
 python -m agent_memory_os.mcp_server
 ```
 
-Tools: `memory_add`, `memory_search`, `memory_context_pack`, `memory_link`, `memory_update`, `memory_recall_feedback`, `memory_consolidate`.
+Tools (11): `memory_add`, `memory_search`, `memory_context_pack`, `memory_orchestrate_context`, `memory_link`, `memory_update`, `memory_recall_feedback`, `memory_consolidate`, `memory_offload_context`, `memory_reload_context`, `memory_snapshot_diff`. Set `AGENT_MEMORY_AGENT_ID` so each agent acts under its own identity.
 
 ## Web UI
 
@@ -229,7 +229,7 @@ agent-memory-web --host 127.0.0.1 --port 8000 --home ~/.agent-memory-web
 
 The console speaks **English, 繁體中文, 简体中文, 日本語, and 한국어** — auto-detected from the browser, switchable in the header. It ships with a stats dashboard (scope/type/relation breakdowns, 14-day activity, most-recalled memories), search and recency browsing (memory cards with in-place editing, feedback, links, and delete actions), an interactive association-graph view, a context-pack preview with per-memory decisions, and add/link/consolidate tools — all driven by a global "acting as" identity.
 
-Endpoints: `GET /health`, `GET /api/stats`, `GET /api/dashboard`, `GET|POST /api/memories`, `GET|PATCH|DELETE /api/memories/{id}`, `GET /api/memories/{id}/links`, `GET /api/graph`, `POST /api/links`, `POST /api/recall`, `POST /api/consolidate`, `GET /api/search`, `GET /api/context-pack`.
+Endpoints: health/stats/dashboard/integrity · memories CRUD + browse · search / context-pack / orchestrate · links + graph · recall feedback · share / revoke / audit · consolidate / retention / archive+restore · agents registry · peers + mesh sync · bundle export/import · owner purge. Full table in the [User Guide](docs/USER_GUIDE.md).
 
 Search, browse, graph, recall feedback, and context-pack accept `requester_agent_id` and enforce the same ACL hard gates as the SDK. Requests without a requester run in unrestricted admin view — bind to localhost only, or require a bearer token on every API route with `--token <secret>` (or `AGENT_MEMORY_WEB_TOKEN`).
 
@@ -261,6 +261,12 @@ pytest
 ## Status
 
 Alpha (`0.2.x`). The core contracts above are implemented and covered by the test suite; interfaces may still change before `1.0`. See [PROJECT_STATUS.md](PROJECT_STATUS.md) and [PROGRESS.md](PROGRESS.md) for the evidence-backed state of each feature.
+
+## Documentation
+
+- **[User Guide](docs/USER_GUIDE.md)** — concepts, full CLI / HTTP API / MCP references, multi-agent and federation walkthroughs, ops checklist
+- [SPEC](SPEC.md) — contracts and invariants, by milestone
+- [CHANGELOG](CHANGELOG.md) · [Roadmap](docs/ROADMAP.md) · [Integration guides](docs/integrations/claude-code.md)
 
 ## License
 

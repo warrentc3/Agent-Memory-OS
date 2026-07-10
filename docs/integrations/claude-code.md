@@ -55,9 +55,10 @@ right moments:
 
 ## 4. Available tools
 
-`memory_add`, `memory_search`, `memory_context_pack`, `memory_link`,
-`memory_update`, `memory_recall_feedback`, `memory_consolidate`,
-`memory_offload_context`, `memory_reload_context`.
+`memory_add`, `memory_search`, `memory_context_pack`,
+`memory_orchestrate_context`, `memory_link`, `memory_update`,
+`memory_recall_feedback`, `memory_consolidate`, `memory_offload_context`,
+`memory_reload_context`, `memory_snapshot_diff`.
 
 ## Tips
 
