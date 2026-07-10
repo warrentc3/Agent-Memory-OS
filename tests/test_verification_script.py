@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "verify_acl_identities.py"
+DOWNGRADE_SCRIPT = REPO_ROOT / "scripts" / "verify_downgrade_compatibility.py"
 
 
 def run_verifier(tmp_path: Path, *args: str) -> dict:
@@ -50,3 +51,27 @@ def test_verification_script_can_focus_one_identity(tmp_path):
 
     assert [item["identity"] for item in report["pulls"]] == ["neo"]
     assert report["pulls"][0]["search_visible_labels"] == ["team_memory", "global_memory"]
+
+
+def test_downgrade_compatibility_script_clears_local_fixture_matrix(tmp_path):
+    proc = subprocess.run(
+        [sys.executable, str(DOWNGRADE_SCRIPT), "--home", str(tmp_path), "--matrix", "all"],
+        cwd=REPO_ROOT,
+        env={"PYTHONPATH": str(REPO_ROOT / "src")},
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    report = json.loads(proc.stdout)
+
+    assert report["status"] == "PASS"
+    assert report["summary"] == {
+        "acl_matrix_passed": True,
+        "index_rebuild_passed": True,
+        "memory_ids_preserved": True,
+        "rollback_restore_passed": True,
+        "unknown_metadata_safe": True,
+    }
+    assert report["matrix"]["old_schema_to_current_runtime"]["row_count_before"] == 4
+    assert report["matrix"]["old_schema_to_current_runtime"]["row_count_after"] == 4
+    assert report["matrix"]["current_database_to_stable_field_exporter"]["private_leaked"] is False

@@ -30,6 +30,9 @@ Validated at the current baseline:
 
 - Requester-aware ACL visibility across search and context-pack paths.
 - Private / team / global identity matrix using `scripts/verify_acl_identities.py`.
+- Local downgrade / migration / rollback fixture matrix using `scripts/verify_downgrade_compatibility.py`.
+  - Evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
+  - Scope: temporary local fixtures only; no production Hermes memory store was touched.
 - Expired memories excluded before ranking and context packing.
 - Memory decay and recency scoring baseline.
 - Pinned memories bypass freshness decay but do not bypass ACL or expiry hard gates.
@@ -54,12 +57,15 @@ The following are not complete enough for production default activation:
 - Hermes memory provider adapter or plugin integration.
 - MCP server contract hardening for production memory operations.
 - Shadow-mode comparison against Hermes' current memory behavior.
-- Version-downgrade verification against older schema/client expectations.
-- End-to-end migration and rollback procedure.
-- Multi-profile Hermes gateway validation across real profiles.
 - Larger noisy-context parameterized stress fixtures such as `noise_count = [50, 100, 500]`.
 - Bucket-based Context Budget Allocator policy for production memory classes.
 - Operational observability for selected/rejected reasons in live runtime logs or debugging output.
+
+Completed local fixture evidence but not sufficient for production activation by itself:
+
+- Version-downgrade verification against older schema/client expectations.
+- End-to-end migration and rollback procedure simulation.
+- Multi-profile ACL validation across Mizuki / Neo / Guest fixtures.
 
 ## Production activation checklist
 

@@ -81,3 +81,72 @@ class SearchResult:
     record: MemoryRecord
     score: float
     reason: str = "fts"
+
+
+VALID_LINK_RELATIONS = {
+    "related_to",
+    "supersedes",
+    "caused_by",
+    "derived_from",
+    "co_recalled",
+}
+
+
+@dataclass(slots=True)
+class MemoryLink:
+    """Authoritative association edge between two memories.
+
+    Links live in the SQLite source-of-truth layer next to `memories`; they
+    survive disposable index rebuilds. Traversal is undirected for resonance
+    recall, and every traversed node must still pass ACL/expiry hard gates.
+    """
+
+    src_id: str
+    dst_id: str
+    relation: str = "related_to"
+    weight: float = 0.5
+    created_at: str = field(default_factory=utc_now)
+    updated_at: str = field(default_factory=utc_now)
+    last_activated_at: str | None = None
+    activation_count: int = 0
+    source: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.src_id or not self.dst_id:
+            raise ValueError("link endpoints must be non-empty memory ids")
+        if self.src_id == self.dst_id:
+            raise ValueError("link endpoints must differ")
+        if self.relation not in VALID_LINK_RELATIONS:
+            raise ValueError(f"relation must be one of {sorted(VALID_LINK_RELATIONS)}")
+        self.weight = min(max(float(self.weight), 0.0), 1.0)
+        if self.activation_count < 0:
+            raise ValueError("activation_count must be non-negative")
+
+    def source_json(self) -> str:
+        return json.dumps(self.source, ensure_ascii=False, sort_keys=True)
+
+
+@dataclass(slots=True)
+class RecallProfile:
+    """Per-agent soft recall bias reflecting the agent's persona.
+
+    Different agents need different memory: an engineering agent leans on
+    `procedure`/`decision`, a companion agent leans on `preference`/`note`.
+    Profiles only re-weight ranking; they never bypass ACL or expiry hard gates
+    and never grant visibility.
+    """
+
+    agent_id: str = ""
+    type_weights: dict[str, float] = field(default_factory=dict)
+    scope_weights: dict[str, float] = field(default_factory=dict)
+
+    def weight_for(self, record: MemoryRecord) -> float:
+        weight = self.type_weights.get(record.type, 1.0) * self.scope_weights.get(record.scope, 1.0)
+        return min(max(float(weight), 0.25), 2.0)
+
+    def signature(self) -> tuple:
+        return (
+            self.agent_id,
+            tuple(sorted(self.type_weights.items())),
+            tuple(sorted(self.scope_weights.items())),
+        )
