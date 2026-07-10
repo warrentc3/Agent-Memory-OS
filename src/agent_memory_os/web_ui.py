@@ -413,6 +413,17 @@ PAGE = r"""<!doctype html>
         </div>
         <div id="pack-out"></div>
       </div>
+      <div class="tool" style="grid-column: 1 / -1;">
+        <h3>Orchestrated context <span style="font-weight:400;color:var(--muted);font-size:12px">(budget-aware, v0.4)</span></h3>
+        <p class="hint">One call, five buckets: session snapshot pointer, bedrock constants, proactive warnings and procedures, then relevance recall. With a session id, repeated calls skip what was already delivered.</p>
+        <div class="row">
+          <input id="orch-task" type="text" placeholder="Task description">
+          <input id="orch-session" type="text" placeholder="session id (optional)" style="max-width:170px">
+          <input id="orch-tokens" type="number" value="2000" min="128" max="32000" style="max-width:100px">
+          <button class="ghost" id="btn-orchestrate">Orchestrate</button>
+        </div>
+        <div id="orch-out"></div>
+      </div>
       <div class="tool">
         <h3>Link two memories</h3>
         <p class="hint">Authoritative association edge; resonance recall follows it.</p>
@@ -1164,6 +1175,29 @@ $("btn-purge").addEventListener("click", async () => {
     $("purge-owner").value = "";
     loadStats(); loadDashboard(); browseLoaded = false;
   } catch (e) { toast(e.message, "err"); }
+});
+
+$("btn-orchestrate").addEventListener("click", async () => {
+  const task = $("orch-task").value.trim();
+  if (!task) return;
+  const params = new URLSearchParams({ task: task, max_tokens: $("orch-tokens").value });
+  if ($("orch-session").value.trim()) params.set("session_id", $("orch-session").value.trim());
+  if (actingAs()) params.set("requester_agent_id", actingAs());
+  const out = $("orch-out");
+  out.textContent = "Orchestrating…";
+  try {
+    const data = await api("/api/orchestrate?" + params);
+    out.innerHTML = "";
+    const chips = el("div", null, "");
+    chips.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin:8px 0";
+    chips.appendChild(Object.assign(el("span", "chip"), { textContent: data.used_tokens + " / " + data.max_tokens + " tokens" }));
+    for (const [name, info] of Object.entries(data.sections)) {
+      chips.appendChild(Object.assign(el("span", "chip"),
+        { textContent: name + " · " + info.memory_ids.length + " · " + info.used_tokens + "t" }));
+    }
+    out.appendChild(chips);
+    out.appendChild(el("pre", "packtext", data.text || "(empty)"));
+  } catch (e) { out.textContent = ""; toast(e.message, "err"); }
 });
 
 $("btn-consolidate").addEventListener("click", async () => {

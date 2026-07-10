@@ -280,3 +280,22 @@ report = client.context_pack_report(query, requester_agent_id="neo", max_tokens=
 - Prefer source-linked, high-confidence facts over inferred facts.
 - Use expiration/stale markers for volatile project state.
 - Keep audit metadata for memory changes.
+
+## v0.4 Dynamic context orchestration (first slice)
+
+`client.orchestrate_context(task, session_id=None, max_tokens=2000, ...)`
+returns a prompt-ready block split across budgeted buckets, in order:
+
+```text
+SESSION    8%  pointer to the latest ContextSnapshot for the session
+BEDROCK   20%  authority-track constants; repeat every call, dedup-exempt
+WARNINGS  14%  proactive: warning memories, importance-ranked top-up
+PROCEDURES 12% proactive: procedure memories, importance-ranked top-up
+TASK      46%  relevance recall (full retrieval stack), receives all surplus
+```
+
+Rules: every bucket passes the same ACL/expiry hard gates; unused budget
+flows to the task bucket; with a `session_id`, delivered memory ids are
+recorded in `session_recall_log` and excluded from later calls (iterative
+deepening) — bedrock and session pointers always repeat. Snapshot rotation in
+`run_retention()` archives all but the newest 5 snapshots per session.

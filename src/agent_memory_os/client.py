@@ -101,6 +101,29 @@ class MemoryClient:
     def integrity_check(self) -> dict[str, object]:
         return self.store.integrity_check()
 
+    def orchestrate_context(
+        self,
+        task: str,
+        *,
+        session_id: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        max_tokens: int = 2000,
+        profile: RecallProfile | None = None,
+    ):
+        """Budget-aware context orchestration; see orchestrator module docs."""
+        from .orchestrator import orchestrate_context
+
+        return orchestrate_context(
+            self,
+            task,
+            session_id=session_id,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            max_tokens=max_tokens,
+            profile=profile,
+        )
+
     def dashboard_stats(self) -> dict[str, object]:
         return self.store.dashboard_stats() | {"cache_items": len(self.cache)}
 

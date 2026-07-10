@@ -13,11 +13,11 @@ BACKDATED = "2020-01-01T00:00:00+00:00"
 
 def test_migrations_recorded_and_versioned(tmp_path):
     client = MemoryClient(home=tmp_path)
-    assert client.store.schema_version() == 3
+    assert client.store.schema_version() == 4
     rows = client.store.conn.execute(
         "SELECT version, description FROM schema_migrations ORDER BY version"
     ).fetchall()
-    assert [row["version"] for row in rows] == [1, 2, 3]
+    assert [row["version"] for row in rows] == [1, 2, 3, 4]
 
 
 def test_legacy_database_upgrades_in_place(tmp_path):
@@ -42,7 +42,7 @@ def test_legacy_database_upgrades_in_place(tmp_path):
 
     store = MemoryStore(db_path)
 
-    assert store.schema_version() == 3
+    assert store.schema_version() == 4
     columns = {row["name"] for row in store.conn.execute("PRAGMA table_info(memories)")}
     assert {"pinned", "decay_policy", "access_count"} <= columns
     record = store.get("mem_legacy")
@@ -167,4 +167,4 @@ def test_web_api_retention_archive_and_integrity(tmp_path):
     assert web.post("/api/archive/mem_missing/restore").status_code == 404
 
     integrity = web.get("/api/integrity").json()
-    assert integrity["ok"] is True and integrity["schema_version"] == 3
+    assert integrity["ok"] is True and integrity["schema_version"] == 4

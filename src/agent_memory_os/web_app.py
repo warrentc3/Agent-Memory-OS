@@ -307,6 +307,32 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         with lock:
             return client.integrity_check()
 
+    @app.get("/api/orchestrate")
+    def orchestrate(
+        task: str = Query(min_length=1),
+        session_id: str | None = None,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        max_tokens: int = Query(default=2000, ge=128, le=32000),
+    ) -> dict[str, Any]:
+        with lock:
+            result = client.orchestrate_context(
+                task,
+                session_id=session_id or None,
+                requester_agent_id=requester_agent_id or None,
+                requester_team_id=requester_team_id or None,
+                max_tokens=max_tokens,
+            )
+        return {
+            "task": task,
+            "text": result.text,
+            "sections": result.sections,
+            "used_tokens": result.used_tokens,
+            "max_tokens": result.max_tokens,
+            "session_id": result.session_id,
+            "delivered_ids": result.delivered_ids,
+        }
+
     @app.delete("/api/owners/{owner}/memories")
     def purge_owner(owner: str, confirm: str = Query(default="")) -> dict[str, Any]:
         # Destructive and unscoped by id: the caller must retype the exact

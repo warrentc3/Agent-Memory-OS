@@ -81,6 +81,30 @@ def create_server():  # pragma: no cover - optional integration scaffold
         return {"snapshot_id": snapshot_id, "session_id": session_id}
 
     @mcp.tool()
+    def memory_orchestrate_context(
+        task: str,
+        session_id: str | None = None,
+        max_tokens: int = 2000,
+        requester_agent_id: str | None = None,
+    ) -> dict:
+        """Budget-aware context for a task: bedrock constants, proactive warnings
+        and procedures, and relevance recall in one prompt-ready block. With a
+        session_id, repeated calls skip memories already delivered (iterative
+        deepening); bedrock constants always repeat."""
+        result = client.orchestrate_context(
+            task,
+            session_id=session_id,
+            max_tokens=max_tokens,
+            requester_agent_id=requester_agent_id,
+        )
+        return {
+            "text": result.text,
+            "sections": result.sections,
+            "used_tokens": result.used_tokens,
+            "max_tokens": result.max_tokens,
+        }
+
+    @mcp.tool()
     def memory_reload_context(session_id: str, snapshot_id: str | None = None) -> dict:
         """Reload the latest (or a specific) context snapshot for a session (DCO reload)."""
         try:

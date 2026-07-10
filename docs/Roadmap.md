@@ -46,24 +46,24 @@ Goal: a memory you can trust with years of an agent's life.
 5. **Hermes activation evidence** — shadow comparison logs, golden recall at
    target, importer idempotency; gates in `PROJECT_STATUS.md`.
 
-## v0.4 — Dynamic context orchestration (design + prototypes)
+## v0.4 — Dynamic context orchestration (in progress)
 
 Goal: the memory system decides *what enters the context window, when* —
 not just what exists.
 
-1. **Session working memory** — `ContextSnapshot` offload/reload (prototype
-   shipped, exposed via MCP): agents park working state mid-session and
-   resume across context-window resets; add snapshot retention and diffing.
-2. **Budget-aware orchestration** — one call that splits a token budget
-   across bedrock memories, task-relevant recall, resonance neighbors, and
-   session snapshots, with per-bucket reserves (extends the v0.2.2
-   arbitration allocator).
-3. **Proactive recall** — type-aware triggers: procedures surface when a task
-   type is detected, warnings surface before matching risky actions, not
-   only on lexical/semantic query match.
-4. **Mid-task recall loop** — MCP affordances for iterative deepening
-   (initial pack → follow-up queries with dedup against what the agent
-   already saw this session).
+1. **Session working memory** — `ContextSnapshot` offload/reload shipped
+   with MCP tools and snapshot rotation in retention (keep newest 5 per
+   session). Remaining: snapshot diffing.
+2. **Budget-aware orchestration** — SHIPPED: `orchestrate_context()` splits
+   the token budget across session / bedrock / warnings / procedures / task
+   buckets with surplus flowing to task recall; exposed via SDK, MCP
+   (`memory_orchestrate_context`), `GET /api/orchestrate`, and the console.
+3. **Proactive recall** — SHIPPED (first form): warnings and procedures
+   surface via dedicated buckets with importance-ranked top-up even when the
+   task wording never matches them. Remaining: task-type detection triggers.
+4. **Mid-task recall loop** — SHIPPED (first form): with a `session_id`,
+   repeated orchestrate calls exclude memories already delivered this
+   session (bedrock constants exempt), logged in `session_recall_log`.
 5. **Resonance maturation** — LLM-assisted triplet extraction at
    consolidation time replacing regex ERA; graph-quality metrics
    (hub distribution, orphan rate) on the dashboard.

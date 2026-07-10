@@ -161,10 +161,24 @@ def _migration_archive_table(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_session_recall_log(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS session_recall_log (
+          session_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          delivered_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, memory_id)
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
     (3, "cold archive table", _migration_archive_table),
+    (4, "session recall delivery log", _migration_session_recall_log),
 ]
 
 
@@ -516,6 +530,88 @@ class MemoryStore:
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
+    def bedrock_records(
+        self,
+        *,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 6,
+    ) -> list[MemoryRecord]:
+        """Authority-track constants (pinned / permanence+weight) for every pack."""
+        rows = self._authority_rows(
+            owner=None,
+            scope=None,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            limit=limit,
+            now=utc_now(),
+        )
+        return [self._row_to_record(row) for row in rows]
+
+    def top_records_by_type(
+        self,
+        memory_type: str,
+        *,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        limit: int = 4,
+    ) -> list[MemoryRecord]:
+        """Proactive recall source: the most important live records of a type."""
+        where = ["type = ?", "(expires_at IS NULL OR expires_at > ?)"]
+        params: list[object] = [memory_type, utc_now()]
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="",
+        )
+        params.append(max(1, limit))
+        rows = self.conn.execute(
+            f"""
+            SELECT * FROM memories WHERE {' AND '.join(where)}
+            ORDER BY pinned DESC, importance DESC, updated_at DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        return [self._row_to_record(row) for row in rows]
+
+    def delivered_ids(self, session_id: str) -> set[str]:
+        rows = self.conn.execute(
+            "SELECT memory_id FROM session_recall_log WHERE session_id = ?", (session_id,)
+        ).fetchall()
+        return {row["memory_id"] for row in rows}
+
+    def record_delivery(self, session_id: str, memory_ids: Sequence[str]) -> None:
+        now = utc_now()
+        self.conn.executemany(
+            "INSERT OR IGNORE INTO session_recall_log(session_id, memory_id, delivered_at) VALUES (?, ?, ?)",
+            [(session_id, memory_id, now) for memory_id in memory_ids],
+        )
+        self.conn.commit()
+
+    def rotate_snapshots(self, *, keep_per_session: int = 5) -> int:
+        """Archive all but the newest N context snapshots per session."""
+        rows = self.conn.execute(
+            """
+            SELECT id FROM (
+              SELECT id, ROW_NUMBER() OVER (
+                PARTITION BY json_extract(source, '$.session_id')
+                ORDER BY created_at DESC, rowid DESC
+              ) AS rank
+              FROM memories
+              WHERE type = 'snapshot' AND json_extract(source, '$.session_id') IS NOT NULL
+            ) WHERE rank > ?
+            """,
+            (max(1, keep_per_session),),
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        return self._archive_where(f"id IN ({placeholders})", ids, reason="snapshot_rotation")
+
     def semantic_corpus(self) -> list[tuple[int, str, str]]:
         """(rowid, memory_id, embeddable text) for every memory — the auto
         semantic indexer's rebuild source. rowid doubles as the uint64
@@ -772,6 +868,7 @@ class MemoryStore:
         expired = self._archive_where(
             "expires_at IS NOT NULL AND expires_at <= ?", [now], reason="expired"
         )
+        rotated = self.rotate_snapshots()
         decayed = 0
         if decayed_half_lives and decayed_half_lives > 0:
             decayed = self._archive_where(
@@ -785,7 +882,11 @@ class MemoryStore:
                 [now, float(decayed_half_lives)],
                 reason="decayed",
             )
-        return {"archived_expired": expired, "archived_decayed": decayed}
+        return {
+            "archived_expired": expired,
+            "archived_decayed": decayed,
+            "archived_snapshots": rotated,
+        }
 
     def _archive_where(self, where_sql: str, params: list[object], *, reason: str) -> int:
         rows = self.conn.execute(
