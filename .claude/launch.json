@@ -1,0 +1,18 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "webui",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "PYTHONPATH=src",
+        "/private/tmp/claude-501/-Users-manfred-Documents-GitHub-agent-memory-os/95920695-7bdd-427e-9e5c-8f61450c4d3a/scratchpad/venv/bin/python",
+        "-m", "agent_memory_os.web_app",
+        "--host", "127.0.0.1",
+        "--port", "8321",
+        "--home", "/private/tmp/claude-501/-Users-manfred-Documents-GitHub-agent-memory-os/95920695-7bdd-427e-9e5c-8f61450c4d3a/scratchpad/webui-demo"
+      ],
+      "port": 8321
+    }
+  ]
+}

@@ -21,13 +21,24 @@ Agents need durable facts, preferences, procedures, and lessons — but prompt-i
 ## Install
 
 ```bash
-pip install agent-memory-os            # core (no dependencies)
-pip install 'agent-memory-os[mcp]'     # + MCP server
-pip install 'agent-memory-os[api]'     # + Web UI
-pip install 'agent-memory-os[semantic]' # + vector candidate sidecar
+pip install 'agent-memory-os[full]'    # recommended: everything (Web UI, MCP, turbovec)
 ```
 
+Or pick pieces: `agent-memory-os` (core, zero dependencies), `[api]` (Web UI), `[mcp]` (MCP server), `[semantic]` (turbovec vector recall).
+
 Requires Python 3.11+ with SQLite FTS5 (included in standard CPython builds).
+
+After installing, run two commands:
+
+```bash
+agent-memory doctor          # verifies FTS5, turbovec, and the other extras
+                             # (add --install to auto-install anything missing)
+agent-memory token create    # protects the Web UI API with a bearer token
+```
+
+The token is stored at `<home>/web_token` (mode 600); `agent-memory-web` picks
+it up automatically and the console prompts for it on first use. Manage it
+later with `agent-memory token show|rotate|disable`.
 
 ## Quickstart
 
@@ -82,6 +93,58 @@ Design invariants:
 - Association edges (`memory_links`) are authoritative data, survive index rebuilds, decay when unused, and never let an invisible memory bridge two visible ones.
 
 See [SPEC.md](SPEC.md) for the full contract.
+
+## Storage engines: SQLite + turbovec
+
+AgentMemoryOS uses **two storage layers with strictly different authority**:
+
+- **SQLite** (always on) is the single source of truth: memories, links,
+  profiles, and the FTS5 lexical index all live in one `memories.db` file.
+- **turbovec** (installed with `[full]` / `[semantic]`) is the semantic vector
+  engine: an in-memory quantized index that recalls memories by meaning rather
+  than keywords. It is deliberately **disposable** — it returns candidate
+  `memory_id`s and scores only; every candidate rejoins SQLite and passes the
+  ACL/expiry hard gates before its content can be used, and the index can be
+  dropped and rebuilt at any time without touching the truth store.
+
+To activate semantic recall, supply an embedding function and wire the
+provider in:
+
+```python
+from agent_memory_os.providers.turbovec import TurbovecSemanticCandidateProvider
+
+provider = TurbovecSemanticCandidateProvider.from_vectors(
+    vectors=embeddings,                      # one row per memory, any embedder
+    external_id_by_memory_id=id_mapping,     # stable memory_id -> uint64
+    embed_query=embed,                       # str -> vector, same embedder
+)
+client = MemoryClient(home="~/.agent-memory", candidate_providers=[provider])
+```
+
+`agent-memory doctor` confirms the turbovec backend is importable.
+
+## Backup & restore
+
+```bash
+agent-memory backup ~/backups/memories-$(date +%F).db   # online, WAL-safe
+agent-memory restore ~/backups/memories-2026-07-11.db --force
+```
+
+Backups use SQLite's online backup API, so they are consistent even while
+agents are writing. Disposable indexes rebuild automatically after a restore.
+
+## Agent integrations
+
+Step-by-step guides for wiring AgentMemoryOS into common agents:
+
+- [Claude Code](docs/integrations/claude-code.md)
+- [Codex](docs/integrations/codex.md)
+- [OpenClaw](docs/integrations/openclaw.md)
+- [Hermes Agent](docs/integrations/hermes-agent.md)
+
+Any MCP-capable agent can use the same pattern: run
+`python -m agent_memory_os.mcp_server` as a stdio MCP server pointing at a
+shared `AGENT_MEMORY_HOME`.
 
 ## MCP server
 

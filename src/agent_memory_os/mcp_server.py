@@ -74,6 +74,20 @@ def create_server():  # pragma: no cover - optional integration scaffold
     def memory_consolidate(owner: str | None = None, scope: str | None = None) -> dict:
         return client.consolidate(owner=owner, scope=scope)
 
+    @mcp.tool()
+    def memory_offload_context(session_id: str, snapshot_data: dict, trigger: str = "manual") -> dict:
+        """Save the agent's working context as a snapshot memory (DCO offload)."""
+        snapshot_id = client.offload_context(snapshot_data, session_id=session_id, trigger=trigger)
+        return {"snapshot_id": snapshot_id, "session_id": session_id}
+
+    @mcp.tool()
+    def memory_reload_context(session_id: str, snapshot_id: str | None = None) -> dict:
+        """Reload the latest (or a specific) context snapshot for a session (DCO reload)."""
+        try:
+            return client.reload_context(session_id, snapshot_id=snapshot_id)
+        except ValueError as exc:
+            return {"error": str(exc)}
+
     return mcp
 
 

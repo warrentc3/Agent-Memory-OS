@@ -23,6 +23,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from .client import MemoryClient
 from .schema import MemoryRecord, SearchResult, VALID_LINK_RELATIONS
+from .tokens import load_token
 from .web_ui import PAGE
 
 VALID_SCOPES = {"user", "agent", "project", "team", "global"}
@@ -171,7 +172,9 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     # because sync endpoints run in a threadpool.
     client = MemoryClient(home=home, check_same_thread=False)
     lock = threading.Lock()
-    api_token = token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or None
+    # Resolution order: explicit --token > env > <home>/web_token created by
+    # `agent-memory token create`.
+    api_token = token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or load_token(home)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -431,6 +434,10 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     import uvicorn
+
+    if not (args.token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or load_token(args.home)):
+        print("NOTE: no API token configured — the console runs in open admin mode.")
+        print("      Protect it with:  agent-memory token create")
 
     uvicorn.run(create_app(home=args.home, token=args.token), host=args.host, port=args.port)
 

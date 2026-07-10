@@ -54,11 +54,165 @@ def build_parser() -> argparse.ArgumentParser:
     golden.add_argument("--limit", type=int, default=10, help="Default search limit for cases without limit")
     golden.add_argument("--recall-target", type=float, default=0.95, help="Required pass rate for GO")
     golden.add_argument("--json", action="store_true", help="Emit JSON evidence report")
+
+    token = sub.add_parser("token", help="Manage the Web UI API token")
+    token.add_argument("action", choices=["create", "show", "rotate", "disable"])
+
+    doctor = sub.add_parser("doctor", help="Check optional dependencies and setup health")
+    doctor.add_argument("--install", action="store_true", help="pip-install any missing optional extras")
+
+    backup = sub.add_parser("backup", help="Back up the memory database to a file")
+    backup.add_argument("dest", help="Destination .db file path")
+
+    restore = sub.add_parser("restore", help="Restore the memory database from a backup file")
+    restore.add_argument("src", help="Backup .db file to restore from")
+    restore.add_argument("--force", action="store_true", help="Overwrite an existing database")
     return p
+
+
+def _cmd_token(args) -> int:
+    from . import tokens
+
+    existing = tokens.load_token(args.home)
+    if args.action == "show":
+        if existing is None:
+            print("no token set — run: agent-memory token create")
+            return 1
+        print(existing)
+        return 0
+    if args.action == "disable":
+        if tokens.delete_token(args.home):
+            print("token removed — the Web UI API is now open (localhost-only recommended)")
+        else:
+            print("no token was set")
+        return 0
+    if args.action == "create" and existing is not None:
+        print("a token already exists — use `agent-memory token rotate` to replace it,")
+        print("or `agent-memory token show` to display it")
+        return 1
+    token = tokens.create_token(args.home)
+    print(f"Web UI token saved to {tokens.token_path(args.home)} (mode 600):")
+    print()
+    print(f"  {token}")
+    print()
+    print("agent-memory-web now requires this token on every /api/ route.")
+    print("The Web UI will prompt for it on first use.")
+    return 0
+
+
+def _cmd_doctor(args) -> int:
+    import importlib.util
+    import sqlite3
+    import subprocess
+    import sys
+
+    from . import tokens
+
+    def present(module: str) -> bool:
+        return importlib.util.find_spec(module) is not None
+
+    checks = {
+        "api": (["fastapi", "uvicorn"], "Web UI (agent-memory-web)"),
+        "mcp": (["mcp"], "MCP server for agent integration"),
+        "semantic": (["numpy", "turbovec"], "turbovec semantic vector recall"),
+    }
+    fts_ok = True
+    try:
+        probe = sqlite3.connect(":memory:")
+        probe.execute("CREATE VIRTUAL TABLE t USING fts5(x)")
+        probe.close()
+    except sqlite3.OperationalError:
+        fts_ok = False
+    print(f"[{'ok' if fts_ok else 'FAIL'}] SQLite FTS5 (required)")
+
+    missing_extras: list[str] = []
+    for extra, (modules, description) in checks.items():
+        ok = all(present(module) for module in modules)
+        print(f"[{'ok' if ok else 'missing'}] {extra}: {description}")
+        if not ok:
+            missing_extras.append(extra)
+
+    token_set = tokens.load_token(args.home) is not None
+    print(f"[{'ok' if token_set else 'none'}] Web UI token "
+          f"({'set' if token_set else 'run: agent-memory token create'})")
+
+    if missing_extras:
+        spec = f"agent-memory-os[{','.join(missing_extras)}]"
+        if args.install:
+            print(f"installing: {spec}")
+            result = subprocess.run([sys.executable, "-m", "pip", "install", spec])
+            return result.returncode
+        print()
+        print(f"install everything missing with: pip install '{spec}'")
+        print("or re-run: agent-memory doctor --install")
+        return 1
+    if not fts_ok:
+        return 1
+    print("all good.")
+    return 0
+
+
+def _cmd_backup(args) -> int:
+    import sqlite3
+    from pathlib import Path
+
+    from .tokens import resolve_home
+
+    db_path = resolve_home(args.home) / "memories.db"
+    if not db_path.exists():
+        print(f"no database at {db_path}")
+        return 1
+    dest = Path(args.dest).expanduser()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(db_path)
+    target = sqlite3.connect(dest)
+    try:
+        # sqlite3 online backup: consistent even while another process writes (WAL)
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    print(f"backed up {db_path} -> {dest}")
+    return 0
+
+
+def _cmd_restore(args) -> int:
+    import sqlite3
+    from pathlib import Path
+
+    from .tokens import resolve_home
+
+    src = Path(args.src).expanduser()
+    if not src.exists():
+        print(f"backup not found: {src}")
+        return 1
+    db_path = resolve_home(args.home) / "memories.db"
+    if db_path.exists() and not args.force:
+        print(f"database already exists at {db_path} — pass --force to overwrite")
+        return 1
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    source = sqlite3.connect(src)
+    target = sqlite3.connect(db_path)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+        source.close()
+    print(f"restored {src} -> {db_path}")
+    print("disposable indexes rebuild automatically; run `agent-memory stats` to verify")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "token":
+        return _cmd_token(args)
+    if args.command == "doctor":
+        return _cmd_doctor(args)
+    if args.command == "backup":
+        return _cmd_backup(args)
+    if args.command == "restore":
+        return _cmd_restore(args)
     if args.command == "shadow-summary":
         summary = summarize_shadow_log(args.log, last_n=args.last)
         if args.json:
