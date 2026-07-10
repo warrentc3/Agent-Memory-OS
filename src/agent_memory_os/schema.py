@@ -49,6 +49,8 @@ class MemoryRecord:
     last_accessed_at: str | None = None
     access_count: int = 0
     pinned: bool = False
+    helpful_count: int = 0
+    unhelpful_count: int = 0
 
     def __post_init__(self) -> None:
         if self.decay_policy not in VALID_DECAY_POLICIES:

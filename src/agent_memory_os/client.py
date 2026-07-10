@@ -101,6 +101,50 @@ class MemoryClient:
     def integrity_check(self) -> dict[str, object]:
         return self.store.integrity_check()
 
+    def share_memory(
+        self,
+        memory_id: str,
+        *,
+        actor: str,
+        to_agent: str | None = None,
+        to_team: str | None = None,
+        deidentify: bool = False,
+    ) -> dict[str, object]:
+        result = self.store.share_memory(
+            memory_id, actor=actor, to_agent=to_agent, to_team=to_team, deidentify=deidentify
+        )
+        self.cache.clear()
+        return result
+
+    def revoke_share(
+        self,
+        memory_id: str,
+        *,
+        actor: str,
+        to_agent: str | None = None,
+        to_team: str | None = None,
+    ) -> dict[str, object]:
+        result = self.store.revoke_share(
+            memory_id, actor=actor, to_agent=to_agent, to_team=to_team
+        )
+        self.cache.clear()
+        return result
+
+    def audit_log(self, memory_id: str) -> list[dict[str, str]]:
+        return self.store.audit_log(memory_id)
+
+    def export_bundle(self, path, *, since: str | None = None) -> dict[str, int]:
+        from .sync import export_bundle
+
+        return export_bundle(self.store, path, since=since)
+
+    def import_bundle(self, path) -> dict[str, int]:
+        from .sync import import_bundle
+
+        stats = import_bundle(self.store, path)
+        self.cache.clear()
+        return stats
+
     def snapshot_diff(self, session_id: str) -> dict:
         """Diff the two most recent context snapshots of a session.
 

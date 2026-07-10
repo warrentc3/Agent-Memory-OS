@@ -70,9 +70,19 @@ not just what exists.
    consolidation time replacing regex ERA; graph-quality metrics
    (hub distribution, orphan rate) on the dashboard.
 
-## Later / research
+## v0.5 — Memory federation & adaptive forgetting (in progress)
 
-- Cross-agent memory negotiation: explicit share/de-identify flows with audit
-  trail (private → team without copy-paste)
-- Federated multi-host sync with conflict resolution
-- Forgetting curves tuned from recall-feedback telemetry
+1. **Cross-agent memory negotiation** — SHIPPED (first form): owner-only
+   `share_memory` / `revoke_share` grants (agent or team), de-identified
+   copies with the owner's name scrubbed, and a per-memory audit trail
+   (`memory_audit`, migration 5). Console cards gain a Share action.
+2. **Federated sync** — SHIPPED (first form): `agent-memory sync export /
+   import` moves portable JSONL bundles between hosts with deterministic
+   merge rules — last-writer-wins on memories/profiles, strongest-wins on
+   links. Remaining: online peer-to-peer transport over the same rules.
+3. **Telemetry-tuned forgetting** — SHIPPED (first form): helpful/unhelpful
+   recall feedback is counted per memory (migration 6) and retention
+   recomputes decay half-lives idempotently — proven-helpful memories forget
+   slower (up to 4x base), misleading ones faster (down to 0.5x).
+
+## Later / research

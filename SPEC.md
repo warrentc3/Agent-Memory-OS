@@ -299,3 +299,21 @@ flows to the task bucket; with a `session_id`, delivered memory ids are
 recorded in `session_recall_log` and excluded from later calls (iterative
 deepening) — bedrock and session pointers always repeat. Snapshot rotation in
 `run_retention()` archives all but the newest 5 snapshots per session.
+
+
+## v0.5 Federation & adaptive forgetting (first slice)
+
+- **Negotiated sharing**: `share_memory(memory_id, actor, to_agent|to_team,
+  deidentify=False)` — only the owner may grant or revoke; a de-identified
+  share creates a scrubbed copy whose provenance exists only in the
+  `memory_audit` trail. Sharing never mutates ACL semantics: grants are
+  ordinary visibility entries and pass through the same hard gates.
+- **Bundle sync**: JSONL bundles carry memories, links, and profiles between
+  hosts. Merge rules are deterministic and order-free: memories and profiles
+  resolve by `updated_at` (last writer wins on stable ids); links keep the
+  strongest weight / highest activation count / latest activation.
+- **Adaptive forgetting**: `helpful_count` / `unhelpful_count` accumulate from
+  recall feedback; retention recomputes
+  `half_life = type_base * clamp(sqrt((1+h)/(1+u)), 0.5, 4)` (bounded to
+  7–730 days), so utility telemetry — not just time — shapes the forgetting
+  curve. The formula is a pure function of the counters, hence idempotent.

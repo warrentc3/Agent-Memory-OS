@@ -1,0 +1,159 @@
+"""Federated sync, first form: portable JSONL bundles.
+
+`export_bundle` writes memories, links, and recall profiles as one JSONL file;
+`import_bundle` merges a bundle into another store with deterministic conflict
+resolution:
+
+- memories: last-writer-wins on `updated_at` (stable ids are the identity)
+- links: merged keeping the strongest weight, highest activation count, and
+  latest activation timestamp
+- profiles: last-writer-wins on `updated_at`
+
+Move the bundle however you like — rsync, git, a USB stick. Peer-to-peer
+online sync builds on the same merge rules later.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+BUNDLE_VERSION = 1
+_MEMORY_KEYS = (
+    "id", "owner", "scope", "type", "content", "summary", "tags", "visibility",
+    "source", "confidence", "importance", "created_at", "updated_at",
+    "expires_at", "decay_policy", "decay_half_life_days", "last_accessed_at",
+    "access_count", "pinned", "helpful_count", "unhelpful_count",
+)
+_LINK_KEYS = (
+    "src_id", "dst_id", "relation", "weight", "created_at", "updated_at",
+    "last_activated_at", "activation_count", "source",
+)
+
+
+def export_bundle(store, path: str | Path, *, since: str | None = None) -> dict[str, int]:
+    path = Path(path).expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    counts = {"memories": 0, "links": 0, "profiles": 0}
+    with path.open("w", encoding="utf-8") as handle:
+        handle.write(json.dumps({"kind": "bundle", "version": BUNDLE_VERSION}) + "\n")
+        where, params = ("WHERE updated_at > ?", [since]) if since else ("", [])
+        for row in store.conn.execute(f"SELECT * FROM memories {where}", params):
+            payload = {key: row[key] for key in _MEMORY_KEYS}
+            handle.write(json.dumps({"kind": "memory", **payload}, ensure_ascii=False) + "\n")
+            counts["memories"] += 1
+        for row in store.conn.execute(f"SELECT * FROM memory_links {where}", params):
+            payload = {key: row[key] for key in _LINK_KEYS}
+            handle.write(json.dumps({"kind": "link", **payload}, ensure_ascii=False) + "\n")
+            counts["links"] += 1
+        for row in store.conn.execute("SELECT * FROM recall_profiles"):
+            handle.write(json.dumps({"kind": "profile", **dict(row)}, ensure_ascii=False) + "\n")
+            counts["profiles"] += 1
+    return counts
+
+
+def import_bundle(store, path: str | Path) -> dict[str, int]:
+    path = Path(path).expanduser()
+    stats = {
+        "memories_added": 0, "memories_updated": 0, "memories_skipped": 0,
+        "links_added": 0, "links_merged": 0, "profiles_upserted": 0,
+    }
+    with path.open("r", encoding="utf-8") as handle:
+        header = json.loads(handle.readline())
+        if header.get("kind") != "bundle" or header.get("version") != BUNDLE_VERSION:
+            raise ValueError("not a compatible agent-memory-os bundle")
+        for line in handle:
+            entry = json.loads(line)
+            kind = entry.pop("kind")
+            if kind == "memory":
+                _merge_memory(store, entry, stats)
+            elif kind == "link":
+                _merge_link(store, entry, stats)
+            elif kind == "profile":
+                _merge_profile(store, entry, stats)
+    store.conn.commit()
+    return stats
+
+
+def _merge_memory(store, entry: dict, stats: dict) -> None:
+    existing = store.conn.execute(
+        "SELECT updated_at FROM memories WHERE id = ?", (entry["id"],)
+    ).fetchone()
+    columns = ", ".join(_MEMORY_KEYS)
+    placeholders = ", ".join("?" for _ in _MEMORY_KEYS)
+    values = [entry.get(key) for key in _MEMORY_KEYS]
+    if existing is None:
+        store.conn.execute(
+            f"INSERT INTO memories({columns}) VALUES ({placeholders})", values
+        )
+        stats["memories_added"] += 1
+    elif (entry.get("updated_at") or "") > existing["updated_at"]:
+        assignments = ", ".join(f"{key} = ?" for key in _MEMORY_KEYS if key != "id")
+        store.conn.execute(
+            f"UPDATE memories SET {assignments} WHERE id = ?",
+            [entry.get(key) for key in _MEMORY_KEYS if key != "id"] + [entry["id"]],
+        )
+        stats["memories_updated"] += 1
+    else:
+        stats["memories_skipped"] += 1
+
+
+def _merge_link(store, entry: dict, stats: dict) -> None:
+    # Only keep links whose endpoints exist after the memory merge pass;
+    # bundles list memories before links, so ordering is already safe.
+    endpoints = store.conn.execute(
+        "SELECT COUNT(*) FROM memories WHERE id IN (?, ?)",
+        (entry["src_id"], entry["dst_id"]),
+    ).fetchone()[0]
+    if endpoints != 2:
+        return
+    existing = store.conn.execute(
+        "SELECT weight, activation_count, last_activated_at FROM memory_links "
+        "WHERE src_id = ? AND dst_id = ? AND relation = ?",
+        (entry["src_id"], entry["dst_id"], entry["relation"]),
+    ).fetchone()
+    if existing is None:
+        columns = ", ".join(_LINK_KEYS)
+        placeholders = ", ".join("?" for _ in _LINK_KEYS)
+        store.conn.execute(
+            f"INSERT INTO memory_links({columns}) VALUES ({placeholders})",
+            [entry.get(key) for key in _LINK_KEYS],
+        )
+        stats["links_added"] += 1
+    else:
+        store.conn.execute(
+            """
+            UPDATE memory_links
+            SET weight = max(weight, ?),
+                activation_count = max(activation_count, ?),
+                last_activated_at = max(COALESCE(last_activated_at, ''), COALESCE(?, ''))
+            WHERE src_id = ? AND dst_id = ? AND relation = ?
+            """,
+            (
+                float(entry.get("weight") or 0.0),
+                int(entry.get("activation_count") or 0),
+                entry.get("last_activated_at"),
+                entry["src_id"], entry["dst_id"], entry["relation"],
+            ),
+        )
+        stats["links_merged"] += 1
+
+
+def _merge_profile(store, entry: dict, stats: dict) -> None:
+    existing = store.conn.execute(
+        "SELECT updated_at FROM recall_profiles WHERE agent_id = ?", (entry["agent_id"],)
+    ).fetchone()
+    if existing is not None and (entry.get("updated_at") or "") <= existing["updated_at"]:
+        return
+    store.conn.execute(
+        """
+        INSERT INTO recall_profiles(agent_id, type_weights, scope_weights, updated_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(agent_id) DO UPDATE SET
+          type_weights = excluded.type_weights,
+          scope_weights = excluded.scope_weights,
+          updated_at = excluded.updated_at
+        """,
+        (entry["agent_id"], entry["type_weights"], entry["scope_weights"], entry["updated_at"]),
+    )
+    stats["profiles_upserted"] += 1

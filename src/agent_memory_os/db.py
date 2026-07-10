@@ -11,7 +11,14 @@ import re
 import sqlite3
 
 from .candidates import Candidate, CandidateProvider
-from .schema import MemoryLink, MemoryRecord, RecallProfile, SearchResult, utc_now
+from .schema import (
+    DEFAULT_DECAY_HALF_LIFE_DAYS,
+    MemoryLink,
+    MemoryRecord,
+    RecallProfile,
+    SearchResult,
+    utc_now,
+)
 from .scoring import effective_score, freshness_factor, reinforcement_factor
 
 
@@ -174,11 +181,40 @@ def _migration_session_recall_log(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_memory_audit(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_audit (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          memory_id TEXT NOT NULL,
+          actor TEXT NOT NULL,
+          action TEXT NOT NULL,
+          detail TEXT NOT NULL DEFAULT '',
+          at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS memory_audit_memory ON memory_audit(memory_id)")
+
+
+def _migration_feedback_counts(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(memories)")}
+    for name in ("helpful_count", "unhelpful_count"):
+        if name not in existing:
+            conn.execute(f"ALTER TABLE memories ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+    archive_existing = {row["name"] for row in conn.execute("PRAGMA table_info(memories_archive)")}
+    for name in ("helpful_count", "unhelpful_count"):
+        if name not in archive_existing:
+            conn.execute(f"ALTER TABLE memories_archive ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
     (3, "cold archive table", _migration_archive_table),
     (4, "session recall delivery log", _migration_session_recall_log),
+    (5, "memory sharing audit trail", _migration_memory_audit),
+    (6, "recall feedback counters", _migration_feedback_counts),
 ]
 
 
@@ -775,12 +811,14 @@ class MemoryStore:
         for memory_id in ids:
             if helpful:
                 self.conn.execute(
-                    "UPDATE memories SET access_count = access_count + 1, last_accessed_at = ? WHERE id = ?",
+                    "UPDATE memories SET access_count = access_count + 1, "
+                    "helpful_count = helpful_count + 1, last_accessed_at = ? WHERE id = ?",
                     (now, memory_id),
                 )
             else:
                 self.conn.execute(
-                    "UPDATE memories SET confidence = max(0.0, confidence - ?) WHERE id = ?",
+                    "UPDATE memories SET confidence = max(0.0, confidence - ?), "
+                    "unhelpful_count = unhelpful_count + 1 WHERE id = ?",
                     (NEGATIVE_FEEDBACK_CONFIDENCE_STEP, memory_id),
                 )
         pair_clause = (
@@ -865,8 +903,120 @@ class MemoryStore:
     _MEMORY_COLUMNS = (
         "id, owner, scope, type, content, summary, tags, visibility, source, "
         "confidence, importance, created_at, updated_at, expires_at, "
-        "decay_policy, decay_half_life_days, last_accessed_at, access_count, pinned"
+        "decay_policy, decay_half_life_days, last_accessed_at, access_count, pinned, "
+        "helpful_count, unhelpful_count"
     )
+
+    def tune_decay_from_feedback(self) -> int:
+        """Recompute decay half-lives from recall-feedback telemetry.
+
+        Idempotent: half_life = type_base * sqrt((1+helpful)/(1+unhelpful)),
+        clamped to [0.5x, 4x] of the base and [7, 730] days absolute. Memories
+        proven helpful forget slower; memories that misled forget faster.
+        """
+        rows = self.conn.execute(
+            "SELECT id, type, decay_half_life_days, helpful_count, unhelpful_count "
+            "FROM memories WHERE decay_policy != 'none' AND (helpful_count > 0 OR unhelpful_count > 0)"
+        ).fetchall()
+        tuned = 0
+        for row in rows:
+            base = DEFAULT_DECAY_HALF_LIFE_DAYS.get(row["type"], 30.0)
+            multiplier = math.sqrt((1 + row["helpful_count"]) / (1 + row["unhelpful_count"]))
+            multiplier = min(4.0, max(0.5, multiplier))
+            new_half_life = round(min(730.0, max(7.0, base * multiplier)), 2)
+            if abs(new_half_life - float(row["decay_half_life_days"])) >= 0.01:
+                self.conn.execute(
+                    "UPDATE memories SET decay_half_life_days = ? WHERE id = ?",
+                    (new_half_life, row["id"]),
+                )
+                tuned += 1
+        self.conn.commit()
+        return tuned
+
+    def share_memory(
+        self,
+        memory_id: str,
+        *,
+        actor: str,
+        to_agent: str | None = None,
+        to_team: str | None = None,
+        deidentify: bool = False,
+    ) -> dict[str, object]:
+        """Owner-controlled memory sharing with an audit trail.
+
+        Only the memory's owner may grant access — that IS the negotiation
+        boundary. A plain share appends a visibility grant; a de-identified
+        share creates a copy with the owner's name scrubbed and provenance
+        kept only in the audit log (visible via the original memory).
+        """
+        record = self.get(memory_id)
+        if record is None:
+            raise KeyError(memory_id)
+        if record.owner != actor:
+            raise PermissionError(f"only owner {record.owner!r} may share this memory")
+        if bool(to_agent) == bool(to_team):
+            raise ValueError("specify exactly one of to_agent / to_team")
+        grant = f"agent:{to_agent}" if to_agent else f"team:{to_team}"
+
+        if deidentify:
+            scrubbed = record.content.replace(record.owner, "a teammate")
+            copy = MemoryRecord(
+                content=scrubbed,
+                owner=to_team or "shared",
+                scope="team" if to_team else record.scope,
+                type=record.type,
+                tags=list(record.tags),
+                visibility=[grant],
+                source={"shared": "deidentified"},
+                confidence=record.confidence,
+                importance=record.importance,
+            )
+            self.add(copy)
+            self._audit(memory_id, actor, "share_deidentified", f"{grant} as {copy.id}")
+            self._audit(copy.id, actor, "created_from_share", "deidentified copy")
+            return {"shared_as": copy.id, "grant": grant, "deidentified": True}
+
+        if grant not in record.visibility:
+            visibility = list(record.visibility) + [grant]
+            self.update_memory(memory_id, visibility=visibility)
+        self._audit(memory_id, actor, "share", grant)
+        return {"shared_as": memory_id, "grant": grant, "deidentified": False}
+
+    def revoke_share(
+        self,
+        memory_id: str,
+        *,
+        actor: str,
+        to_agent: str | None = None,
+        to_team: str | None = None,
+    ) -> dict[str, object]:
+        record = self.get(memory_id)
+        if record is None:
+            raise KeyError(memory_id)
+        if record.owner != actor:
+            raise PermissionError(f"only owner {record.owner!r} may revoke access")
+        if bool(to_agent) == bool(to_team):
+            raise ValueError("specify exactly one of to_agent / to_team")
+        grant = f"agent:{to_agent}" if to_agent else f"team:{to_team}"
+        visibility = [entry for entry in record.visibility if entry != grant]
+        if len(visibility) != len(record.visibility):
+            self.update_memory(memory_id, visibility=visibility)
+        self._audit(memory_id, actor, "revoke", grant)
+        return {"memory_id": memory_id, "revoked": grant}
+
+    def audit_log(self, memory_id: str) -> list[dict[str, str]]:
+        rows = self.conn.execute(
+            "SELECT actor, action, detail, at FROM memory_audit WHERE memory_id = ? ORDER BY id",
+            (memory_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _audit(self, memory_id: str, actor: str, action: str, detail: str) -> None:
+        self.conn.execute(
+            "INSERT INTO memory_audit(memory_id, actor, action, detail, at) VALUES (?, ?, ?, ?, ?)",
+            (memory_id, actor, action, detail, utc_now()),
+        )
+        self.conn.commit()
 
     def run_retention(
         self, *, decayed_half_lives: float | None = RETENTION_MIN_HALF_LIVES
@@ -878,6 +1028,7 @@ class MemoryStore:
         hard expiry can retire them.
         """
         now = utc_now()
+        tuned = self.tune_decay_from_feedback()
         expired = self._archive_where(
             "expires_at IS NOT NULL AND expires_at <= ?", [now], reason="expired"
         )
@@ -899,6 +1050,7 @@ class MemoryStore:
             "archived_expired": expired,
             "archived_decayed": decayed,
             "archived_snapshots": rotated,
+            "tuned_half_lives": tuned,
         }
 
     def _archive_where(self, where_sql: str, params: list[object], *, reason: str) -> int:
@@ -913,6 +1065,7 @@ class MemoryStore:
         self.conn.execute(
             f"""
             INSERT OR REPLACE INTO memories_archive
+              ({self._MEMORY_COLUMNS}, archived_at, archive_reason)
             SELECT {self._MEMORY_COLUMNS}, ?, ? FROM memories WHERE id IN ({placeholders})
             """,
             [now, reason, *ids],
@@ -955,7 +1108,7 @@ class MemoryStore:
         self.conn.execute(
             f"""
             INSERT INTO memories({self._MEMORY_COLUMNS})
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["id"], row["owner"], row["scope"], row["type"], row["content"],
@@ -963,6 +1116,7 @@ class MemoryStore:
                 row["confidence"], row["importance"], row["created_at"], now,
                 None, row["decay_policy"], row["decay_half_life_days"],
                 row["last_accessed_at"], row["access_count"], row["pinned"],
+                row["helpful_count"], row["unhelpful_count"],
             ),
         )
         self.conn.execute("DELETE FROM memories_archive WHERE id = ?", (memory_id,))
@@ -1879,6 +2033,8 @@ class MemoryStore:
             decay_policy=row["decay_policy"], decay_half_life_days=float(row["decay_half_life_days"]),
             last_accessed_at=row["last_accessed_at"], access_count=int(row["access_count"] or 0),
             pinned=bool(row["pinned"]),
+            helpful_count=int(_row_get(row, "helpful_count", 0) or 0),
+            unhelpful_count=int(_row_get(row, "unhelpful_count", 0) or 0),
         )
 
     @staticmethod
@@ -1895,6 +2051,13 @@ class MemoryStore:
     def _fts_query(query: str) -> str:
         terms = [t.replace('"', ' ').strip() for t in query.split() if t.strip()]
         return " OR ".join(f'"{t}"' for t in terms) if terms else '""'
+
+
+def _row_get(row: sqlite3.Row, key: str, default):
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
 
 
 def _content_fingerprint(text: str) -> str:

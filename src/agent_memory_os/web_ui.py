@@ -686,6 +686,28 @@ function renderCard(memory, extras) {
   const misleadingBtn = el("button", null, "👎 Misleading");
   misleadingBtn.addEventListener("click", () => feedback(memory.id, false));
   const linksBtn = el("button", null, "🔗 Links");
+  const shareBtn = el("button", null, "⇢ Share");
+  shareBtn.addEventListener("click", async () => {
+    const actor = actingAs() || memory.owner;
+    const target = prompt(
+      "Share “" + memory.content.slice(0, 60) + "”\n\n" +
+      "Grant access to (agent id, or team:<id>; prefix with ~ to share a de-identified copy):\n" +
+      "Acting as owner: " + actor
+    );
+    if (!target) return;
+    const deidentify = target.startsWith("~");
+    const cleaned = deidentify ? target.slice(1).trim() : target.trim();
+    const body = { actor: actor, deidentify: deidentify };
+    if (cleaned.startsWith("team:")) body.to_team = cleaned.slice(5); else body.to_agent = cleaned;
+    try {
+      const result = await api("/api/memories/" + memory.id + "/share", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
+      });
+      toast(result.deidentified
+        ? "De-identified copy shared as " + result.shared_as
+        : "Shared with " + result.grant + " (audited).", "ok");
+    } catch (e) { toast(e.message, "err"); }
+  });
   const copyBtn = el("button", null, "⧉ Copy id");
   copyBtn.addEventListener("click", () => { navigator.clipboard.writeText(memory.id); toast("Copied " + memory.id, "ok"); });
   const deleteBtn = el("button", "danger", "🗑 Delete");
@@ -696,7 +718,7 @@ function renderCard(memory, extras) {
       card.remove(); loadStats(); toast("Memory deleted", "ok");
     } catch (e) { toast(e.message, "err"); }
   });
-  actions.append(editBtn, helpfulBtn, misleadingBtn, linksBtn, copyBtn, deleteBtn);
+  actions.append(editBtn, helpfulBtn, misleadingBtn, linksBtn, shareBtn, copyBtn, deleteBtn);
   if (extras && extras.reason) {
     const whyBtn = el("button", null, "why?");
     const reason = el("div", "reason", extras.reason);

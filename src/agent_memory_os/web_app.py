@@ -129,6 +129,13 @@ class LinkRequest(BaseModel):
         return value
 
 
+class ShareRequest(BaseModel):
+    actor: str = Field(min_length=1)
+    to_agent: str | None = None
+    to_team: str | None = None
+    deidentify: bool = False
+
+
 class RecallFeedbackRequest(BaseModel):
     memory_ids: list[str] = Field(min_length=1)
     helpful: bool = True
@@ -357,6 +364,46 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         if not removed:
             raise HTTPException(status_code=404, detail=f"memory not found: {memory_id}")
         return {"deleted": memory_id}
+
+    @app.post("/api/memories/{memory_id}/share")
+    def share_memory(memory_id: str, request: ShareRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                return client.share_memory(
+                    memory_id,
+                    actor=request.actor,
+                    to_agent=request.to_agent,
+                    to_team=request.to_team,
+                    deidentify=request.deidentify,
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"memory not found: {exc.args[0]}") from exc
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/memories/{memory_id}/revoke")
+    def revoke_share(memory_id: str, request: ShareRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                return client.revoke_share(
+                    memory_id,
+                    actor=request.actor,
+                    to_agent=request.to_agent,
+                    to_team=request.to_team,
+                )
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"memory not found: {exc.args[0]}") from exc
+            except PermissionError as exc:
+                raise HTTPException(status_code=403, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.get("/api/memories/{memory_id}/audit")
+    def memory_audit(memory_id: str) -> dict[str, Any]:
+        with lock:
+            return {"memory_id": memory_id, "audit": client.audit_log(memory_id)}
 
     @app.get("/api/memories/{memory_id}/links")
     def memory_links(memory_id: str) -> dict[str, Any]:

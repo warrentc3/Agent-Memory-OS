@@ -78,6 +78,11 @@ def build_parser() -> argparse.ArgumentParser:
     service.add_argument("--port", type=int, default=8000)
     service.add_argument("--dry-run", action="store_true", help="Print actions without executing")
 
+    sync = sub.add_parser("sync", help="Export or import a portable memory bundle (federated sync)")
+    sync.add_argument("action", choices=["export", "import"])
+    sync.add_argument("file", help="Bundle .jsonl path")
+    sync.add_argument("--since", default=None, help="Export only records updated after this ISO timestamp")
+
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
         "--half-lives", type=float, default=None,
@@ -274,6 +279,13 @@ def main(argv: list[str] | None = None) -> int:
             report = client.integrity_check()
             print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
             return 0 if report["ok"] else 1
+        if args.command == "sync":
+            if args.action == "export":
+                report = client.export_bundle(args.file, since=args.since)
+            else:
+                report = client.import_bundle(args.file)
+            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         if args.command == "retention":
             if args.half_lives is None:
                 result = client.run_retention()
