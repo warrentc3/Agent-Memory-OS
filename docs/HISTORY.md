@@ -1,6 +1,6 @@
 # AgentMemoryOS - Project History and Roadmap
 
-Last updated: 2026-06-05 14:34:42 CST (+0800)
+Last updated: 2026-06-06 23:48:38 CST (+0800)
 
 ## Purpose
 
@@ -48,16 +48,23 @@ Target compatibility includes Hermes, Claude Code / Claude Desktop style agents,
 
 ## Hermes activation status
 
-AgentMemoryOS v0.2.2 is currently **Development / Validation only** for Hermes integration.
+AgentMemoryOS v0.3.1 is the current **Shadow Evidence & Migration Safety** engineering gate for Hermes integration.
 
 It is not approved as the default Hermes Agent memory engine. Production activation is blocked until the following are verified with recorded evidence:
 
-1. Version-downgrade compatibility.
-2. Lossless migration.
-3. Rollback safety.
-4. Hermes shadow integration.
-5. Multi-profile ACL validation.
-6. Mizuki/Product final subjective acceptance.
+1. Shadow Evidence Pack.
+2. Hermes `MEMORY.md` / `USER.md` importer safety and idempotency.
+3. Version-downgrade compatibility.
+4. Lossless migration.
+5. Rollback safety.
+6. Hermes shadow integration with `production_injection=false`.
+7. Multi-profile ACL validation for the explicitly allowlisted `neo` and `mizuki` shadow coverage.
+8. Golden Recall Query Set.
+9. Mizuki/Product stress cases and final subjective acceptance.
+
+Canonical roadmap document:
+
+- `docs/ROADMAP.md`
 
 Canonical gate document:
 
@@ -66,6 +73,11 @@ Canonical gate document:
 Downgrade verification plan:
 
 - `docs/plans/20260605_143442-version-downgrade-verification.md`
+
+Roadmap lock:
+
+- v0.4 Memory Resonance is a future research milestone only.
+- v0.4 must not be reported as complete, active canary, production-injected, all-profile activated, or default Hermes memory behavior until v0.3.1 gates pass and a separate documented decision opens the next phase.
 
 ## Architecture summary
 
@@ -186,6 +198,18 @@ The memory record model includes:
 - `pinned`
 
 ## Completed implementation history
+
+### v0.3.1 Shadow Evidence & Migration Safety
+
+Recorded the roadmap lock for the next Hermes integration gate.
+
+Authoritative stance:
+
+- v0.3.1 is the active engineering gate.
+- `production_injection=false`.
+- Shadow profile coverage is explicitly allowlisted to `neo` and `mizuki`.
+- Shadow evidence, importer idempotency, migration/rollback safety, ACL zero-leakage, golden recall, and Mizuki/Product stress cases must pass before any production switch.
+- v0.4 Memory Resonance remains a future research milestone only until the v0.3.1 gates pass and a separate documented decision opens that phase.
 
 ### MVP implementation
 
@@ -484,12 +508,13 @@ When resuming this project from a new session:
 
 1. Read `README.md`.
 2. Read `PROJECT_STATUS.md`.
-3. Read this file: `docs/HISTORY.md`.
-4. Read `docs/hermes-activation-gates.md` before any Hermes runtime integration or activation work.
-5. Read `docs/stress-cases/case-01-noisy-truth.md`.
-6. Read `docs/plans/20260605_143442-version-downgrade-verification.md` before migration/downgrade work.
-7. Read `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`.
-8. Run:
+3. Read `docs/ROADMAP.md` for the current v0.3.1 runtime stance, v0.4 lock, and forbidden overclaim list.
+4. Read this file: `docs/HISTORY.md`.
+5. Read `docs/hermes-activation-gates.md` before any Hermes runtime integration or activation work.
+6. Read `docs/stress-cases/case-01-noisy-truth.md`.
+7. Read `docs/plans/20260605_143442-version-downgrade-verification.md` before migration/downgrade work.
+8. Read `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`.
+9. Run:
 
 ```bash
 cd /mnt/nas/Hermes-Gitlab/agent-memory-os
@@ -504,6 +529,7 @@ PYTHONPATH=src python3 scripts/verify_acl_identities.py --home /tmp/agent-memory
 - `README.md`
 - `SPEC.md`
 - `PROJECT_STATUS.md`
+- `docs/ROADMAP.md`
 - `docs/hermes-activation-gates.md`
 - `docs/plans/20260605_143442-version-downgrade-verification.md`
 - `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`

@@ -77,6 +77,26 @@ class MemoryRecord:
 
 
 @dataclass(slots=True)
+class ContextSnapshot:
+    session_id: str
+    snapshot_data: dict[str, Any]
+    trigger: str = "manual"
+    snapshot_index: int = 0
+
+    def to_record(self) -> MemoryRecord:
+        return MemoryRecord(
+            content=json.dumps(self.snapshot_data, ensure_ascii=False),
+            type="snapshot",
+            summary=f"Snapshot for session {self.session_id} (index {self.snapshot_index})",
+            source={
+                "session_id": self.session_id,
+                "trigger": self.trigger,
+                "snapshot_index": self.snapshot_index,
+            }
+        )
+
+
+@dataclass(slots=True)
 class SearchResult:
     record: MemoryRecord
     score: float

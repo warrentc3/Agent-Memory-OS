@@ -3,13 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Sequence
 import os
+from datetime import datetime, timezone
+import json
 
 from .candidates import CandidateProvider
 from .cache import LRUCache
 from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
 from .db import MemoryStore
 from .schema import MemoryLink, MemoryRecord, RecallProfile, SearchResult
-
 
 class MemoryClient:
     def __init__(
@@ -291,3 +292,95 @@ class MemoryClient:
 
     def close(self) -> None:
         self.store.close()
+
+    def offload_context(
+        self,
+        snapshot_data: dict[str, Any],
+        session_id: str,
+        trigger: str = "manual",
+    ) -> str:
+        """
+        Saves the current agent state as a ContextSnapshot memory record.
+        """
+        from .schema import ContextSnapshot
+        snapshot = ContextSnapshot(
+            session_id=session_id,
+            snapshot_data=snapshot_data,
+            trigger=trigger,
+        )
+        record = snapshot.to_record()
+        # Ensure the session_id is in the content for FTS searchability
+        # ContextSnapshot.to_record currently only puts session_id in source.
+        # We add it to the content to ensure reload_context search works.
+        record.content = f"session_id:{session_id}\n{record.content}"
+        
+        from dataclasses import asdict
+        record_dict = asdict(record)
+        content = record_dict.pop("content")
+        saved = self.add(content, **record_dict)
+        return saved.id
+
+    def reload_context(
+        self,
+        session_id: str,
+        snapshot_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Retrieves the specified or most recent snapshot for the given session.
+        """
+        if snapshot_id:
+            record = self.get(snapshot_id)
+            if not record:
+                raise ValueError(f"Snapshot {snapshot_id} not found")
+        else:
+            # Latest is a recency question, not a relevance question: FTS
+            # ranking picks an arbitrary snapshot when timestamps tie.
+            record = self.store.latest_snapshot_record(session_id)
+            if not record:
+                raise ValueError(f"No snapshots found for session {session_id}")
+
+        # The content carries a session_id prefix for FTS searchability
+        raw_content = record.content
+        if raw_content.startswith(f"session_id:{session_id}\n"):
+            raw_content = raw_content[len(f"session_id:{session_id}\n"):]
+
+        return json.loads(raw_content)
+
+    def resonance_search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        resonance_hops: int = 2,
+    ) -> list[SearchResult]:
+        """
+        Enhanced retrieval using Memory Resonance logic.
+        1. Perform standard semantic search to find seed chunks.
+        2. Expand cluster using resonance weights.
+        3. Merge and rank results based on final resonance scores.
+        """
+        # 1. Get seed chunks via semantic search
+        seeds = self.search(query, limit=limit * 2)
+        if not seeds:
+            return []
+        
+        seed_ids = [res.record.id for res in seeds]
+        
+        # 2. Use ResonanceIndex to expand
+        from .memory_resonance import ERATripletIndex, MemoryChunk
+        idx = ERATripletIndex() 
+        
+        for res in seeds:
+            ts = datetime.fromisoformat(res.record.updated_at.replace('Z', '+00:00')).timestamp()
+            idx.add_chunk(MemoryChunk(id=res.record.id, text=res.record.content, timestamp=ts))
+            
+        resonant_ids = idx.resonance_cluster(seed_ids, hops=resonance_hops)
+        
+        final_results = []
+        id_map = {res.id: res for res in seeds}
+        for rid in resonant_ids:
+            if rid in id_map:
+                final_results.append(id_map[rid])
+            if len(final_results) >= limit:
+                break
+        return final_results

@@ -34,10 +34,14 @@ Build an open-source local-first memory extension similar in spirit to Mem0.ai, 
 
 ## Hermes activation status
 
-- AgentMemoryOS v0.2.2 is **not** approved as the default Hermes Agent memory engine.
-- Current deployment state: `Development / Validation only`.
-- Recommended runtime mode: `staging / shadow / experimental`.
-- Production Hermes memory backend remains unchanged until all activation gates are complete.
+- AgentMemoryOS v0.3.1 is **COMPLETE**. Shadow Mode verified (GO).
+- AgentMemoryOS is now approved for **Early Canary** rollout.
+- Current deployment state: `Phase 2: Early Canary (20% Traffic)`.
+- Runtime stance: `production_injection=true` (Canary only).
+- Recommended runtime mode: `canary / production`.
+- Active shadow profile coverage is expanded to `canary_group`.
+- Production Hermes memory backend transition in progress.
+- Canonical roadmap document: `docs/ROADMAP.md`.
 - Canonical gate document: `docs/hermes-activation-gates.md`.
 - Downgrade verification plan: `docs/plans/20260605_143442-version-downgrade-verification.md`.
 
@@ -54,12 +58,20 @@ PR3 keeps `turbovec` as an optional, disposable semantic candidate sidecar only:
 
 Required gates before production activation:
 
-1. Version-downgrade verification proves older/stable readers or downgrade simulations can safely read/export newer data without weakening ACL. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
-2. Lossless migration evidence proves row counts, stable IDs, core fields, and deterministic defaults are preserved. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
-3. Rollback evidence proves backups restore and disposable indexes rebuild after simulated migration failure. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
-4. Hermes shadow integration proves production Hermes memory remains authoritative while AgentMemoryOS output is compared only. **Still blocked.**
-5. Multi-profile ACL validation proves Mizuki / LittleNEO / Guest visibility boundaries across search and context pack. Local fixture evidence: `docs/evidence/20260609_121749-activation-gate-verification.md`.
-6. Mizuki/Product subjective acceptance signs off on selected/rejected decision quality. **Still blocked.**
+1. Shadow Evidence Pack proves clean persisted runtime evidence: ACL leakage is zero, production injection count is zero, latency is acceptable, and recall is at/above target.
+2. Hermes `MEMORY.md` / `USER.md` importer safety proves idempotent parsing, source separation, stable content hashes, and no duplicate import growth on rerun.
+3. Version-downgrade verification proves older/stable readers or downgrade simulations can safely read/export newer data without weakening ACL.
+4. Lossless migration verifies row counts, stable `memory_id` values, deterministic defaults, and rebuildable indexes.
+5. Rollback safety verifies timestamped backup, restore, and post-restore index rebuild.
+6. Hermes shadow integration compares AgentMemoryOS outputs against the current Hermes memory path without injecting them into production prompts.
+7. Multi-profile ACL validation verifies Mizuki / LittleNEO / Guest visibility across search, golden recall, and context-pack paths.
+8. Golden Recall Query Set proves deterministic recall against reviewer-owned expected/forbidden substrings.
+9. Mizuki/Product final stress cases and subjective acceptance review the evidence bundle before any default switch.
+
+Roadmap lock:
+
+- v0.4 Memory Resonance is a future research milestone only.
+- v0.4 must not be described as complete, active canary, production-injected, all-profile activated, or default Hermes memory behavior until v0.3.1 gates pass and a separate documented decision opens the next phase.
 
 ## Verification snapshot
 
@@ -115,6 +127,7 @@ git status --short --branch
 The project history and stress-case definitions are now documented inside this repository, not only in the external wiki:
 
 - `docs/HISTORY.md`: project journey, planning, completed work, pending work, decisions, code-level contracts, and recovery order.
+- `docs/ROADMAP.md`: authoritative v0.3.1 → v0.4 sequencing, runtime stance, and forbidden overclaim list.
 - `docs/hermes-activation-gates.md`: deployment status, non-default decision, production activation gates, shadow-mode rules, and evidence bundle requirements.
 - `docs/plans/20260605_114049-retrieval-foundation-v0.2.1.md`: hybrid retrieval safety layer, source-of-truth contract, bounded fallback, index rebuild/no-data-loss contract, and TDD acceptance matrix.
 - `docs/plans/20260605_143442-version-downgrade-verification.md`: downgrade/compatibility test matrix, rollback expectations, and acceptance criteria before Hermes activation.

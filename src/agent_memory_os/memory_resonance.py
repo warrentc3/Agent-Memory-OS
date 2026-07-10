@@ -1,18 +1,17 @@
 """Prototype graph-neural memory resonance primitives.
 
-This module implements a lightweight embedded ERA (Entity-Relation-Attribute)
-triplet index for AgentMemoryOS v0.4 experiments.  It intentionally avoids
-external graph dependencies so shadow-mode probes can run in constrained test
-and gateway environments.
+This module implements an embedded ERA (Entity-Relation-Attribute)
+triplet index for AgentMemoryOS v0.4 experiments.
 """
 
 from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
+import math
 import re
+import time
 from typing import DefaultDict, Iterable
-
 
 _TOKEN_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_.-]*\b")
 _VERSION_RE = re.compile(r"\bv\d+(?:\.\d+)+\b", re.IGNORECASE)
@@ -38,22 +37,48 @@ _STOPWORDS = {
     "with",
 }
 
-
 @dataclass(frozen=True)
 class MemoryChunk:
-    """A memory unit that can be projected into the resonance graph."""
+    """A memory unit that can be projected into the resonance graph.
+
+    `timestamp` accepts either an ISO string (used verbatim in the timestamp
+    triplet) or a Unix float for ResonanceWeight decay experiments.
+    """
 
     id: str
     text: str
-    timestamp: str = ""
+    timestamp: str | float = ""
+
+
+class ResonanceWeight:
+    """Temporal decay for resonance strength (prototype).
+
+    Formula: strength = max(min_weight, base * exp(-lambda * delta_t)).
+    """
+
+    @staticmethod
+    def calculate(base_strength: float, timestamp: float, current_time: float | None = None) -> float:
+        if current_time is None:
+            current_time = time.time()
+        try:
+            stamp = float(timestamp)
+        except (TypeError, ValueError):
+            stamp = 0.0
+        delta_t = max(0.0, current_time - stamp)
+        # Decay constant: reduced from 0.00000133 to 0.0000008 to mitigate recall drop
+        decay_lambda = 0.0000008
+        decay_factor = math.exp(-decay_lambda * delta_t)
+        # Weight floor prevents total resonance collapse for old chunks
+        min_weight = 0.01
+        return max(min_weight, base_strength * decay_factor)
 
 
 class ERATripletIndex:
     """Embedded ERA triplet index with two-hop resonance expansion.
 
     The prototype stores memory chunks, extracts simple ERA triplets, and links
-    chunks through shared entities/concepts.  It is designed as the v0.4
-    bootstrap before a production graph backend such as Neo4j is introduced.
+    chunks through shared entities/concepts. It is the v0.4 bootstrap before a
+    production graph backend is introduced.
     """
 
     def __init__(self) -> None:
@@ -64,7 +89,6 @@ class ERATripletIndex:
 
     def add_chunk(self, chunk: MemoryChunk) -> None:
         """Add or replace a chunk and index its ERA terms."""
-
         if not chunk.id:
             raise ValueError("MemoryChunk.id must be non-empty")
 
@@ -83,16 +107,16 @@ class ERATripletIndex:
 
     def triplets_for_chunk(self, chunk_id: str) -> set[tuple[str, str, str]]:
         """Return extracted ERA triplets for a chunk."""
-
         return set(self._triplets_by_chunk.get(chunk_id, set()))
 
     def resonance_cluster(self, seed_chunk_ids: Iterable[str], *, hops: int = 2) -> list[str]:
         """Expand seed chunks through shared ERA terms and rank the cluster.
 
         Ranking is deterministic: seeds first, then closer graph distance, then
-        stronger term overlap with the seed set, then chunk id.
+        stronger term overlap with the seed set, then chunk id. ResonanceWeight
+        temporal decay stays an opt-in experiment; the cluster contract must
+        not depend on wall-clock time.
         """
-
         seeds = [chunk_id for chunk_id in seed_chunk_ids if chunk_id in self._chunks]
         if hops < 0:
             raise ValueError("hops must be >= 0")
@@ -171,10 +195,8 @@ class ERATripletIndex:
 
     def _extract_triplets(self, chunk: MemoryChunk) -> set[tuple[str, str, str]]:
         triplets: set[tuple[str, str, str]] = set()
-
         for match in _USES_RE.finditer(chunk.text):
             triplets.add((match.group("subject"), "uses", match.group("object")))
-
         primary_entity = self._primary_entity(chunk.text)
         for match in _EVOLVES_RE.finditer(chunk.text):
             subject = match.group("subject")
@@ -182,12 +204,10 @@ class ERATripletIndex:
                 subject = primary_entity
             triplets.add((subject, "evolves_from", match.group("source")))
             triplets.add((subject, "evolves_to", match.group("target")))
-
         if chunk.timestamp:
             subject = self._primary_entity(chunk.text)
             if subject:
-                triplets.add((subject, "timestamp", chunk.timestamp))
-
+                triplets.add((subject, "timestamp", str(chunk.timestamp)))
         return triplets
 
     def _primary_entity(self, text: str) -> str:
@@ -200,7 +220,6 @@ class ERATripletIndex:
         terms = {_normalize(token) for token in _TOKEN_RE.findall(text)}
         terms.update(_normalize(version) for version in _VERSION_RE.findall(text))
         return {term for term in terms if term and term not in _STOPWORDS}
-
 
 def _normalize(value: str) -> str:
     return value.strip().lower()

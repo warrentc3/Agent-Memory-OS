@@ -330,6 +330,24 @@ class MemoryStore:
             scope_weights=json.loads(row["scope_weights"] or "{}"),
         )
 
+    def latest_snapshot_record(self, session_id: str) -> MemoryRecord | None:
+        """Return the most recent context snapshot for a session.
+
+        Recency is determined by snapshot metadata and insertion order, never
+        by FTS relevance — same-second snapshots must still resolve to the
+        latest one deterministically.
+        """
+        row = self.conn.execute(
+            """
+            SELECT * FROM memories
+            WHERE type = 'snapshot' AND json_extract(source, '$.session_id') = ?
+            ORDER BY json_extract(source, '$.snapshot_index') DESC, created_at DESC, rowid DESC
+            LIMIT 1
+            """,
+            (session_id,),
+        ).fetchone()
+        return self._row_to_record(row) if row else None
+
     def link_exists(self, memory_id: str, other_id: str) -> bool:
         """Return whether any edge connects the two memories in either direction."""
         row = self.conn.execute(
