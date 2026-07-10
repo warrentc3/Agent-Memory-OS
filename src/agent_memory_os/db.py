@@ -1364,12 +1364,15 @@ class MemoryStore:
             result = self._score_row(row, text_score=text_score, now_dt=now_dt, reason_prefix="fts")
             results[result.record.id] = result
 
+        # Bedrock recall is query-independent: cap its share of the result
+        # window so always-on constants cannot crowd out genuinely relevant
+        # lexical/semantic/resonance hits (validation finding, v0.9.x).
         authority_rows = self._authority_rows(
             owner=owner,
             scope=scope,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
-            limit=limit,
+            limit=max(1, limit // 4),
             now=now,
         )
         for row in authority_rows:

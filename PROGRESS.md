@@ -4,6 +4,19 @@ Last updated: 2026-07-11
 
 ## Current project status
 
+- completed — v0.9.x validation milestone established, replacing the
+  v0.2.x-era Hermes shadow gates: `docs/VALIDATION_PLAN.md` (G1 security /
+  G2 functional / G3 performance matrix) + reproducible harness
+  `scripts/validation_run.py`.
+  - Evidence: `docs/reports/20260710-v0.9.0-validation-report.md` —
+    **PASS** on a 5,055-memory / 2,022-link synthetic fleet corpus
+    (12/12 security hard gates, 10/10 functional, 13/13 performance;
+    search p95 11.9 ms, orchestrate p95 20.4 ms, write 8.3k/s).
+  - The harness caught and led to a real ranking fix: the
+    query-independent authority track could crowd resonance results out of
+    the result window at scale; its share is now capped at limit/4.
+
+
 - Released: **v0.9.0** on PyPI (Trusted Publishing) with GitHub Releases
   v0.2.3 → v0.9.0; see `CHANGELOG.md` for the full arc (association layer,
   orchestration, retention, service install, federation mesh, agent
@@ -73,8 +86,9 @@ Last updated: 2026-07-11
 
 ## Next milestones
 
-1. Hermes shadow integration evidence + Mizuki/Product acceptance (the two
-   remaining activation gates).
+1. Re-run the v0.9.x validation harness on production-representative
+   hardware + product acceptance (supersedes the v0.2.x-era Hermes shadow
+   gate design; see `docs/VALIDATION_PLAN.md`).
 2. v1.0 readiness: public API freeze review, deprecation policy, and a
    performance baseline.
 3. (historical) Complete PR3 review for `feat/pr3-turbovec-provider` — done;

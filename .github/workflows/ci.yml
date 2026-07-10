@@ -27,3 +27,6 @@ jobs:
         run: pip install -e ".[semantic]"
       - name: Run test suite
         run: pytest
+      - name: Validation harness (quick)
+        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
+        run: python scripts/validation_run.py --quick

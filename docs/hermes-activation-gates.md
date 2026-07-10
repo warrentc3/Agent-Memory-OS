@@ -1,3 +1,8 @@
+> **SUPERSEDED (2026-07-11)** — this gate design targeted the v0.2.x
+> feature surface. Current validation gates and the reproducible
+> harness live in [VALIDATION_PLAN.md](VALIDATION_PLAN.md); reports
+> land in [reports/](reports/). Kept for historical governance context.
+
 # Hermes Activation Gates
 
 Last updated: 2026-06-05 14:34:42 CST (+0800)

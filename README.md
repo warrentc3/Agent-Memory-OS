@@ -266,6 +266,7 @@ Alpha (`0.2.x`). The core contracts above are implemented and covered by the tes
 
 - **[User Guide](docs/USER_GUIDE.md)** — concepts, full CLI / HTTP API / MCP references, multi-agent and federation walkthroughs, ops checklist
 - [SPEC](SPEC.md) — contracts and invariants, by milestone
+- **[Validation Plan](docs/VALIDATION_PLAN.md)** & **[latest validation report](docs/reports/20260710-v0.9.0-validation-report.md)** — gate matrix, reproducible harness (`scripts/validation_run.py`), measured results
 - [CHANGELOG](CHANGELOG.md) · [Roadmap](docs/ROADMAP.md) · [Integration guides](docs/integrations/claude-code.md)
 
 ## License
