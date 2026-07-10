@@ -67,6 +67,14 @@ def build_parser() -> argparse.ArgumentParser:
     restore = sub.add_parser("restore", help="Restore the memory database from a backup file")
     restore.add_argument("src", help="Backup .db file to restore from")
     restore.add_argument("--force", action="store_true", help="Overwrite an existing database")
+
+    sub.add_parser("check", help="Run database integrity and invariant checks")
+
+    retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
+    retention.add_argument(
+        "--half-lives", type=float, default=None,
+        help="Also archive unpinned memories idle for N decay half-lives (default 4; 0 = expired only)",
+    )
     return p
 
 
@@ -229,6 +237,17 @@ def main(argv: list[str] | None = None) -> int:
 
     client = MemoryClient(home=args.home)
     try:
+        if args.command == "check":
+            report = client.integrity_check()
+            print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0 if report["ok"] else 1
+        if args.command == "retention":
+            if args.half_lives is None:
+                result = client.run_retention()
+            else:
+                result = client.run_retention(decayed_half_lives=args.half_lives or None)
+            print(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True))
+            return 0
         if args.command == "golden-recall":
             cases = load_golden_query_cases(args.cases)
             report = evaluate_golden_queries(

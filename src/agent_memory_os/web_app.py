@@ -278,6 +278,35 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         with lock:
             return client.dashboard_stats()
 
+    @app.post("/api/retention")
+    def retention(decayed_half_lives: float | None = Query(default=None, ge=0)) -> dict[str, Any]:
+        with lock:
+            return client.run_retention(
+                decayed_half_lives=decayed_half_lives if decayed_half_lives else None
+            )
+
+    @app.get("/api/archive")
+    def archive_list(
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+    ) -> dict[str, Any]:
+        with lock:
+            return {"archived": client.list_archived(limit=limit, offset=offset)}
+
+    @app.post("/api/archive/{memory_id}/restore")
+    def archive_restore(memory_id: str) -> dict[str, Any]:
+        with lock:
+            try:
+                record = client.restore_archived(memory_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=f"not in archive: {exc.args[0]}") from exc
+        return _record_payload(record)
+
+    @app.get("/api/integrity")
+    def integrity() -> dict[str, Any]:
+        with lock:
+            return client.integrity_check()
+
     @app.delete("/api/owners/{owner}/memories")
     def purge_owner(owner: str, confirm: str = Query(default="")) -> dict[str, Any]:
         # Destructive and unscoped by id: the caller must retype the exact

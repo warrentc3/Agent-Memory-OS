@@ -212,7 +212,7 @@ PAGE = r"""<!doctype html>
   .tool.danger h3 { color: var(--bad); }
   button.dangerbtn { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, var(--border)); flex: 0 0 auto; }
   button.dangerbtn:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
-  .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 14px; margin-bottom: 16px; }
   .tile {
     background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
     padding: 16px 18px; box-shadow: var(--shadow); display: flex; flex-direction: column; gap: 2px;
@@ -298,6 +298,7 @@ PAGE = r"""<!doctype html>
       <div class="tile"><span class="tilelabel">Links</span><span class="tileval" id="d-links">–</span></div>
       <div class="tile"><span class="tilelabel">Pinned</span><span class="tileval" id="d-pinned">–</span></div>
       <div class="tile"><span class="tilelabel">Expired</span><span class="tileval" id="d-expired">–</span></div>
+      <div class="tile"><span class="tilelabel">Archived</span><span class="tileval" id="d-archived">–</span></div>
     </div>
     <div class="panelgrid">
       <div class="panel"><h3>By scope</h3><div class="hbars" id="d-scope"></div></div>
@@ -432,6 +433,17 @@ PAGE = r"""<!doctype html>
         <button class="ghost" id="btn-consolidate">Run consolidation</button>
         <div id="consolidate-out" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
       </div>
+      <div class="tool" style="grid-column: 1 / -1;">
+        <h3>Retention &amp; archive</h3>
+        <p class="hint">Move expired memories into the cold archive (out of recall, restorable). Optionally also archive unpinned memories idle beyond N decay half-lives.</p>
+        <div class="row">
+          <button class="ghost" id="btn-retention">Archive expired</button>
+          <input id="retention-halflives" type="number" min="1" step="0.5" value="4" style="max-width:90px" title="decay half-lives">
+          <button class="ghost" id="btn-retention-decay">Also archive decayed</button>
+        </div>
+        <div id="retention-out" style="margin:6px 0;font-size:13px;color:var(--muted)"></div>
+        <div class="toplist" id="archive-list"></div>
+      </div>
       <div class="tool danger" style="grid-column: 1 / -1;">
         <h3>⚠ Danger zone — forget an agent</h3>
         <p class="hint">Permanently deletes EVERY memory owned by the agent id, all links touching them, and its recall profile. This cannot be undone.</p>
@@ -545,6 +557,7 @@ async function loadDashboard() {
   $("d-links").textContent = data.links;
   $("d-pinned").textContent = data.pinned;
   $("d-expired").textContent = data.expired;
+  $("d-archived").textContent = data.archived;
   fillBars("d-scope", data.by_scope, (scope) => SCOPE_COLORS[scope]);
   fillBars("d-type", data.by_type, null);
   fillBars("d-relations", data.by_relation, null);
@@ -1091,6 +1104,45 @@ $("btn-link").addEventListener("click", async () => {
     toast("Linked.", "ok"); loadStats();
   } catch (e) { toast(e.message, "err"); }
 });
+
+async function refreshArchive() {
+  const list = $("archive-list");
+  try {
+    const data = await api("/api/archive?limit=5");
+    list.innerHTML = "";
+    if (!data.archived.length) { list.appendChild(el("span", "sm", "Archive is empty.")); return; }
+    for (const item of data.archived) {
+      const row = el("div", "toprow");
+      row.appendChild(el("span", "cnt", item.archive_reason));
+      row.appendChild(el("span", "sm", item.summary));
+      const restoreBtn = el("button", "ghost", "restore");
+      restoreBtn.style.cssText = "font-size:11px;padding:2px 10px;flex:0 0 auto";
+      restoreBtn.addEventListener("click", async () => {
+        try {
+          await api("/api/archive/" + item.id + "/restore", { method: "POST" });
+          toast("Restored — expiry cleared, decay clock restarted.", "ok");
+          refreshArchive(); loadStats(); loadDashboard(); browseLoaded = false;
+        } catch (e) { toast(e.message, "err"); }
+      });
+      row.appendChild(restoreBtn);
+      list.appendChild(row);
+    }
+  } catch (e) { /* tools tab may load before auth */ }
+}
+
+async function runRetention(halfLives) {
+  const out = $("retention-out");
+  out.textContent = "Running…";
+  try {
+    const params = halfLives ? "?decayed_half_lives=" + halfLives : "";
+    const result = await api("/api/retention" + params, { method: "POST" });
+    out.textContent = result.archived_expired + " expired and " + result.archived_decayed + " decayed memories archived.";
+    refreshArchive(); loadStats(); loadDashboard(); browseLoaded = false;
+  } catch (e) { out.textContent = ""; toast(e.message, "err"); }
+}
+$("btn-retention").addEventListener("click", () => runRetention(null));
+$("btn-retention-decay").addEventListener("click", () => runRetention($("retention-halflives").value));
+refreshArchive();
 
 $("btn-purge").addEventListener("click", async () => {
   const owner = $("purge-owner").value.trim();

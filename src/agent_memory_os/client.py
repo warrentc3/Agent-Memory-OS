@@ -9,7 +9,7 @@ import json
 from .candidates import CandidateProvider
 from .cache import LRUCache
 from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
-from .db import MemoryStore
+from .db import MemoryStore, RETENTION_MIN_HALF_LIVES
 from .schema import MemoryLink, MemoryRecord, RecallProfile, SearchResult
 
 class MemoryClient:
@@ -22,6 +22,7 @@ class MemoryClient:
         resonance_hops: int = 1,
         profile: RecallProfile | None = None,
         check_same_thread: bool = True,
+        semantic: str | None = None,
     ):
         home_path = Path(home or os.getenv("AGENT_MEMORY_HOME", "~/.agent-memory")).expanduser()
         self.home = home_path
@@ -31,6 +32,20 @@ class MemoryClient:
             resonance_hops=resonance_hops,
             check_same_thread=check_same_thread,
         )
+        self.semantic_enabled = False
+        if semantic == "auto":
+            # Out-of-the-box semantic recall: hashing embedder + self-syncing
+            # turbovec index. Degrades silently when the backend isn't
+            # installed — lexical/resonance recall still works.
+            from .providers.turbovec import semantic_backend_available
+
+            if semantic_backend_available():
+                from .embedding import AutoSemanticIndex
+
+                self.store.candidate_providers.append(AutoSemanticIndex(self.store))
+                self.semantic_enabled = True
+        elif semantic is not None:
+            raise ValueError('semantic must be "auto" or None')
         self.profile = profile
         self.cache: LRUCache[tuple, object] = LRUCache(max_items=cache_items)
         self._profile_cache: dict[str, RecallProfile | None] = {}
@@ -63,6 +78,28 @@ class MemoryClient:
         self._profile_cache.pop(owner, None)
         self.cache.clear()
         return result
+
+    def run_retention(
+        self, *, decayed_half_lives: float | None = RETENTION_MIN_HALF_LIVES
+    ) -> dict[str, int]:
+        """Archive expired (and optionally deeply-decayed) memories.
+
+        `decayed_half_lives=None` (or 0) archives expired memories only.
+        """
+        result = self.store.run_retention(decayed_half_lives=decayed_half_lives)
+        self.cache.clear()
+        return result
+
+    def list_archived(self, *, limit: int = 20, offset: int = 0) -> list[dict[str, object]]:
+        return self.store.list_archived(limit=limit, offset=offset)
+
+    def restore_archived(self, memory_id: str) -> MemoryRecord:
+        restored = self.store.restore_archived(memory_id)
+        self.cache.clear()
+        return restored
+
+    def integrity_check(self) -> dict[str, object]:
+        return self.store.integrity_check()
 
     def dashboard_stats(self) -> dict[str, object]:
         return self.store.dashboard_stats() | {"cache_items": len(self.cache)}

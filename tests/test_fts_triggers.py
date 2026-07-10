@@ -49,6 +49,9 @@ def test_legacy_broken_triggers_are_migrated(tmp_path):
         END;
         """
     )
+    # A genuinely legacy database predates the migration record, so drop it
+    # too — migrations are forward-only and run once per database.
+    conn.execute("DELETE FROM schema_migrations WHERE version = 2")
     conn.commit()
     client.close()
 

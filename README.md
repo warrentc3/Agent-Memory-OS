@@ -109,21 +109,33 @@ AgentMemoryOS uses **two storage layers with strictly different authority**:
   ACL/expiry hard gates before its content can be used, and the index can be
   dropped and rebuilt at any time without touching the truth store.
 
-To activate semantic recall, supply an embedding function and wire the
-provider in:
+Semantic recall works out of the box:
 
 ```python
-from agent_memory_os.providers.turbovec import TurbovecSemanticCandidateProvider
-
-provider = TurbovecSemanticCandidateProvider.from_vectors(
-    vectors=embeddings,                      # one row per memory, any embedder
-    external_id_by_memory_id=id_mapping,     # stable memory_id -> uint64
-    embed_query=embed,                       # str -> vector, same embedder
-)
-client = MemoryClient(home="~/.agent-memory", candidate_providers=[provider])
+client = MemoryClient(home="~/.agent-memory", semantic="auto")
 ```
 
-`agent-memory doctor` confirms the turbovec backend is importable.
+`semantic="auto"` wires in a self-syncing turbovec index over a built-in
+deterministic hashing embedder (no model downloads; typo- and
+morphology-tolerant lexical vectors). The index rebuilds itself whenever the
+memories table changes and degrades silently to lexical + resonance recall
+when the backend isn't installed. For deeper semantics, plug any embedding
+model into `TurbovecSemanticCandidateProvider.from_vectors(...)` with your
+own `embed_query`. `agent-memory doctor` confirms the backend is importable.
+
+## Memory lifecycle & retention
+
+```bash
+agent-memory retention               # archive expired + memories idle 4+ half-lives
+agent-memory retention --half-lives 0   # expired only
+agent-memory check                   # SQLite + FTS + link-graph integrity
+```
+
+Archived memories leave recall entirely but stay restorable (Web UI → Tools →
+Retention & archive, or `POST /api/archive/{id}/restore`). Pinned and
+authority-track memories are never archived by decay. Databases self-migrate
+through a versioned, forward-only migration table (`agent-memory check`
+reports the schema version).
 
 ## Backup & restore
 

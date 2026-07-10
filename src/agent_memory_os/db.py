@@ -99,6 +99,73 @@ AUTO_LINK_LIMIT = 5
 CONSOLIDATION_MIN_CLUSTER_WEIGHT = 0.6
 CONSOLIDATION_MIN_ACTIVATIONS = 3
 CONSOLIDATION_MIN_CLUSTER_SIZE = 3
+RETENTION_MIN_HALF_LIVES = 4.0
+
+
+def _migration_decay_columns(conn: sqlite3.Connection) -> None:
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(memories)")}
+    columns = {
+        "decay_policy": "TEXT NOT NULL DEFAULT 'exponential'",
+        "decay_half_life_days": "REAL NOT NULL DEFAULT 30.0",
+        "last_accessed_at": "TEXT",
+        "access_count": "INTEGER NOT NULL DEFAULT 0",
+        "pinned": "INTEGER NOT NULL DEFAULT 0",
+    }
+    for name, definition in columns.items():
+        if name not in existing:
+            conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {definition}")
+
+
+def _migration_fix_fts_triggers(conn: sqlite3.Connection) -> None:
+    # Legacy AFTER UPDATE/DELETE triggers used the FTS5 'delete' command,
+    # which is invalid on regular FTS5 tables and raised 'SQL logic error'
+    # on every update_content()/delete().
+    rows = conn.execute(
+        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name IN ('memories_ad', 'memories_au')"
+    ).fetchall()
+    broken = [row["name"] for row in rows if "'delete'" in (row["sql"] or "")]
+    if not broken:
+        return
+    for name in broken:
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+    conn.executescript(SCHEMA)
+
+
+def _migration_archive_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memories_archive (
+          id TEXT PRIMARY KEY,
+          owner TEXT NOT NULL,
+          scope TEXT NOT NULL,
+          type TEXT NOT NULL,
+          content TEXT NOT NULL,
+          summary TEXT NOT NULL,
+          tags TEXT NOT NULL DEFAULT '[]',
+          visibility TEXT NOT NULL DEFAULT '[]',
+          source TEXT NOT NULL DEFAULT '{}',
+          confidence REAL NOT NULL DEFAULT 0.8,
+          importance REAL NOT NULL DEFAULT 0.5,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          expires_at TEXT,
+          decay_policy TEXT NOT NULL DEFAULT 'exponential',
+          decay_half_life_days REAL NOT NULL DEFAULT 30.0,
+          last_accessed_at TEXT,
+          access_count INTEGER NOT NULL DEFAULT 0,
+          pinned INTEGER NOT NULL DEFAULT 0,
+          archived_at TEXT NOT NULL,
+          archive_reason TEXT NOT NULL
+        )
+        """
+    )
+
+
+MIGRATIONS: list[tuple[int, str, object]] = [
+    (1, "decay and reinforcement columns", _migration_decay_columns),
+    (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
+    (3, "cold archive table", _migration_archive_table),
+]
 
 
 class MemoryStore:
@@ -128,43 +195,70 @@ class MemoryStore:
         self.conn.execute("PRAGMA busy_timeout=5000")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
-        self._ensure_decay_columns()
-        self._ensure_valid_fts_triggers()
+        self._run_migrations()
         self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
 
-    def _ensure_decay_columns(self) -> None:
-        existing = {row["name"] for row in self.conn.execute("PRAGMA table_info(memories)")}
-        columns = {
-            "decay_policy": "TEXT NOT NULL DEFAULT 'exponential'",
-            "decay_half_life_days": "REAL NOT NULL DEFAULT 30.0",
-            "last_accessed_at": "TEXT",
-            "access_count": "INTEGER NOT NULL DEFAULT 0",
-            "pinned": "INTEGER NOT NULL DEFAULT 0",
+    # ------------------------------------------------------------------ #
+    # Schema migrations: forward-only, versioned, recorded per database.
+    # Each migration must be idempotent (it may run once against databases
+    # created before the migrations table existed).
+    # ------------------------------------------------------------------ #
+
+    def _run_migrations(self) -> None:
+        self.conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+              version INTEGER PRIMARY KEY,
+              description TEXT NOT NULL,
+              applied_at TEXT NOT NULL
+            )
+            """
+        )
+        applied = {
+            row["version"] for row in self.conn.execute("SELECT version FROM schema_migrations")
         }
-        for name, definition in columns.items():
-            if name not in existing:
-                self.conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {definition}")
+        for version, description, migrate in MIGRATIONS:
+            if version in applied:
+                continue
+            migrate(self.conn)
+            self.conn.execute(
+                "INSERT INTO schema_migrations(version, description, applied_at) VALUES (?, ?, ?)",
+                (version, description, utc_now()),
+            )
 
-    def _ensure_valid_fts_triggers(self) -> None:
-        """Replace legacy FTS triggers that used the FTS5 'delete' command.
+    def schema_version(self) -> int:
+        row = self.conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+        return int(row[0] or 0)
 
-        The 'delete' command is only valid for external-content/contentless
-        FTS5 tables; on this regular FTS5 table it raises 'SQL logic error' on
-        every UPDATE/DELETE. Databases created before the fix keep the broken
-        triggers because SCHEMA uses CREATE TRIGGER IF NOT EXISTS.
+    def integrity_check(self) -> dict[str, object]:
+        """Verify the database and the store's own invariants.
+
+        Returns per-check results; `ok` is the conjunction. Read-only.
         """
-        rows = self.conn.execute(
-            "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name IN ('memories_ad', 'memories_au')"
-        ).fetchall()
-        broken = [row["name"] for row in rows if "'delete'" in (row["sql"] or "")]
-        if not broken:
-            return
-        for name in broken:
-            self.conn.execute(f"DROP TRIGGER IF EXISTS {name}")
-        self.conn.executescript(SCHEMA)
+        checks: dict[str, object] = {}
+        pragma = self.conn.execute("PRAGMA integrity_check").fetchone()[0]
+        checks["sqlite_integrity"] = pragma == "ok"
+        total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+        indexed = self.conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0]
+        checks["fts_in_sync"] = indexed == total
+        checks["fts_rows"] = {"memories": int(total), "indexed": int(indexed)}
+        orphan_edges = self.conn.execute(
+            """
+            SELECT COUNT(*) FROM memory_links l
+            WHERE NOT EXISTS (SELECT 1 FROM memories m WHERE m.id = l.src_id)
+               OR NOT EXISTS (SELECT 1 FROM memories m WHERE m.id = l.dst_id)
+            """
+        ).fetchone()[0]
+        checks["orphan_links"] = int(orphan_edges)
+        checks["links_valid"] = orphan_edges == 0
+        checks["schema_version"] = self.schema_version()
+        checks["ok"] = bool(
+            checks["sqlite_integrity"] and checks["fts_in_sync"] and checks["links_valid"]
+        )
+        return checks
 
     def add(self, record: MemoryRecord) -> MemoryRecord:
         record.summary = record.normalized_summary()
@@ -422,6 +516,25 @@ class MemoryStore:
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
+    def semantic_corpus(self) -> list[tuple[int, str, str]]:
+        """(rowid, memory_id, embeddable text) for every memory — the auto
+        semantic indexer's rebuild source. rowid doubles as the uint64
+        external id; full rebuilds make rowid reuse after deletes harmless."""
+        rows = self.conn.execute(
+            "SELECT rowid AS rid, id, content, summary, tags FROM memories"
+        ).fetchall()
+        return [
+            (int(row["rid"]), row["id"], f"{row['content']}\n{row['summary']}\n{row['tags']}")
+            for row in rows
+        ]
+
+    def semantic_signature(self) -> tuple:
+        """Cheap change signature used to decide when the auto index rebuilds."""
+        row = self.conn.execute(
+            "SELECT COUNT(*), COALESCE(MAX(rowid), 0), COALESCE(MAX(updated_at), '') FROM memories"
+        ).fetchone()
+        return (int(row[0]), int(row[1]), row[2])
+
     def graph_snapshot(
         self,
         *,
@@ -639,6 +752,108 @@ class MemoryStore:
             ).fetchall()
         }
         return [memory_id for memory_id in ordered if memory_id in visible]
+
+    _MEMORY_COLUMNS = (
+        "id, owner, scope, type, content, summary, tags, visibility, source, "
+        "confidence, importance, created_at, updated_at, expires_at, "
+        "decay_policy, decay_half_life_days, last_accessed_at, access_count, pinned"
+    )
+
+    def run_retention(
+        self, *, decayed_half_lives: float | None = RETENTION_MIN_HALF_LIVES
+    ) -> dict[str, int]:
+        """Move expired (and optionally deeply-decayed) memories to cold archive.
+
+        Archived memories leave active recall entirely but stay restorable.
+        Pinned and authority-track records are never archived by decay; only a
+        hard expiry can retire them.
+        """
+        now = utc_now()
+        expired = self._archive_where(
+            "expires_at IS NOT NULL AND expires_at <= ?", [now], reason="expired"
+        )
+        decayed = 0
+        if decayed_half_lives and decayed_half_lives > 0:
+            decayed = self._archive_where(
+                """
+                pinned = 0 AND decay_policy != 'none'
+                AND NOT (COALESCE(json_extract(source, '$.permanence'), 0) = 1
+                         AND COALESCE(json_extract(source, '$.weight'), 0) >= 10)
+                AND (julianday(?) - julianday(COALESCE(last_accessed_at, updated_at)))
+                    > (? * decay_half_life_days)
+                """,
+                [now, float(decayed_half_lives)],
+                reason="decayed",
+            )
+        return {"archived_expired": expired, "archived_decayed": decayed}
+
+    def _archive_where(self, where_sql: str, params: list[object], *, reason: str) -> int:
+        rows = self.conn.execute(
+            f"SELECT id FROM memories WHERE {where_sql}", params
+        ).fetchall()
+        ids = [row["id"] for row in rows]
+        if not ids:
+            return 0
+        now = utc_now()
+        placeholders = ",".join("?" for _ in ids)
+        self.conn.execute(
+            f"""
+            INSERT OR REPLACE INTO memories_archive
+            SELECT {self._MEMORY_COLUMNS}, ?, ? FROM memories WHERE id IN ({placeholders})
+            """,
+            [now, reason, *ids],
+        )
+        self.conn.execute(
+            f"DELETE FROM memory_links WHERE src_id IN ({placeholders}) OR dst_id IN ({placeholders})",
+            [*ids, *ids],
+        )
+        self.conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", ids)
+        self.conn.commit()
+        return len(ids)
+
+    def list_archived(self, *, limit: int = 20, offset: int = 0) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT * FROM memories_archive ORDER BY archived_at DESC, rowid DESC LIMIT ? OFFSET ?",
+            (max(1, limit), max(0, offset)),
+        ).fetchall()
+        return [
+            {
+                "id": row["id"], "owner": row["owner"], "scope": row["scope"],
+                "type": row["type"], "content": row["content"], "summary": row["summary"],
+                "archived_at": row["archived_at"], "archive_reason": row["archive_reason"],
+            }
+            for row in rows
+        ]
+
+    def restore_archived(self, memory_id: str) -> MemoryRecord:
+        """Bring an archived memory back into active recall.
+
+        The original expiry is cleared — restoring an expired memory that
+        stays expired would be a no-op — and updated_at restarts the decay
+        clock, because a human decision to restore IS a relevance signal.
+        """
+        row = self.conn.execute(
+            "SELECT * FROM memories_archive WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(memory_id)
+        now = utc_now()
+        self.conn.execute(
+            f"""
+            INSERT INTO memories({self._MEMORY_COLUMNS})
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["id"], row["owner"], row["scope"], row["type"], row["content"],
+                row["summary"], row["tags"], row["visibility"], row["source"],
+                row["confidence"], row["importance"], row["created_at"], now,
+                None, row["decay_policy"], row["decay_half_life_days"],
+                row["last_accessed_at"], row["access_count"], row["pinned"],
+            ),
+        )
+        self.conn.execute("DELETE FROM memories_archive WHERE id = ?", (memory_id,))
+        self.conn.commit()
+        return self.get(memory_id)
 
     def purge_owner(self, owner: str) -> dict[str, int]:
         """Delete every memory owned by `owner`, plus all links touching them.
@@ -1519,7 +1734,9 @@ class MemoryStore:
             "stale_links": int(stale_links),
             "top_hubs": top_hubs,
         }
+        archived = self.conn.execute("SELECT COUNT(*) FROM memories_archive").fetchone()[0]
         return base | {
+            "archived": int(archived),
             "graph_health": graph_health,
             "pinned": int(pinned),
             "expired": int(expired),
