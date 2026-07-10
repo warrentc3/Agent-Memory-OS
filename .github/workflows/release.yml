@@ -15,7 +15,7 @@ jobs:
       - name: Run test suite before publishing
         run: |
           python -m pip install --upgrade pip
-          pip install -e '.[dev,api]' numpy httpx
+          pip install -e '.[dev,api,semantic]' httpx
           pytest
       - name: Build distributions
         run: |

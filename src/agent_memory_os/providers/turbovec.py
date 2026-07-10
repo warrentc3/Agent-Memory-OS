@@ -11,13 +11,21 @@ from agent_memory_os.candidates import Candidate
 UINT64_MAX = (1 << 64) - 1
 
 
+def _load_numpy() -> Any:
+    """Load numpy lazily; constructing a provider with an injected index only
+    needs numpy, never the turbovec backend itself."""
+    import numpy as np  # type: ignore[import-not-found]
+
+    return np
+
+
 def _load_optional_dependencies() -> tuple[Any, type]:
     """Load optional semantic dependencies lazily.
 
     The base package must remain importable without numpy/turbovec. Only users
-    who explicitly construct/build the provider need the optional extra.
+    who explicitly build a real turbovec index need the optional extra.
     """
-    import numpy as np  # type: ignore[import-not-found]
+    np = _load_numpy()
     from turbovec import IdMapIndex  # type: ignore[import-not-found]
 
     return np, IdMapIndex
@@ -49,7 +57,7 @@ class TurbovecSemanticCandidateProvider:
 
     def __post_init__(self) -> None:
         if self._np is None:
-            self._np = _load_optional_dependencies()[0]
+            self._np = _load_numpy()
         self.external_id_to_memory_id = self._validate_external_to_memory_map(self.external_id_to_memory_id)
 
     @classmethod
@@ -111,7 +119,7 @@ class TurbovecSemanticCandidateProvider:
         if limit <= 0:
             return []
 
-        np = self._np if self._np is not None else _load_optional_dependencies()[0]
+        np = self._np if self._np is not None else _load_numpy()
         query_vector = np.ascontiguousarray([self.embed_query(query)], dtype=np.float32)
         allowlist = None
         if allowed_external_ids is not None:
