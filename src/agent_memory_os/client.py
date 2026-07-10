@@ -57,6 +57,13 @@ class MemoryClient:
         self.cache.clear()
         return updated
 
+    def purge_owner(self, owner: str) -> dict[str, int]:
+        """Permanently delete all of an owner's memories, links, and profile."""
+        result = self.store.purge_owner(owner)
+        self._profile_cache.pop(owner, None)
+        self.cache.clear()
+        return result
+
     def dashboard_stats(self) -> dict[str, object]:
         return self.store.dashboard_stats() | {"cache_items": len(self.cache)}
 

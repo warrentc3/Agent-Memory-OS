@@ -324,3 +324,35 @@ def test_web_api_dashboard(tmp_path):
     assert len(data["activity"]) == 14
     assert data["activity"][-1]["count"] == 2
     assert data["top_recalled"][0]["id"] == a["id"]
+
+
+def test_web_api_purge_owner_requires_exact_confirmation(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    kept = client.post(
+        "/api/memories", json={"content": "Neo memory stays.", "owner": "neo", "visibility": ["global"]}
+    ).json()
+    doomed_a = client.post(
+        "/api/memories", json={"content": "Mizuki memory one.", "owner": "mizuki", "visibility": ["global"]}
+    ).json()
+    doomed_b = client.post(
+        "/api/memories", json={"content": "Mizuki memory two.", "owner": "mizuki", "visibility": []}
+    ).json()
+    client.post("/api/links", json={"src_id": doomed_a["id"], "dst_id": kept["id"]})
+    client.post("/api/links", json={"src_id": doomed_a["id"], "dst_id": doomed_b["id"]})
+
+    # No / wrong confirmation → refused, nothing deleted
+    assert client.delete("/api/owners/mizuki/memories").status_code == 400
+    assert client.delete("/api/owners/mizuki/memories", params={"confirm": "MIZUKI"}).status_code == 400
+    assert client.get("/api/stats").json()["total"] == 3
+
+    response = client.delete("/api/owners/mizuki/memories", params={"confirm": "mizuki"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["memories_deleted"] == 2
+    assert payload["links_deleted"] == 2
+    stats = client.get("/api/stats").json()
+    assert stats["total"] == 1 and stats["links"] == 0
+    assert client.get(f"/api/memories/{kept['id']}").status_code == 200
+    assert client.get(f"/api/memories/{doomed_a['id']}").status_code == 404

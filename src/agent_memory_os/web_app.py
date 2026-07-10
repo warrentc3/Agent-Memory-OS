@@ -275,6 +275,22 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         with lock:
             return client.dashboard_stats()
 
+    @app.delete("/api/owners/{owner}/memories")
+    def purge_owner(owner: str, confirm: str = Query(default="")) -> dict[str, Any]:
+        # Destructive and unscoped by id: the caller must retype the exact
+        # owner as confirmation so a stray click can never wipe an agent.
+        if confirm != owner:
+            raise HTTPException(
+                status_code=400,
+                detail="confirmation mismatch: pass ?confirm=<owner> with the exact owner id",
+            )
+        with lock:
+            try:
+                result = client.purge_owner(owner)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"owner": owner} | result
+
     @app.delete("/api/memories/{memory_id}")
     def delete_memory(memory_id: str) -> dict[str, Any]:
         with lock:

@@ -639,6 +639,31 @@ class MemoryStore:
         }
         return [memory_id for memory_id in ordered if memory_id in visible]
 
+    def purge_owner(self, owner: str) -> dict[str, int]:
+        """Delete every memory owned by `owner`, plus all links touching them.
+
+        This is the right-to-forget / agent-retirement operation. It is
+        deliberately owner-exact (no wildcard) and returns counts so callers
+        can surface what was destroyed.
+        """
+        if not owner or not owner.strip():
+            raise ValueError("owner must be non-empty")
+        owner = owner.strip()
+        links_removed = self.conn.execute(
+            """
+            DELETE FROM memory_links
+            WHERE src_id IN (SELECT id FROM memories WHERE owner = ?)
+               OR dst_id IN (SELECT id FROM memories WHERE owner = ?)
+            """,
+            (owner, owner),
+        ).rowcount
+        memories_removed = self.conn.execute(
+            "DELETE FROM memories WHERE owner = ?", (owner,)
+        ).rowcount
+        self.conn.execute("DELETE FROM recall_profiles WHERE agent_id = ?", (owner,))
+        self.conn.commit()
+        return {"memories_deleted": int(memories_removed), "links_deleted": int(links_removed)}
+
     def rebuild_indexes(self) -> dict[str, int]:
         """Rebuild disposable retrieval indexes from authoritative memories."""
         self.conn.executescript(

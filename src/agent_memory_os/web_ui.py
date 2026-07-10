@@ -210,6 +210,10 @@ PAGE = r"""<!doctype html>
     box-shadow: var(--shadow); font-size: 12.5px; pointer-events: none; z-index: 5;
   }
   .graphhint { font-size: 12.5px; color: var(--muted); margin-top: 10px; }
+  .tool.danger { border-color: color-mix(in srgb, var(--bad) 45%, var(--border)); }
+  .tool.danger h3 { color: var(--bad); }
+  button.dangerbtn { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 55%, var(--border)); flex: 0 0 auto; }
+  button.dangerbtn:hover { background: var(--bad); border-color: var(--bad); color: #fff; }
   .tiles { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 16px; }
   .tile {
     background: var(--panel); border: 1px solid var(--border); border-radius: 16px;
@@ -421,6 +425,15 @@ PAGE = r"""<!doctype html>
         <p class="hint">Merge exact duplicates and synthesize strongly co-recalled clusters into concept memories. Visibility boundaries are never crossed.</p>
         <button class="ghost" id="btn-consolidate">Run consolidation</button>
         <div id="consolidate-out" style="margin-top:10px;font-size:13px;color:var(--muted)"></div>
+      </div>
+      <div class="tool danger" style="grid-column: 1 / -1;">
+        <h3>⚠ Danger zone — forget an agent</h3>
+        <p class="hint">Permanently deletes EVERY memory owned by the agent id, all links touching them, and its recall profile. This cannot be undone.</p>
+        <div class="row">
+          <input id="purge-owner" type="text" placeholder="agent / owner id (e.g. mizuki)">
+          <button class="ghost dangerbtn" id="btn-purge">Delete all memories</button>
+        </div>
+        <div id="purge-out" style="margin-top:6px;font-size:13px;color:var(--muted)"></div>
       </div>
     </div>
   </section>
@@ -1043,6 +1056,28 @@ $("btn-link").addEventListener("click", async () => {
       }),
     });
     toast("Linked.", "ok"); loadStats();
+  } catch (e) { toast(e.message, "err"); }
+});
+
+$("btn-purge").addEventListener("click", async () => {
+  const owner = $("purge-owner").value.trim();
+  const out = $("purge-out");
+  if (!owner) { toast("Enter an agent / owner id first.", "err"); return; }
+  const typed = prompt(
+    "This permanently deletes ALL memories, links and the recall profile of “" + owner + "”.\n\n" +
+    "Type the agent id again to confirm:"
+  );
+  if (typed === null) return;
+  if (typed.trim() !== owner) { toast("Confirmation did not match — nothing was deleted.", "err"); return; }
+  try {
+    const result = await api(
+      "/api/owners/" + encodeURIComponent(owner) + "/memories?confirm=" + encodeURIComponent(owner),
+      { method: "DELETE" }
+    );
+    out.textContent = result.memories_deleted + " memories and " + result.links_deleted + " links deleted for “" + owner + "”.";
+    toast("Agent “" + owner + "” forgotten.", "ok");
+    $("purge-owner").value = "";
+    loadStats(); loadDashboard(); browseLoaded = false;
   } catch (e) { toast(e.message, "err"); }
 });
 
