@@ -387,3 +387,25 @@ Enforcement and invariants:
   (`Z` and `+00:00` resolve to the same instant); a same-instant conflict is
   broken deterministically by content, so two nodes converge on the same winner
   instead of diverging.
+
+## v0.11.1 Review hardening (batches 2–3)
+
+Closes findings D5–D15 of the v0.10.0 review. Two schema additions:
+
+- **Migration 10 — `memory_links_archive`**: cold-archiving a memory now copies
+  its association edges here (no FK — an endpoint may itself be archived);
+  `restore_archived` re-attaches every edge whose other endpoint is live again,
+  so restore is lossless instead of returning a degree-0 node.
+- **Migration 11 — `memories.decay_base_half_life_days`**: the configured base a
+  memory's half-life was created with (or last explicitly set to). Feedback
+  tuning scales THIS, so an explicit `decay_half_life_days` is never clobbered
+  back to the type default.
+
+Behavioural fixes (no schema): authority-track scoring fuses raw lexical
+relevance (no double-applied metadata); the de-identified-share copy never
+carries the owner's id or tags; `approx_tokens` is CJK-aware; the web token is
+written 0600 atomically; a `supersedes`-only pair is never given a `co_recalled`
+edge; the team-ACL cache has a 30 s TTL; `/api/sync/run` never holds the app
+lock across peer HTTP; the orchestrator lets a cap-dropped section hit fall
+through to the task section; and a partial `agents.toml` entry preserves the
+console-set fields it doesn't mention.

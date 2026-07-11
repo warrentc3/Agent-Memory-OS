@@ -4,10 +4,10 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [0.11.1] — unreleased
+## [0.11.1] — 2026-07-11
 
-Correctness, ranking, and privacy fixes — review batch 2 (findings D5, D7, D8,
-D10, D12, D13, D14 of `docs/reviews/20260711-v0.10.0-review.md`).
+Correctness, ranking, and privacy fixes — review batches 2 and 3, closing every
+remaining finding (D5–D15) of `docs/reviews/20260711-v0.10.0-review.md`.
 
 - **Ranking (D5)**: the authority (bedrock) track no longer double-applies
   importance/confidence/freshness — it fuses raw lexical relevance, so a
@@ -26,6 +26,18 @@ D10, D12, D13, D14 of `docs/reviews/20260711-v0.10.0-review.md`).
   a `co_recalled` edge over a pair joined only by `supersedes`.
 - **Team-ACL cache TTL (D8)**: cross-process membership changes are picked up
   within 30s instead of persisting until restart.
+- **Configured decay base (D6, migration 11)**: feedback tuning scales the
+  memory's configured half-life (default-for-type, or a value you set), so an
+  explicit `decay_half_life_days` is no longer clobbered on every retention pass.
+- **Sync no longer freezes the server (D9)**: `/api/sync/run` passes the shared
+  lock instead of holding it — DB access stays serialized, but a slow/unreachable
+  peer's HTTP round-trip never blocks other requests.
+- **Orchestrator fallthrough (D11)**: a top hit claimed by the warnings/procedures
+  section but dropped by that section's token cap now falls through to the task
+  section instead of vanishing from the pack.
+- **agents.toml partial entries (D15)**: re-applying a `[agents.<id>]` table that
+  sets only some fields keeps the console-set values for the rest, instead of
+  resetting them to defaults on every open.
 
 ## [0.11.0] — 2026-07-11
 

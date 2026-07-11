@@ -95,6 +95,83 @@ def test_supersedes_pair_gets_no_corecall_colink(tmp_path):
     assert "supersedes" in relations
 
 
+def test_custom_half_life_survives_feedback_tuning(tmp_path):
+    """D6: feedback scales the CONFIGURED base, not the type default."""
+    client = MemoryClient(home=tmp_path)
+    # 'note' type-base is 30d; user pins 365d.
+    m = client.add("note with a custom half-life", type="note",
+                   visibility=["global"], decay_half_life_days=365.0)
+    client.record_recall([m.id], helpful=True, requester_agent_id="x")
+    client.run_retention()
+    tuned = client.get(m.id).decay_half_life_days
+    assert tuned > 300, f"custom base clobbered to type default: {tuned}"
+
+    # A default-created memory still tunes from its type base (unchanged behaviour).
+    d = client.add("default fact", type="fact", visibility=["global"])  # base 90
+    for _ in range(8):
+        client.record_recall([d.id], helpful=True, requester_agent_id="x")
+    client.run_retention()
+    assert client.get(d.id).decay_half_life_days == 270.0  # 90*sqrt(9)
+
+
+def test_orchestrator_falls_back_dropped_section_hit_to_task(tmp_path):
+    """D11: a warning-type top hit that doesn't fit the warnings cap still
+    appears in the task section instead of vanishing."""
+    client = MemoryClient(home=tmp_path)
+    # ~34 tokens: over the 14% warnings cap (~18) but within the 46% task cap
+    # (+surplus) at max_tokens=128.
+    big = "deployment outage rollback " * 5
+    w = client.add(big + " zqx", type="warning", visibility=["global"])
+
+    result = client.orchestrate_context("deployment rollback zqx",
+                                        requester_agent_id="neo", max_tokens=128)
+    placed = {mid for sec in result.sections.values() for mid in sec.get("memory_ids", [])}
+    assert w.id in placed, "the dropped warning hit should reappear in task"
+
+
+def test_agents_toml_reapply_preserves_unspecified_fields(tmp_path):
+    """D15: a partial agents.toml entry keeps console-set metadata."""
+    from agent_memory_os.agents_config import apply_agents_config
+    client = MemoryClient(home=tmp_path)
+    client.register_agent("cc-main", kind="claude-code",
+                          display_name="Claude Code", notes="primary dev agent",
+                          teams=["apollo"])
+
+    # A file that only pins teams must not wipe display_name/notes/kind.
+    (tmp_path / "agents.toml").write_text(
+        '[agents.cc-main]\nteams = ["apollo", "ops"]\n', encoding="utf-8"
+    )
+    apply_agents_config(client.store, tmp_path)
+
+    agent = client.store.get_agent("cc-main")
+    assert agent["display_name"] == "Claude Code"
+    assert agent["notes"] == "primary dev agent"
+    assert agent["kind"] == "claude-code"
+    assert set(agent["teams"]) == {"apollo", "ops"}
+
+
+def test_sync_all_peers_accepts_a_lock(tmp_path, monkeypatch):
+    """D9: sync runs with the shared lock passed in (held only around DB ops)."""
+    import threading
+
+    from agent_memory_os import sync as sync_module
+
+    client = MemoryClient(home=tmp_path)
+    client.add("local global", owner="a", visibility=["global"])
+    client.store.add_peer("http://peer:8000", policy="shared")
+    lock = threading.Lock()
+
+    def fake_http(url, *, token, post=None):
+        # The app lock must NOT be held while we're out doing HTTP.
+        assert lock.acquire(blocking=False), "lock held across peer HTTP"
+        lock.release()
+        return '{"kind": "bundle", "version": 2}\n' if post is None else "{}"
+
+    monkeypatch.setattr(sync_module, "_http", fake_http)
+    results = sync_module.sync_all_peers(client, lock=lock)
+    assert results and results[0]["ok"] is True
+
+
 def test_teams_cache_has_a_ttl(tmp_path):
     """D8: the team-ACL cache is time-bounded, not pinned until restart."""
     client = MemoryClient(home=tmp_path)

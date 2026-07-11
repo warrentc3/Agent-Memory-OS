@@ -22,8 +22,18 @@ every imported row records `source.synced_from`.
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
+
+
+def _guard(lock):
+    """Hold `lock` around a DB operation, or nothing when called single-threaded.
+
+    Peer HTTP round-trips must run OUTSIDE this so a slow/unreachable peer never
+    freezes every other request on a shared server connection.
+    """
+    return lock if lock is not None else nullcontext()
 
 BUNDLE_VERSION = 2
 _MEMORY_KEYS = (
@@ -325,8 +335,8 @@ def _export_kwargs_for_policy(policy: str) -> dict:
 
 
 def pull_from_peer(client, base_url: str, *, since: str | None = None,
-                   peer_token: str | None = None, trusted: bool = True) -> dict[str, int]:
-    """Fetch a peer's bundle over HTTP and merge it locally."""
+                   peer_token: str | None = None, trusted: bool = True, lock=None) -> dict[str, int]:
+    """Fetch a peer's bundle over HTTP (unlocked) and merge it locally (locked)."""
     import tempfile
 
     body = _http(base_url.rstrip("/") + "/api/sync/export"
@@ -334,19 +344,21 @@ def pull_from_peer(client, base_url: str, *, since: str | None = None,
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
         handle.write(body)
     try:
-        return client.import_bundle(handle.name, source_peer=base_url.rstrip("/"), trusted=trusted)
+        with _guard(lock):
+            return client.import_bundle(handle.name, source_peer=base_url.rstrip("/"), trusted=trusted)
     finally:
         Path(handle.name).unlink(missing_ok=True)
 
 
 def push_to_peer(client, base_url: str, *, since: str | None = None,
-                 peer_token: str | None = None, policy: str = "shared") -> dict[str, int]:
-    """Export the local bundle (scoped by `policy`) and merge it into a peer."""
+                 peer_token: str | None = None, policy: str = "shared", lock=None) -> dict[str, int]:
+    """Export the local bundle (locked) and POST it to a peer (unlocked)."""
     import tempfile
 
     export_kwargs = _export_kwargs_for_policy(policy)
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
-        client.export_bundle(handle.name, since=since, **export_kwargs)
+        with _guard(lock):
+            client.export_bundle(handle.name, since=since, **export_kwargs)
     try:
         payload = Path(handle.name).read_text(encoding="utf-8")
     finally:
@@ -356,28 +368,39 @@ def push_to_peer(client, base_url: str, *, since: str | None = None,
 
 
 def sync_with_peer(client, url: str, *, peer_token: str | None = None,
-                   policy: str = "shared") -> dict[str, object]:
+                   policy: str = "shared", lock=None) -> dict[str, object]:
     """Bidirectional converge with one peer: pull their bundle, push ours.
 
     `policy` scopes BOTH directions: what we push, and how far we trust what
     we pull ('full' == own trusted node, so imports may add global memories).
+    `lock`, when given, is held only around the local DB reads/writes, never
+    across the peer HTTP round-trips.
     """
     trusted = policy == "full"
-    pulled = pull_from_peer(client, url, peer_token=peer_token, trusted=trusted)
-    pushed = push_to_peer(client, url, peer_token=peer_token, policy=policy)
+    pulled = pull_from_peer(client, url, peer_token=peer_token, trusted=trusted, lock=lock)
+    pushed = push_to_peer(client, url, peer_token=peer_token, policy=policy, lock=lock)
     return {"peer": url, "pulled": pulled, "pushed": pushed, "ok": True}
 
 
-def sync_all_peers(client) -> list[dict[str, object]]:
-    """Converge with every registered peer; failures are per-peer, not fatal."""
+def sync_all_peers(client, *, lock=None) -> list[dict[str, object]]:
+    """Converge with every registered peer; failures are per-peer, not fatal.
+
+    Pass `lock` (the server's shared-client lock) so DB access is serialized
+    without the lock being held across any peer's HTTP round-trip.
+    """
     results: list[dict[str, object]] = []
-    for peer in client.store.list_peers():
+    with _guard(lock):
+        peers = client.store.list_peers()
+    for peer in peers:
         url = peer["url"]
+        with _guard(lock):
+            token = client.store.peer_token(url)
         try:
             result = sync_with_peer(
                 client, url,
-                peer_token=client.store.peer_token(url),
+                peer_token=token,
                 policy=peer.get("policy", "shared"),
+                lock=lock,
             )
             summary = (
                 f"ok +{result['pulled']['memories_added']}/"

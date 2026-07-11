@@ -260,6 +260,19 @@ def _migration_federation_trust(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_decay_base(conn: sqlite3.Connection) -> None:
+    # The half-life a memory was configured with (default-for-type, or a value
+    # the user set). Feedback tuning scales THIS, so an explicit half-life is
+    # no longer clobbered back to the type default on the next retention pass.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
+    if "decay_base_half_life_days" not in cols:
+        conn.execute("ALTER TABLE memories ADD COLUMN decay_base_half_life_days REAL")
+        conn.execute(
+            "UPDATE memories SET decay_base_half_life_days = decay_half_life_days "
+            "WHERE decay_base_half_life_days IS NULL"
+        )
+
+
 def _migration_archive_links(conn: sqlite3.Connection) -> None:
     # Cold-archive the association edges alongside the memory, so restore
     # brings a memory back with its graph instead of at degree 0. No FK to
@@ -294,6 +307,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (8, "agent registry with team memberships", _migration_agents_registry),
     (9, "federation trust: peer policy + tombstones", _migration_federation_trust),
     (10, "archive association edges for lossless restore", _migration_archive_links),
+    (11, "configured decay base half-life", _migration_decay_base),
 ]
 
 
@@ -395,15 +409,16 @@ class MemoryStore:
             """
             INSERT INTO memories(id, owner, scope, type, content, summary, tags, visibility, source,
                                  confidence, importance, created_at, updated_at, expires_at,
-                                 decay_policy, decay_half_life_days, last_accessed_at, access_count, pinned)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 decay_policy, decay_half_life_days, decay_base_half_life_days,
+                                 last_accessed_at, access_count, pinned)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id, record.owner, record.scope, record.type, record.content, record.summary,
                 record.tags_json(), record.visibility_json(), record.source_json(),
                 record.confidence, record.importance, record.created_at, record.updated_at, record.expires_at,
-                record.decay_policy, record.decay_half_life_days, record.last_accessed_at,
-                record.access_count, int(record.pinned),
+                record.decay_policy, record.decay_half_life_days, record.decay_half_life_days,
+                record.last_accessed_at, record.access_count, int(record.pinned),
             ),
         )
         self.conn.commit()
@@ -482,6 +497,12 @@ class MemoryStore:
                 existing.decay_half_life_days, existing.updated_at, memory_id,
             ),
         )
+        if "decay_half_life_days" in fields:
+            # An explicit half-life edit sets a new configured base for tuning.
+            self.conn.execute(
+                "UPDATE memories SET decay_base_half_life_days = ? WHERE id = ?",
+                (existing.decay_half_life_days, memory_id),
+            )
         self.conn.commit()
         return existing
 
@@ -1228,12 +1249,18 @@ class MemoryStore:
         proven helpful forget slower; memories that misled forget faster.
         """
         rows = self.conn.execute(
-            "SELECT id, type, decay_half_life_days, helpful_count, unhelpful_count "
+            "SELECT id, type, decay_half_life_days, decay_base_half_life_days, "
+            "helpful_count, unhelpful_count "
             "FROM memories WHERE decay_policy != 'none' AND (helpful_count > 0 OR unhelpful_count > 0)"
         ).fetchall()
         tuned = 0
         for row in rows:
-            base = DEFAULT_DECAY_HALF_LIFE_DAYS.get(row["type"], 30.0)
+            # Scale the memory's CONFIGURED base (default-for-type unless the
+            # user set an explicit half-life), never the bare type default —
+            # otherwise a custom half-life is clobbered on every retention pass.
+            base = row["decay_base_half_life_days"]
+            if base is None:
+                base = DEFAULT_DECAY_HALF_LIFE_DAYS.get(row["type"], 30.0)
             multiplier = math.sqrt((1 + row["helpful_count"]) / (1 + row["unhelpful_count"]))
             multiplier = min(4.0, max(0.5, multiplier))
             new_half_life = round(min(730.0, max(7.0, base * multiplier)), 2)

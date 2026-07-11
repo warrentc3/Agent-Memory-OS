@@ -149,15 +149,14 @@ def orchestrate_context(
         return picked
 
     buckets: dict[str, list[str]] = {name: [] for name in SECTION_ORDER}
+    # The task bucket is built AFTER warnings/procedures actually emit: a record
+    # claimed by take_type but dropped by its section's token cap must still be
+    # eligible for the task section (which has the largest share + surplus),
+    # rather than vanishing from the pack entirely.
     bucket_records: dict[str, list] = {
         "bedrock": bedrock,
         "warnings": take_type("warning"),
         "procedures": take_type("procedure"),
-        "task": [
-            result.record
-            for result in task_results
-            if result.record.id not in placed and result.record.id not in seen
-        ],
     }
 
     session_lines: list[str] = []
@@ -207,7 +206,17 @@ def orchestrate_context(
     for name in ("bedrock", "warnings", "procedures"):
         records = bucket_records[name]
         emit(name, [_line(record) for record in records], [record.id for record in records], caps[name])
-    task_records = bucket_records["task"]
+
+    # Only records that were ACTUALLY emitted above are excluded from task —
+    # anything a higher section claimed but couldn't fit falls through here.
+    emitted_ids = {record.id for record in bedrock}
+    for name in ("warnings", "procedures"):
+        emitted_ids.update(sections.get(name, {}).get("memory_ids", []))
+    task_records = [
+        result.record
+        for result in task_results
+        if result.record.id not in emitted_ids and result.record.id not in seen
+    ]
     emit(
         "task",
         [_line(record) for record in task_records],

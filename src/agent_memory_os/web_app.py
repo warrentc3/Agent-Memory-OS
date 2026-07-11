@@ -387,8 +387,9 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def sync_run() -> dict[str, Any]:
         from .sync import sync_all_peers
 
-        with lock:
-            return {"results": sync_all_peers(client)}
+        # Pass the lock instead of holding it: DB access is serialized, but a
+        # slow/unreachable peer's HTTP round-trip never freezes other requests.
+        return {"results": sync_all_peers(client, lock=lock)}
 
     @app.get("/api/sync/export")
     def sync_export(since: str | None = None) -> Any:

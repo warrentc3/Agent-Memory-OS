@@ -64,6 +64,12 @@ def load_agents_config(home: str | Path | None) -> list[dict]:
                 "kind": str(fields.get("kind", "custom")),
                 "teams": [str(team) for team in teams],
                 "notes": str(fields.get("notes", "")),
+                # Which fields the file actually set — apply overrides only
+                # these, so a partial entry never wipes console-set metadata.
+                "_specified": {
+                    name for name in ("display_name", "kind", "teams", "notes")
+                    if name in fields
+                },
             }
         )
     return entries
@@ -87,12 +93,20 @@ def apply_agents_config(store, home: str | Path | None) -> list[str]:
             )
     applied: list[str] = []
     for entry in entries:
+        # Fields the file didn't set keep the existing (console-set) value
+        # instead of being reset to a default on every open.
+        existing = store.get_agent(entry["id"]) or {}
+        specified = entry["_specified"]
+
+        def field(name, default):
+            return entry[name] if name in specified else existing.get(name, default)
+
         store.register_agent(
             entry["id"],
-            display_name=entry["display_name"],
-            kind=entry["kind"],
-            teams=entry["teams"],
-            notes=entry["notes"],
+            display_name=field("display_name", ""),
+            kind=field("kind", "custom"),
+            teams=field("teams", []),
+            notes=field("notes", ""),
         )
         applied.append(entry["id"])
     return applied
