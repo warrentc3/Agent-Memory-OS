@@ -269,7 +269,7 @@ Alpha (`0.2.x`). The core contracts above are implemented and covered by the tes
 - **[User Guide](docs/USER_GUIDE.md)** — concepts, full CLI / HTTP API / MCP references, multi-agent and federation walkthroughs, ops checklist
 - **[Docker guide](docs/DOCKER.md)** — `docker`/`docker compose` startup, config via env, two-node sync mesh
 - [SPEC](SPEC.md) — contracts and invariants, by milestone
-- **[Validation Plan](docs/VALIDATION_PLAN.md)** & **[latest validation report](docs/reports/20260711-v0.11.1-validation-report.md)** — gate matrix, reproducible harness (`scripts/validation_run.py`), measured results
+- **[Validation Plan](docs/VALIDATION_PLAN.md)** & **[latest validation report](docs/reports/20260711-v0.13.0-validation-report.md)** — gate matrix, reproducible harness (`scripts/validation_run.py`), measured results
 - **[Security & code review (v0.10.0)](docs/reviews/20260711-v0.10.0-review.md)** — six-angle audit, fixes applied, and the federation-hardening follow-ups
 - [CHANGELOG](CHANGELOG.md) · [Roadmap](docs/ROADMAP.md) · [Integration guides](docs/integrations/claude-code.md)
 

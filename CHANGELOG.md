@@ -4,7 +4,7 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [0.13.0] — unreleased
+## [0.13.0] — 2026-07-11
 
 **First-class Teams & Projects** (migration 13). Teams and projects are now
 real, manageable entities with explicit membership, so team-shared vs
