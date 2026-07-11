@@ -1,7 +1,7 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.yamantaka520/agent-memory-os",
-  "description": "Local-first memory engine for AI-agent teams: private/team/project ACL, associative recall, and federated sync. No LLM required.",
+  "description": "Local-first memory engine for AI-agent teams: team/project ACL, recall, and federated sync.",
   "repository": {
     "url": "https://github.com/yamantaka520/Agent-Memory-OS",
     "source": "github"

@@ -99,6 +99,8 @@ later with `agent-memory token show|rotate|disable`.
 
 ## Quickstart
 
+> Prefer a runnable script? [`examples/team_memory.py`](examples/team_memory.py) shows three agents sharing one store under a hard ACL in ~40 lines — `python examples/team_memory.py`.
+
 ```python
 from agent_memory_os import MemoryClient, RecallProfile
 

@@ -6,8 +6,24 @@ tagged on GitHub/GitLab.
 
 ## [Unreleased]
 
-Maturity pass for the 1.x line — docs, one opt-in feature, one guard. No changes
-to the core engine, so nothing above needs a release to keep working.
+Maturity pass for the 1.x line — docs, one opt-in feature, guards, and one fix.
+
+- **Fix (revocation staleness)**: the client's per-query recall cache was not
+  invalidated by team/project membership changes, so a removed member could keep
+  seeing a revoked team/project memory for a previously-run query until the cache
+  evicted it. `add/remove_team_member`, `add/remove_project_member`, and
+  `delete_team/delete_project` now clear the cache immediately (like
+  `register_agent` already did). Found while writing the runnable example; covered
+  by `tests/test_revocation_cache.py`.
+- **`examples/`**: a runnable `team_memory.py` — three agents share one store under
+  a hard ACL (private/team/project/global), a budgeted context pack, and instant
+  re-scoping on member removal. Self-asserting, so it doubles as a smoke test.
+- **MCP Registry manifest verified**: `server.json` is validated against the live
+  registry schema and a real stdio MCP handshake confirms
+  `python -m agent_memory_os.mcp_server` starts and lists the tools
+  (`tests/test_server_json_and_mcp.py`). Fixed an over-length `description` that
+  would have failed the registry publish.
+- **`CONTRIBUTING.md`** + issue/PR templates (security routed to private reporting).
 
 - **Importers** (`agent-memory import --from mem0|zep|chatgpt <export.json>`, and
   `agent_memory_os.importers.import_export`): best-effort migration from other
