@@ -73,7 +73,15 @@ pip install 'agent-memory-os[full]'    # 建議:全部(Web UI、MCP、turbovec)
 
 或挑選零件:`agent-memory-os`(核心,零依賴)、`[api]`(Web UI)、`[mcp]`(MCP server)、`[semantic]`(turbovec 向量召回)。
 
-**Docker:** `docker run -p 8000:8000 -v amos-data:/data yamantaka520/agent-memory-os`(預建、multi-arch)或 `docker compose up -d`。主控台在 http://localhost:8000,記憶持久化在 volume。詳見 [Docker 指南](docs/DOCKER.md)(Docker Hub 映像 + 雙節點同步 mesh)。
+**Docker:** 預建的 multi-arch 映像就是完整的 AgentMemoryOS(web console + MCP server + CLI);第一個參數決定模式:
+
+```bash
+docker run -p 8000:8000 -v amos-data:/data yamantaka520/agent-memory-os        # web console(預設)
+docker run -i --rm yamantaka520/agent-memory-os mcp                            # stdio MCP server
+docker run --rm -v amos-data:/data yamantaka520/agent-memory-os check          # 任何 CLI 指令
+```
+
+或 `docker compose up -d`。主控台在 http://localhost:8000,記憶持久化在 volume。詳見 [Docker 指南](docs/DOCKER.md)(Docker Hub 映像 + 雙節點同步 mesh)。
 
 需要 Python 3.11+ 且具備 SQLite FTS5(標準 CPython 建置皆內含)。
 
