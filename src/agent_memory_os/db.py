@@ -19,6 +19,7 @@ from .schema import (
     RecallProfile,
     SearchResult,
     utc_now,
+    utc_now_micro,
 )
 from .scoring import effective_score, freshness_factor, reinforcement_factor
 
@@ -404,6 +405,19 @@ def _migration_archive_links(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_acl_clock(conn: sqlite3.Connection) -> None:
+    # An ACL clock independent of updated_at. Sharing/revoking must NOT restart
+    # the freshness/decay clock, but it MUST still propagate over sync — the old
+    # code updated visibility without bumping any clock, so a revoke never
+    # reached peers (already-synced memory stayed visible). acl_updated_at gives
+    # visibility its own last-writer-wins timeline. Backfill = updated_at so
+    # existing rows converge unchanged.
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)")}
+    if "acl_updated_at" not in cols:
+        conn.execute("ALTER TABLE memories ADD COLUMN acl_updated_at TEXT")
+        conn.execute("UPDATE memories SET acl_updated_at = updated_at WHERE acl_updated_at IS NULL")
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -419,6 +433,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (12, "peer display name for sync identification", _migration_peer_name),
     (13, "first-class teams and projects with membership", _migration_teams_projects),
     (14, "federate org structure: versioning + tombstones + audit", _migration_org_federation),
+    (15, "acl clock so share/revoke propagate over sync", _migration_acl_clock),
 ]
 
 
@@ -519,15 +534,16 @@ class MemoryStore:
         self.conn.execute(
             """
             INSERT INTO memories(id, owner, scope, type, content, summary, tags, visibility, source,
-                                 confidence, importance, created_at, updated_at, expires_at,
+                                 confidence, importance, created_at, updated_at, acl_updated_at, expires_at,
                                  decay_policy, decay_half_life_days, decay_base_half_life_days,
                                  last_accessed_at, access_count, pinned)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id, record.owner, record.scope, record.type, record.content, record.summary,
                 record.tags_json(), record.visibility_json(), record.source_json(),
-                record.confidence, record.importance, record.created_at, record.updated_at, record.expires_at,
+                record.confidence, record.importance, record.created_at, record.updated_at,
+                record.updated_at, record.expires_at,
                 record.decay_policy, record.decay_half_life_days, record.decay_half_life_days,
                 record.last_accessed_at, record.access_count, int(record.pinned),
             ),
@@ -1028,6 +1044,31 @@ class MemoryStore:
             (agent_id,),
         ).fetchall()
         return [r[0] for r in rows]
+
+    def suggested_peer_policy(self, agent_id: str) -> dict[str, object]:
+        """Advisory: the tightest sync policy that still covers what an agent is
+        entitled to, derived from local membership. The MANUAL policy set on a
+        peer remains the enforced upper bound (see sync org_scope) — this only
+        ever *narrows* a suggestion, never widens access:
+
+        - member of exactly one team and no narrower project -> 'team:<id>'
+        - member of exactly one project                      -> 'project:<id>'
+        - member of nothing                                  -> 'shared'
+        - multiple teams/projects (not expressible as one scope) -> 'shared',
+          with the full entitlement list returned so an operator can choose.
+
+        Returns {policy, teams, projects}. Never returns 'full' (that is a
+        deliberate own-replica choice, not something to infer).
+        """
+        teams = self.teams_for(agent_id)
+        projects = self.projects_for(agent_id)
+        if len(projects) == 1 and not (len(teams) > 1):
+            policy = f"project:{projects[0]}"
+        elif len(teams) == 1 and not projects:
+            policy = f"team:{teams[0]}"
+        else:
+            policy = "shared"
+        return {"policy": policy, "teams": teams, "projects": projects}
 
     # ---------- team management ----------
 
@@ -1798,10 +1839,13 @@ class MemoryStore:
 
         Sharing/revoking is not a content edit, so it must not restart the
         freshness or decay-archival clock (same discipline as record_recall).
+        It DOES bump acl_updated_at — the independent ACL clock sync uses to
+        propagate the grant change to peers (so a revoke actually retracts
+        already-synced access instead of staying local).
         """
         self.conn.execute(
-            "UPDATE memories SET visibility = ? WHERE id = ?",
-            (json.dumps(visibility, ensure_ascii=False), memory_id),
+            "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
+            (json.dumps(visibility, ensure_ascii=False), utc_now_micro(), memory_id),
         )
         self.conn.commit()
 

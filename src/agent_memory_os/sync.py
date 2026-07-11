@@ -38,10 +38,13 @@ def _guard(lock):
 BUNDLE_VERSION = 3
 _MEMORY_KEYS = (
     "id", "owner", "scope", "type", "content", "summary", "tags", "visibility",
-    "source", "confidence", "importance", "created_at", "updated_at",
+    "source", "confidence", "importance", "created_at", "updated_at", "acl_updated_at",
     "expires_at", "decay_policy", "decay_half_life_days", "last_accessed_at",
     "access_count", "pinned", "helpful_count", "unhelpful_count",
 )
+# Keys that carry the memory's ACL, merged on the independent acl_updated_at
+# clock rather than the content updated_at clock.
+_ACL_KEYS = ("visibility", "acl_updated_at")
 _LINK_KEYS = (
     "src_id", "dst_id", "relation", "weight", "created_at", "updated_at",
     "last_activated_at", "activation_count", "source",
@@ -151,8 +154,10 @@ def export_bundle(
     counts = {"memories": 0, "links": 0, "profiles": 0, "tombstones": 0}
     clauses, params = [], []
     if since:
-        clauses.append("updated_at > ?")
-        params.append(since)
+        # A pure ACL change (share/revoke) bumps acl_updated_at, not updated_at,
+        # so an incremental export must ship it too.
+        clauses.append("(updated_at > ? OR COALESCE(acl_updated_at, updated_at) > ?)")
+        params.extend([since, since])
     if team:
         clauses.append(
             "(EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)"
@@ -332,7 +337,8 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
         return
 
     existing = store.conn.execute(
-        "SELECT updated_at, content FROM memories WHERE id = ?", (entry["id"],)
+        "SELECT updated_at, content, visibility, acl_updated_at FROM memories WHERE id = ?",
+        (entry["id"],),
     ).fetchone()
 
     if not trusted:
@@ -346,26 +352,49 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
         entry = dict(entry)
         entry["source"] = _tag_source(entry.get("source"), source_peer)
 
-    columns = ", ".join(_MEMORY_KEYS)
-    placeholders = ", ".join("?" for _ in _MEMORY_KEYS)
+    # Old bundles (pre-ACL-clock) carry no acl_updated_at; treat it as the
+    # content clock so they behave exactly as before.
+    inc_acl = _norm_ts(entry.get("acl_updated_at") or entry.get("updated_at"))
+
     if existing is None:
+        columns = ", ".join(_MEMORY_KEYS)
+        placeholders = ", ".join("?" for _ in _MEMORY_KEYS)
+        row = dict(entry)
+        row["acl_updated_at"] = entry.get("acl_updated_at") or entry.get("updated_at")
         store.conn.execute(
             f"INSERT INTO memories({columns}) VALUES ({placeholders})",
-            [entry.get(key) for key in _MEMORY_KEYS],
+            [row.get(key) for key in _MEMORY_KEYS],
         )
         stats["memories_added"] += 1
-    elif _incoming_wins(
+        return
+
+    changed = False
+    # (1) Content fields — merged on updated_at (never overwrite the ACL here).
+    if _incoming_wins(
         entry.get("updated_at"), entry.get("content") or "",
         existing["updated_at"], existing["content"] or "",
     ):
-        assignments = ", ".join(f"{key} = ?" for key in _MEMORY_KEYS if key != "id")
+        content_keys = [k for k in _MEMORY_KEYS if k not in _ACL_KEYS and k != "id"]
+        assignments = ", ".join(f"{key} = ?" for key in content_keys)
         store.conn.execute(
             f"UPDATE memories SET {assignments} WHERE id = ?",
-            [entry.get(key) for key in _MEMORY_KEYS if key != "id"] + [entry["id"]],
+            [entry.get(key) for key in content_keys] + [entry["id"]],
         )
-        stats["memories_updated"] += 1
-    else:
-        stats["memories_skipped"] += 1
+        changed = True
+    # (2) ACL — merged on the INDEPENDENT acl_updated_at clock, so a revoke or a
+    # re-share propagates even when the content is otherwise unchanged, and a
+    # newer local ACL is never clobbered by an older incoming one.
+    ex_acl = _norm_ts(existing["acl_updated_at"] or existing["updated_at"])
+    if inc_acl > ex_acl or (
+        inc_acl == ex_acl and (entry.get("visibility") or "") > (existing["visibility"] or "")
+    ):
+        store.conn.execute(
+            "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
+            (entry.get("visibility"), entry.get("acl_updated_at") or entry.get("updated_at"),
+             entry["id"]),
+        )
+        changed = True
+    stats["memories_updated" if changed else "memories_skipped"] += 1
 
 
 def _tag_source(source, peer: str | None) -> str:

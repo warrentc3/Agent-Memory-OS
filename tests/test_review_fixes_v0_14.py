@@ -165,6 +165,70 @@ def test_delete_team_strips_bare_team_grant(tmp_path):
     assert "team" not in vis  # bare grant stripped; a reused id X can't resurrect access
 
 
+# ---- B: revocation (and re-share) propagate over sync via the ACL clock ----
+
+def test_revoke_share_propagates_over_sync(tmp_path):
+    """A post-hoc revoke must retract already-synced access on the peer — without
+    restarting the content/decay clock — and a later re-share must converge back."""
+    src = MemoryClient(home=tmp_path / "src")
+    dst = MemoryClient(home=tmp_path / "dst")
+    src.store.register_agent("owner")
+    src.store.create_team("t"); src.store.add_team_member("t", "owner")
+    m = src.add("secret", owner="owner", visibility=["team:t", "global"])
+
+    b1 = tmp_path / "b1.jsonl"; export_bundle(src.store, b1)
+    import_bundle(dst.store, str(b1), org_scope="full")
+    assert set(json.loads(_vis(dst, m.id))) == {"team:t", "global"}
+
+    src.store.revoke_share(m.id, actor="owner", to_team="t")
+    b2 = tmp_path / "b2.jsonl"; export_bundle(src.store, b2)
+    import_bundle(dst.store, str(b2), org_scope="full")
+    assert set(json.loads(_vis(dst, m.id))) == {"global"}          # revoke reached the peer
+    assert src.store.get(m.id).updated_at == dst.store.get(m.id).updated_at  # decay clock intact
+
+    src.store.share_memory(m.id, actor="owner", to_team="t")
+    b3 = tmp_path / "b3.jsonl"; export_bundle(src.store, b3)
+    import_bundle(dst.store, str(b3), org_scope="full")
+    assert "team:t" in json.loads(_vis(dst, m.id))                  # re-share converges back
+
+
+def test_older_acl_change_does_not_clobber_newer_local(tmp_path):
+    """ACL LWW: an incoming visibility with an OLDER acl clock must not overwrite
+    a newer local ACL (independent of the content clock)."""
+    a = MemoryClient(home=tmp_path / "a")
+    a.store.register_agent("o")
+    m = a.add("x", owner="o", visibility=["global"])
+    # Export the original (older ACL) state.
+    b_old = tmp_path / "old.jsonl"; export_bundle(a.store, b_old)
+    # Locally tighten to private (newer ACL clock).
+    a.store.revoke_share(m.id, actor="o", to_agent=None) if False else a.store._set_visibility(m.id, [])
+    # Re-importing the OLD bundle must NOT resurrect the "global" grant.
+    import_bundle(a.store, str(b_old), org_scope="full")
+    assert json.loads(_vis(a, m.id)) == []
+
+
+def _vis(client, mem_id):
+    return client.store.conn.execute(
+        "SELECT visibility FROM memories WHERE id = ?", (mem_id,)).fetchone()[0]
+
+
+def test_suggested_peer_policy_derivation(tmp_path):
+    c = MemoryClient(home=tmp_path)
+    for a in ("solo", "multi", "proj", "none"):
+        c.store.register_agent(a)
+    c.store.create_team("t1"); c.store.create_team("t2")
+    c.store.add_team_member("t1", "solo")                      # one team -> team:t1
+    c.store.add_team_member("t1", "multi"); c.store.add_team_member("t2", "multi")  # two -> shared
+    c.store.add_team_member("t1", "proj"); c.store.create_project("p1", "t1")
+    c.store.add_project_member("p1", "proj")                   # one project -> project:p1
+    assert c.store.suggested_peer_policy("solo")["policy"] == "team:t1"
+    assert c.store.suggested_peer_policy("multi")["policy"] == "shared"
+    assert c.store.suggested_peer_policy("proj")["policy"] == "project:p1"
+    assert c.store.suggested_peer_policy("none")["policy"] == "shared"
+    # It is advisory only and never 'full'.
+    assert c.store.suggested_peer_policy("multi")["policy"] != "full"
+
+
 # ---- web push leg is untrusted and cannot mutate org structure ----
 
 def test_web_push_import_rejects_org_mutation(tmp_path):

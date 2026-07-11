@@ -13,6 +13,14 @@ def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def utc_now_micro() -> str:
+    """Microsecond-resolution UTC timestamp for clocks that must order events
+    within the same second (e.g. the ACL clock: a create then a revoke in one
+    second must still sort revoke-after-create). Sorts correctly against
+    second-resolution stamps: '…00+00:00' < '…00.5+00:00' because '+' < '.'."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 def new_memory_id() -> str:
     return "mem_" + uuid.uuid4().hex
 
