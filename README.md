@@ -2,7 +2,23 @@
   <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/agent-memory-os-logo-integrated-v2.png" alt="Agent Memory OS" width="560">
 </p>
 
+<p align="center">
+  <a href="https://pypi.org/project/agent-memory-os/"><img src="https://img.shields.io/pypi/v/agent-memory-os?color=4F46E5" alt="PyPI"></a>
+  <a href="https://pypi.org/project/agent-memory-os/"><img src="https://img.shields.io/pypi/pyversions/agent-memory-os" alt="Python"></a>
+  <a href="https://github.com/yamantaka520/Agent-Memory-OS/actions"><img src="https://img.shields.io/github/actions/workflow/status/yamantaka520/Agent-Memory-OS/ci.yml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://hub.docker.com/r/yamantaka520/agent-memory-os"><img src="https://img.shields.io/docker/pulls/yamantaka520/agent-memory-os?color=2496ED&logo=docker&logoColor=white" alt="Docker Pulls"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="README.zh-Hant.md">繁體中文</a>
+</p>
+
 A **local-first memory system for AI-agent teams** — not just giving one agent a memory, but a shared memory fabric for a *fleet* of agents working together: private, team, and project-scoped memories behind a hard ACL, associative recall, and federated sync that keeps a mesh of nodes (and their org structure) in agreement. One SQLite file, zero required dependencies, Apache-2.0.
+
+<p align="center">
+  <a href="#why">Why</a> · <a href="#how-it-compares">Compare</a> · <a href="#install">Install</a> · <a href="#quickstart">Quickstart</a> · <a href="#features">Features</a> · <a href="#federation-multi-host-sync">Federation</a> · <a href="#web-ui">Web&nbsp;UI</a> · <a href="docs/USER_GUIDE.md">User&nbsp;Guide</a>
+</p>
 
 ## Why
 
@@ -27,6 +43,29 @@ Real work happens in **teams of agents** — a project might mix Claude Code, Co
 - **Per-agent recall profiles** — different agent personas weight memory types differently (an engineer leans on `procedure`, a companion on `preference`); profiles persist in the database and re-weight ranking only, never bypassing ACL.
 - **Memory lifecycle** — exponential/linear decay, pinning, hard expiry, and a write-side `consolidate()` pass that merges duplicates and synthesizes strongly co-recalled clusters into concept memories.
 - **Optional sidecars** — semantic vector candidates (turbovec), MCP server, and a FastAPI Web UI, all behind extras; every candidate rejoins SQLite and passes hard gates before use.
+
+## How it compares
+
+Most agent-memory systems optimize for LLM-driven extraction at hosted scale.
+AgentMemoryOS optimizes for a different point: **local-first, team-scoped, and
+federated** — memory you run yourself, shared across a fleet under a hard ACL.
+This is a *positioning* comparison (architecture, not a benchmark); verify each
+row against the projects' current docs.
+
+| | **AgentMemoryOS** | Mem0 | Zep / Graphiti |
+|---|---|---|---|
+| **Run it** | One SQLite file, `pip install` | Self-host (configure LLM + vector DB) or hosted | Zep Cloud, or self-host Graphiti on Neo4j/FalkorDB |
+| **Core needs an LLM** | **No** (FTS5 + optional local vectors) | Yes (LLM extraction, e.g. gpt-5-mini) | Yes (LLM builds the temporal graph) |
+| **External services** | **None required** | LLM API + vector store | Graph DB + LLM + embeddings (3+ systems to self-host) |
+| **Scope / ACL model** | Private / agent / **team / project** / global — hard gate before ranking | Per user / agent / session id | Per user / session graph |
+| **Cross-node federation** | **Yes** — memories *and* org structure converge; revocation propagates | Centralized store | Centralized (Cloud or your graph DB) |
+| **Built-in MCP server** | **Yes** | Via SDK | Via SDK |
+| **License / self-host** | Apache-2.0, fully OSS | OSS core; graph & advanced tiers paid | Community Edition deprecated; self-host = raw Graphiti |
+
+Mem0 and Zep are strong at LLM-based extraction and managed-scale retrieval —
+things AgentMemoryOS deliberately doesn't do. Reach for AgentMemoryOS when you
+want a dependency-light memory you own, shared correctly across a *team* of
+agents, that keeps working offline and syncs on your terms.
 
 ## Install
 
