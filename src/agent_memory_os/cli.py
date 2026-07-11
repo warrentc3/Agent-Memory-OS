@@ -7,6 +7,8 @@ from pathlib import Path
 from .client import MemoryClient
 from .golden_recall import evaluate_golden_queries, load_golden_query_cases
 from .hermes_importer import import_hermes_memory_files
+from .importers import SUPPORTED as IMPORT_SOURCES
+from .importers import import_export
 from .shadow_mode import summarize_shadow_log
 
 
@@ -45,6 +47,16 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--profile", required=True, help="Hermes profile name / AgentMemoryOS owner")
     imp.add_argument("--profile-home", required=True, help="Hermes profile home containing memories/MEMORY.md and USER.md")
     imp.add_argument("--json", action="store_true", help="Emit JSON report")
+
+    imp2 = sub.add_parser("import", help="Import an export from another memory system (mem0/zep/chatgpt)")
+    imp2.add_argument("--from", dest="source", required=True, choices=list(IMPORT_SOURCES),
+                      help="Source system")
+    imp2.add_argument("file", help="Path to the source's JSON export")
+    imp2.add_argument("--owner", default=None, help="Owner for imported memories (default: source name)")
+    imp2.add_argument("--visibility", default=None,
+                      help="Comma-separated visibility grants (default: private). e.g. global or team:apollo")
+    imp2.add_argument("--type", default="note", help="Memory type for imported records (default: note)")
+    imp2.add_argument("--json", action="store_true", help="Emit JSON report")
 
     shadow = sub.add_parser("shadow-summary", help="Summarize shadow-mode JSONL evidence")
     shadow.add_argument("--log", required=True, help="Path to agent_memory_os_shadow.jsonl")
@@ -932,6 +944,18 @@ def main(argv: list[str] | None = None) -> int:
                     f"profile={report.profile} scanned={report.scanned} inserted={report.inserted} "
                     f"updated={report.updated} skipped={report.skipped}"
                 )
+            return 0
+        if args.command == "import":
+            vis = [g.strip() for g in args.visibility.split(",") if g.strip()] if args.visibility else None
+            report = import_export(client, args.source, args.file, owner=args.owner,
+                                   visibility=vis, memory_type=args.type)
+            if args.json:
+                print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+            else:
+                print(f"source={report.source} scanned={report.scanned} inserted={report.inserted} "
+                      f"updated={report.updated} skipped={report.skipped}")
+                for w in report.warnings:
+                    print(f"  warning: {w}")
             return 0
     except (ValueError, KeyError) as exc:
         # Domain errors (e.g. subset violation, missing team/project) should
