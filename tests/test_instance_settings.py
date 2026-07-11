@@ -37,7 +37,8 @@ def test_client_exposes_node_name_from_settings(tmp_path):
 
 def test_find_available_port_skips_taken(tmp_path):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
-        taken.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Hold the port exclusively (no SO_REUSEADDR) so the probe must skip it
+        # on every platform, Windows included.
         taken.bind(("127.0.0.1", 0))
         taken.listen(1)
         busy_port = taken.getsockname()[1]

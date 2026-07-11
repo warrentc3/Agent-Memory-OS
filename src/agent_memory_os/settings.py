@@ -105,13 +105,19 @@ def update_instance_settings(
 
 
 def port_is_free(host: str, port: int) -> bool:
+    """True unless a server is already LISTENING on host:port.
+
+    Probes by attempting a connection rather than a bind. A bind test is wrong
+    two ways: with SO_REUSEADDR, Windows reports an in-use port as free; without
+    it, a just-vacated port lingering in TIME_WAIT (POSIX) reports as taken, so
+    a restarted server drifts off its usual port. `connect` sees only a live
+    listener — no listener (free port or TIME_WAIT) refuses the connection.
+    """
+    target = "127.0.0.1" if host in ("", "0.0.0.0", "::") else host
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, port))
-            return True
-        except OSError:
-            return False
+        sock.settimeout(0.3)
+        # connect_ex == 0 means the connection succeeded → something is listening.
+        return sock.connect_ex((target, port)) != 0
 
 
 def find_available_port(host: str, preferred: int, *, limit: int = 64) -> int:
