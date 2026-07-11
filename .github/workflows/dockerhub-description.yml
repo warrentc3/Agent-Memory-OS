@@ -1,0 +1,28 @@
+name: Sync Docker Hub description
+
+# Pushes docs/DOCKERHUB.md to the Docker Hub repository's Overview, and sets the
+# short description. Uses the same secrets as the image publish workflow:
+#   DOCKERHUB_USERNAME, DOCKERHUB_TOKEN
+#
+# Runs when the overview (or this workflow) changes on main, and on demand.
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/DOCKERHUB.md
+      - .github/workflows/dockerhub-description.yml
+  workflow_dispatch:
+
+jobs:
+  description:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: yamantaka520/agent-memory-os
+          short-description: "Local-first memory engine for AI-agent teams — SQLite core, federated sync, MCP + Web console."
+          readme-filepath: ./docs/DOCKERHUB.md
