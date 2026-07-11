@@ -4,6 +4,29 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.11.1] — unreleased
+
+Correctness, ranking, and privacy fixes — review batch 2 (findings D5, D7, D8,
+D10, D12, D13, D14 of `docs/reviews/20260711-v0.10.0-review.md`).
+
+- **Ranking (D5)**: the authority (bedrock) track no longer double-applies
+  importance/confidence/freshness — it fuses raw lexical relevance, so a
+  matching authority memory is scored once.
+- **Lossless archive/restore (D7, migration 10)**: archived memories keep their
+  association edges in a link archive; `restore_archived` re-attaches every edge
+  whose other endpoint is live again (was: restored at degree 0).
+- **De-identified share privacy (D10)**: the recipient-visible copy no longer
+  carries the owner's id in its audit row, and owner-identifying tags are dropped.
+- **CJK token estimate (D12)**: `approx_tokens` counts CJK codepoints at ~1
+  token each, so an orchestrated pack of Japanese/Chinese text no longer blows
+  the caller's real token budget 4–6×.
+- **Token file (D13)**: written 0600 atomically (no world-readable window, safe
+  concurrent rotate).
+- **Contradiction guard (D14)**: `record_recall(create_colinks=True)` never lays
+  a `co_recalled` edge over a pair joined only by `supersedes`.
+- **Team-ACL cache TTL (D8)**: cross-process membership changes are picked up
+  within 30s instead of persisting until restart.
+
 ## [0.11.0] — 2026-07-11
 
 **Federation trust model** (migration 9) — resolves review findings D1–D4.

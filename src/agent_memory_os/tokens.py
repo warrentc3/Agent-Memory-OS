@@ -34,8 +34,21 @@ def load_token(home: str | Path | None) -> str | None:
 def save_token(home: str | Path | None, token: str) -> Path:
     path = token_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(token + "\n", encoding="utf-8")
-    path.chmod(0o600)
+    # Write to a private temp file created 0600 from the start (no
+    # world-readable window between write and chmod), then atomically replace
+    # so a concurrent rotate can never expose or interleave a half-written
+    # token.
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, path)
+    if os.name == "posix":
+        path.chmod(0o600)  # ensure mode survives if the file pre-existed
     return path
 
 

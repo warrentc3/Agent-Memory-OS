@@ -9,6 +9,7 @@ import json
 import math
 import re
 import sqlite3
+import time
 
 from .candidates import Candidate, CandidateProvider
 from .schema import (
@@ -259,6 +260,29 @@ def _migration_federation_trust(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_archive_links(conn: sqlite3.Connection) -> None:
+    # Cold-archive the association edges alongside the memory, so restore
+    # brings a memory back with its graph instead of at degree 0. No FK to
+    # memories: an endpoint may itself be archived/absent.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS memory_links_archive (
+          src_id TEXT NOT NULL,
+          dst_id TEXT NOT NULL,
+          relation TEXT NOT NULL DEFAULT 'related_to',
+          weight REAL NOT NULL DEFAULT 0.5,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          last_activated_at TEXT,
+          activation_count INTEGER NOT NULL DEFAULT 0,
+          source TEXT NOT NULL DEFAULT '{}',
+          archived_at TEXT NOT NULL,
+          PRIMARY KEY (src_id, dst_id, relation)
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -269,6 +293,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (7, "federated sync peer registry", _migration_sync_peers),
     (8, "agent registry with team memberships", _migration_agents_registry),
     (9, "federation trust: peer policy + tombstones", _migration_federation_trust),
+    (10, "archive association edges for lossless restore", _migration_archive_links),
 ]
 
 
@@ -1117,7 +1142,11 @@ class MemoryStore:
                     )
                     if cur.rowcount > 0:
                         reinforced_links += cur.rowcount
-                    elif create_colinks:
+                    elif create_colinks and not self._pair_has_supersedes(src_id, dst_id):
+                        # A rowcount of 0 can also mean the only edge is a
+                        # supersedes (excluded above): never lay a co_recalled
+                        # edge over a contradiction, which would re-associate a
+                        # superseded memory and double-count it in resonance.
                         self.add_link(
                             MemoryLink(
                                 src_id=src_id,
@@ -1147,6 +1176,14 @@ class MemoryStore:
             "created_links": created_links,
             "weakened_links": weakened_links,
         }
+
+    def _pair_has_supersedes(self, a: str, b: str) -> bool:
+        row = self.conn.execute(
+            "SELECT 1 FROM memory_links WHERE relation = 'supersedes' AND "
+            "((src_id = ? AND dst_id = ?) OR (src_id = ? AND dst_id = ?)) LIMIT 1",
+            (a, b, b, a),
+        ).fetchone()
+        return row is not None
 
     def _recall_eligible_ids(
         self,
@@ -1240,16 +1277,21 @@ class MemoryStore:
                 content=scrubbed,
                 owner=to_team or "shared",
                 scope="team" if to_team else record.scope,
-                type=record.type,
-                tags=list(record.tags),
+                # Tags are dropped: they can carry owner-identifying labels that
+                # would defeat de-identification for the recipient.
+                tags=[],
                 visibility=[grant],
+                type=record.type,
                 source={"shared": "deidentified"},
                 confidence=record.confidence,
                 importance=record.importance,
             )
             self.add(copy)
+            # Provenance stays on the ORIGINAL memory's audit (owner-visible).
+            # The copy's audit — which the recipient CAN read — must not name
+            # the owner, or de-identification is defeated.
             self._audit(memory_id, actor, "share_deidentified", f"{grant} as {copy.id}")
-            self._audit(copy.id, actor, "created_from_share", "deidentified copy")
+            self._audit(copy.id, copy.owner, "created_from_share", "deidentified copy")
             return {"shared_as": copy.id, "grant": grant, "deidentified": True}
 
         if grant not in record.visibility:
@@ -1358,6 +1400,20 @@ class MemoryStore:
             """,
             [now, reason, *ids],
         )
+        # Preserve the edges so restore is lossless: copy every link touching
+        # an archived memory into the link archive, then delete from live.
+        self.conn.execute(
+            f"""
+            INSERT OR REPLACE INTO memory_links_archive
+              (src_id, dst_id, relation, weight, created_at, updated_at,
+               last_activated_at, activation_count, source, archived_at)
+            SELECT src_id, dst_id, relation, weight, created_at, updated_at,
+                   last_activated_at, activation_count, source, ?
+            FROM memory_links
+            WHERE src_id IN ({placeholders}) OR dst_id IN ({placeholders})
+            """,
+            [now, *ids, *ids],
+        )
         self.conn.execute(
             f"DELETE FROM memory_links WHERE src_id IN ({placeholders}) OR dst_id IN ({placeholders})",
             [*ids, *ids],
@@ -1408,6 +1464,31 @@ class MemoryStore:
             ),
         )
         self.conn.execute("DELETE FROM memories_archive WHERE id = ?", (memory_id,))
+        # Re-attach archived edges whose OTHER endpoint is live again. Edges to
+        # a still-archived memory stay parked until that one is restored too.
+        self.conn.execute(
+            """
+            INSERT OR IGNORE INTO memory_links
+              (src_id, dst_id, relation, weight, created_at, updated_at,
+               last_activated_at, activation_count, source)
+            SELECT la.src_id, la.dst_id, la.relation, la.weight, la.created_at,
+                   la.updated_at, la.last_activated_at, la.activation_count, la.source
+            FROM memory_links_archive la
+            WHERE (la.src_id = ? OR la.dst_id = ?)
+              AND EXISTS (SELECT 1 FROM memories WHERE id = la.src_id)
+              AND EXISTS (SELECT 1 FROM memories WHERE id = la.dst_id)
+            """,
+            (memory_id, memory_id),
+        )
+        self.conn.execute(
+            """
+            DELETE FROM memory_links_archive
+            WHERE (src_id = ? OR dst_id = ?)
+              AND EXISTS (SELECT 1 FROM memories WHERE id = memory_links_archive.src_id)
+              AND EXISTS (SELECT 1 FROM memories WHERE id = memory_links_archive.dst_id)
+            """,
+            (memory_id, memory_id),
+        )
         self.conn.commit()
         return self.get(memory_id)
 
@@ -1455,6 +1536,11 @@ class MemoryStore:
             self.conn.execute(
                 f"DELETE FROM memory_audit WHERE memory_id IN ({placeholders})",
                 owned_ids,
+            )
+            self.conn.execute(
+                f"DELETE FROM memory_links_archive WHERE src_id IN ({placeholders}) "
+                f"OR dst_id IN ({placeholders})",
+                owned_ids + owned_ids,
             )
         self.conn.execute("DELETE FROM recall_profiles WHERE agent_id = ?", (owner,))
         for mem_id in owned_ids:
@@ -1520,12 +1606,14 @@ class MemoryStore:
             now=now,
         )
         results: dict[str, SearchResult] = {}
+        raw_text_scores: dict[str, float] = {}
         for row in rows:
             # bm25() returns more-negative values for stronger matches; map to
             # (0.5, 1.0) so relevance rises with match strength instead of
             # inverting it.
             rank = min(float(row["rank"]), 0.0)
             text_score = (1.0 - rank) / (2.0 - rank)
+            raw_text_scores[row["id"]] = text_score
             result = self._score_row(row, text_score=text_score, now_dt=now_dt, reason_prefix="fts")
             results[result.record.id] = result
 
@@ -1543,7 +1631,10 @@ class MemoryStore:
         for row in authority_rows:
             source = json.loads(row["source"] or "{}")
             authority_weight = min(max(float(source.get("weight", 10.0)), 0.0), 10.0) / 10.0
-            text_component = results.get(row["id"]).score if row["id"] in results else 0.0
+            # Fuse the RAW lexical relevance (not the already-metadata-weighted
+            # FTS score) with authority weight, so _score_row applies
+            # importance/confidence/freshness exactly once.
+            text_component = raw_text_scores.get(row["id"], 0.0)
             fused_score = (text_component * 0.3) + (authority_weight * 0.7)
             result = self._score_row(
                 row,
@@ -2171,10 +2262,18 @@ class MemoryStore:
             params.extend([team_id, f"team:{team_id}"])
         where.append("(" + " OR ".join(acl_clauses) + ")")
 
+    # Team memberships are cached for one search's worth of ACL clauses. A
+    # membership change made through THIS store invalidates immediately; a
+    # change from another process/connection (WAL multi-writer) is picked up
+    # within this TTL instead of persisting until restart.
+    _TEAMS_CACHE_TTL_SECONDS = 30.0
+
     def _cached_teams_for(self, agent_id: str) -> list[str]:
         cache = getattr(self, "_teams_cache", None)
-        if cache is None:
+        now = time.monotonic()
+        if cache is None or now - getattr(self, "_teams_cache_at", 0.0) > self._TEAMS_CACHE_TTL_SECONDS:
             cache = self._teams_cache = {}
+            self._teams_cache_at = now
         if agent_id not in cache:
             cache[agent_id] = self.teams_for(agent_id)
         return cache[agent_id]

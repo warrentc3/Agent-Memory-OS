@@ -24,8 +24,24 @@ class ContextPackReport:
 
 
 def approx_tokens(text: str) -> int:
-    # Conservative, dependency-free approximation for MVP.
-    return max(1, (len(text) + 3) // 4)
+    # Dependency-free approximation. Latin-ish text averages ~4 chars/token,
+    # but CJK (and other dense scripts) tokenize at roughly 1 token per
+    # character, so counting the whole string at 4 chars/token undercounts a
+    # Japanese/Chinese pack 4-6x and blows the caller's real token budget.
+    # Count CJK codepoints at ~1 token each and the rest at 4 chars/token.
+    cjk = 0
+    for ch in text:
+        code = ord(ch)
+        if (
+            0x3040 <= code <= 0x30FF     # hiragana + katakana
+            or 0x3400 <= code <= 0x9FFF  # CJK unified ideographs (+ ext A)
+            or 0xAC00 <= code <= 0xD7A3  # hangul syllables
+            or 0xF900 <= code <= 0xFAFF  # CJK compatibility ideographs
+            or 0xFF00 <= code <= 0xFFEF  # fullwidth forms
+        ):
+            cjk += 1
+    other = len(text) - cjk
+    return max(1, cjk + (other + 3) // 4)
 
 
 def build_context_pack(results: list[SearchResult], *, max_tokens: int = 1200) -> str:
