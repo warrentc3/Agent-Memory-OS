@@ -276,9 +276,13 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         """Prometheus text-format operational metrics (aggregate counts only —
         no memory content, ids, or secrets). Unauthenticated by convention so a
         scraper needs no token; the values are non-sensitive totals."""
-        with lock:
-            scan = client.maintenance_scan()
-            peers = client.store.list_peers()
+        try:
+            with lock:
+                scan = client.maintenance_scan()
+                peers = client.store.list_peers()
+        except Exception as exc:  # noqa: BLE001 - a scrape endpoint must degrade, not 500
+            return Response(f"# metrics unavailable: {exc}\n",
+                            media_type="text/plain; version=0.0.4", status_code=503)
         teams = scan.get("teams", 0)
         projects = scan.get("projects", 0)
         # A peer whose last sync recorded an error is "unhealthy"; count them so

@@ -313,21 +313,40 @@ def _cmd_backup(args) -> int:
     return 0
 
 
+#: The live database and its WAL sidecars — rotation must NEVER delete these.
+_LIVE_DB_NAMES = frozenset({"memories.db", "memories.db-wal", "memories.db-shm"})
+
+
 def _rotate_backups(latest, *, keep: int) -> list:
-    """Keep only the `keep` newest backups that share `latest`'s name prefix in
-    its directory; delete the rest. The prefix is the destination stem up to its
-    first dot (so 'mem-2026-07-12.db' and 'mem-2026-07-11.db' rotate together but
-    an unrelated 'other.db' is never touched). Returns the paths removed."""
+    """Keep only the `keep` newest backups in `latest`'s rotation series; delete
+    the rest. Returns the paths removed.
+
+    A file is in the series only if its name is `<prefix><marker>` where prefix
+    is `latest`'s stem with its trailing datestamp removed and the marker begins
+    with a separator or digit — so `mem-2026-07-12.db` and `mem-2026-07-11.db`
+    rotate together while `memories.db` (marker 'ories…' starts with a letter) is
+    excluded. The live database and its WAL sidecars are ALSO excluded by name as
+    a hard backstop, so rotation can never delete the database it backs up.
+    """
+    import re
     from pathlib import Path
 
     latest = Path(latest)
-    prefix = latest.name.split(".", 1)[0].rstrip("0123456789-_")
+    prefix = re.sub(r"[-_0-9]+$", "", latest.stem)  # strip trailing date-ish chars
     if not prefix:
         return []
-    siblings = [
-        p for p in latest.parent.glob(f"{prefix}*")
-        if p.is_file() and p.suffix == latest.suffix
-    ]
+    siblings = []
+    for p in latest.parent.glob(f"{prefix}*"):
+        if not p.is_file() or p.suffix != latest.suffix:
+            continue
+        if p.name in _LIVE_DB_NAMES:
+            continue
+        marker = p.name[len(prefix):]
+        # Require the char after the prefix to be a separator or digit so a mere
+        # name-prefix collision (memories.db vs prefix 'mem') is never matched.
+        if not re.match(r"[-_.0-9]", marker):
+            continue
+        siblings.append(p)
     # Newest first by mtime; keep the first `keep`, remove the rest.
     siblings.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     removed = []

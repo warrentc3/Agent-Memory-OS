@@ -229,6 +229,75 @@ def test_suggested_peer_policy_derivation(tmp_path):
     assert c.store.suggested_peer_policy("multi")["policy"] != "full"
 
 
+# ---- v1.0 final-review fixes ----
+
+def test_untrusted_peer_cannot_escalate_visibility(tmp_path):
+    """An untrusted peer may SHRINK visibility (propagate a revoke) but never
+    WIDEN it — no re-classifying a team-scoped memory as global."""
+    src = MemoryClient(home=tmp_path / "src")
+    dst = MemoryClient(home=tmp_path / "dst")
+    src.store.register_agent("owner")
+    m = src.add("scoped secret", owner="owner", visibility=["team:x"])
+    b1 = tmp_path / "b1.jsonl"; export_bundle(src.store, b1)
+    import_bundle(dst.store, str(b1), org_scope="full")  # dst now has it as team:x
+
+    # Forge a bundle that escalates to global with a far-future ACL clock.
+    forged = tmp_path / "forge.jsonl"
+    _write_bundle(forged, {
+        "kind": "memory", "id": m.id, "owner": "owner", "scope": "user",
+        "type": "note", "content": "scoped secret", "summary": "", "tags": "[]",
+        "visibility": "[\"global\"]", "source": "{}", "confidence": 0.8, "importance": 0.5,
+        "created_at": m.created_at, "updated_at": m.updated_at,
+        "acl_updated_at": _future(), "expires_at": None, "decay_policy": "exponential",
+        "decay_half_life_days": 30.0, "last_accessed_at": None, "access_count": 0,
+        "pinned": 0, "helpful_count": 0, "unhelpful_count": 0,
+    })
+    import_bundle(dst.store, str(forged), trusted=False, org_scope=None)
+    vis = json.loads(_vis(dst, m.id))
+    assert "global" not in vis and "team:x" in vis   # escalation refused
+
+
+def test_untrusted_peer_revoke_still_shrinks(tmp_path):
+    """The legitimate case still works: an untrusted peer's SHRINK is applied."""
+    src = MemoryClient(home=tmp_path / "src")
+    dst = MemoryClient(home=tmp_path / "dst")
+    src.store.register_agent("owner")
+    m = src.add("s", owner="owner", visibility=["team:x", "global"])
+    b1 = tmp_path / "b1.jsonl"; export_bundle(src.store, b1)
+    import_bundle(dst.store, str(b1), org_scope="full")
+    src.store.revoke_share(m.id, actor="owner", to_team="x")  # -> ["global"]
+    b2 = tmp_path / "b2.jsonl"; export_bundle(src.store, b2)
+    import_bundle(dst.store, str(b2), trusted=False, org_scope=None)
+    assert set(json.loads(_vis(dst, m.id))) == {"global"}
+
+
+def test_update_memory_visibility_propagates(tmp_path):
+    """A visibility change made via update() bumps the ACL clock and propagates."""
+    src = MemoryClient(home=tmp_path / "src")
+    dst = MemoryClient(home=tmp_path / "dst")
+    src.store.register_agent("o")
+    m = src.add("x", owner="o", visibility=["global", "team:t"])
+    b1 = tmp_path / "b1.jsonl"; export_bundle(src.store, b1)
+    import_bundle(dst.store, str(b1), org_scope="full")
+    src.store.update_memory(m.id, visibility=["team:t"])   # revoke global via update()
+    b2 = tmp_path / "b2.jsonl"; export_bundle(src.store, b2)
+    import_bundle(dst.store, str(b2), org_scope="full")
+    assert set(json.loads(_vis(dst, m.id))) == {"team:t"}
+
+
+def test_restore_archived_seeds_acl_clock(tmp_path):
+    """A restored memory has a non-NULL acl clock (created_at floor), so it can't
+    clobber a peer's newer revoke on the next sync."""
+    c = MemoryClient(home=tmp_path)
+    c.store.register_agent("o")
+    m = c.add("temp", owner="o", visibility=["global"], expires_at="2000-01-01T00:00:00+00:00")
+    c.run_retention(decayed_half_lives=None)              # archive the expired memory
+    c.restore_archived(m.id)
+    acl = c.store.conn.execute(
+        "SELECT acl_updated_at FROM memories WHERE id = ?", (m.id,)).fetchone()[0]
+    assert acl == m.created_at
+
+
 # ---- web push leg is untrusted and cannot mutate org structure ----
 
 def test_web_push_import_rejects_org_mutation(tmp_path):

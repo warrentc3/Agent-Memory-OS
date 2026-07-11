@@ -788,6 +788,10 @@ async function api(path, options, isRetry) {
   try { body = await response.json(); } catch (e) { /* empty body */ }
   if (!response.ok) {
     const detail = body && (body.detail || body.error) ? (typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail || body.error)) : ("HTTP " + response.status);
+    if (response.status === 403 && /read-only/i.test(detail)) {
+      const banner = $("ro-banner");
+      if (banner) { banner.textContent = t("read-only mode — changes are disabled"); banner.style.display = "block"; }
+    }
     throw new Error(detail);
   }
   return body;

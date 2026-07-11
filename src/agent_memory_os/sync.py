@@ -384,17 +384,42 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
     # (2) ACL — merged on the INDEPENDENT acl_updated_at clock, so a revoke or a
     # re-share propagates even when the content is otherwise unchanged, and a
     # newer local ACL is never clobbered by an older incoming one.
+    #
+    # SECURITY: an untrusted peer must not use this path to ESCALATE visibility
+    # (e.g. re-classify a `team:X` memory it received as `global`), nor pin a
+    # forged grant with a far-future clock. So: reject a future acl clock, and
+    # from an untrusted peer accept the incoming visibility only if it is a
+    # SUBSET of what we already have — a revoke shrinks and propagates, an
+    # expansion is refused (the owner's own trusted node is the authority for
+    # widening a grant). Trusted imports (local admin / own full replica) may
+    # converge freely.
+    inc_acl_raw = entry.get("acl_updated_at") or entry.get("updated_at")
     ex_acl = _norm_ts(existing["acl_updated_at"] or existing["updated_at"])
-    if inc_acl > ex_acl or (
+    acl_wins = inc_acl > ex_acl or (
         inc_acl == ex_acl and (entry.get("visibility") or "") > (existing["visibility"] or "")
+    )
+    if acl_wins and not _ts_too_future(inc_acl_raw) and _acl_change_allowed(
+        entry.get("visibility"), existing["visibility"], trusted
     ):
         store.conn.execute(
             "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
-            (entry.get("visibility"), entry.get("acl_updated_at") or entry.get("updated_at"),
-             entry["id"]),
+            (entry.get("visibility"), inc_acl_raw, entry["id"]),
         )
         changed = True
     stats["memories_updated" if changed else "memories_skipped"] += 1
+
+
+def _acl_change_allowed(incoming_vis, existing_vis, trusted: bool) -> bool:
+    """A trusted import may set any visibility; an untrusted peer may only SHRINK
+    it (propagate a revoke), never widen it (block visibility escalation)."""
+    if trusted:
+        return True
+    try:
+        inc = set(json.loads(incoming_vis) if isinstance(incoming_vis, str) else (incoming_vis or []))
+        ex = set(json.loads(existing_vis) if isinstance(existing_vis, str) else (existing_vis or []))
+    except (ValueError, TypeError):
+        return False  # unparseable ACL from an untrusted peer — refuse
+    return inc <= ex
 
 
 def _tag_source(source, peer: str | None) -> str:

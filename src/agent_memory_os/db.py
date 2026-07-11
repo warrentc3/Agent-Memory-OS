@@ -630,6 +630,16 @@ class MemoryStore:
                 "UPDATE memories SET decay_base_half_life_days = ? WHERE id = ?",
                 (existing.decay_half_life_days, memory_id),
             )
+        if "visibility" in fields:
+            # A visibility change is an ACL change — bump the independent ACL
+            # clock so the share/revoke propagates over sync (same discipline as
+            # _set_visibility; without this a revoke made via update() would stay
+            # local). Microsecond resolution so an edit + ACL change in the same
+            # second still orders after creation.
+            self.conn.execute(
+                "UPDATE memories SET acl_updated_at = ? WHERE id = ?",
+                (utc_now_micro(), memory_id),
+            )
         self.conn.commit()
         return existing
 
@@ -1977,6 +1987,15 @@ class MemoryStore:
                 row["last_accessed_at"], row["access_count"], row["pinned"],
                 row["helpful_count"], row["unhelpful_count"],
             ),
+        )
+        # The archive table predates the ACL clock and doesn't carry
+        # acl_updated_at, so seed it to created_at (a stable floor) rather than
+        # leaving it NULL: NULL would COALESCE to updated_at=now and could clobber
+        # a peer's more-recent revoke on the next sync. created_at defers to any
+        # peer ACL decision made after creation, which is the safe direction.
+        self.conn.execute(
+            "UPDATE memories SET acl_updated_at = ? WHERE id = ?",
+            (row["created_at"], memory_id),
         )
         self.conn.execute("DELETE FROM memories_archive WHERE id = ?", (memory_id,))
         # Re-attach archived edges whose OTHER endpoint is live again. Edges to

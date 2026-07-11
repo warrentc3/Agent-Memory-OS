@@ -156,3 +156,32 @@ def test_rotate_backups_keeps_newest(tmp_path):
     assert "mem-2026-07-04.db" in survivors and "mem-2026-07-03.db" in survivors
     assert "other.db" in survivors
     assert len(removed) == 3
+
+
+def test_rotate_backups_never_deletes_live_db(tmp_path):
+    """CRITICAL: rotation must never delete the live memories.db, even when the
+    backup name prefix collides with it (mem-*.db vs memories.db)."""
+    live = tmp_path / "memories.db"; live.write_text("LIVE DATA")
+    (tmp_path / "memories.db-wal").write_text("wal")
+    for i in range(4):
+        (tmp_path / f"mem-2026-07-0{i}.db").write_text(f"b{i}")
+    # keep=1 with the aggressive 'mem' prefix — the live DB must survive.
+    _rotate_backups(tmp_path / "mem-2026-07-03.db", keep=1)
+    assert live.exists() and live.read_text() == "LIVE DATA"
+    assert (tmp_path / "memories.db-wal").exists()
+
+
+def test_rotate_backups_prefix_series_memories_dash(tmp_path):
+    """A backup series literally named 'memories-<date>.db' still rotates without
+    touching the live 'memories.db'."""
+    live = tmp_path / "memories.db"; live.write_text("LIVE")
+    import os
+    import time
+    made = []
+    for i in range(3):
+        p = tmp_path / f"memories-2026-01-0{i}.db"; p.write_text(f"b{i}")
+        os.utime(p, (time.time() + i, time.time() + i))
+        made.append(p)
+    removed = _rotate_backups(made[-1], keep=1)
+    assert live.exists() and live.read_text() == "LIVE"
+    assert len(removed) == 2
