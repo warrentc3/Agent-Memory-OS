@@ -486,6 +486,11 @@ def main(argv: list[str] | None = None) -> int:
                     f"updated={report.updated} skipped={report.skipped}"
                 )
             return 0
+    except (ValueError, KeyError) as exc:
+        # Domain errors (e.g. subset violation, missing team/project) should
+        # print a friendly message and a non-zero exit, not a raw traceback.
+        print(f"error: {exc}")
+        return 2
     finally:
         client.close()
     return 2

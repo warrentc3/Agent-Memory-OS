@@ -1,7 +1,7 @@
 {
   "version": "0.13.0",
   "mode": "full",
-  "generated_at": "2026-07-11T14:57:59+00:00",
+  "generated_at": "2026-07-11T15:11:52+00:00",
   "environment": {
     "platform": "macOS-26.5.2-arm64-arm-64bit-Mach-O",
     "python": "3.14.4",
@@ -131,91 +131,91 @@
   "g3": [
     {
       "metric": "write throughput",
-      "actual": 7601.15,
+      "actual": 6993.28,
       "target": 200,
       "unit": "memories/s",
       "status": "PASS"
     },
     {
       "metric": "search p50 (requester+teams+resonance)",
-      "actual": 11.58,
+      "actual": 11.63,
       "target": 25,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "search p95",
-      "actual": 12.67,
+      "actual": 12.62,
       "target": 80,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "context pack p95",
-      "actual": 14.2,
+      "actual": 14.04,
       "target": 100,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "orchestrate p95",
-      "actual": 22.94,
+      "actual": 22.11,
       "target": 150,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "graph snapshot avg",
-      "actual": 3.49,
+      "actual": 3.4,
       "target": 250,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "dashboard avg",
-      "actual": 12.8,
+      "actual": 12.86,
       "target": 250,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "retention full pass",
-      "actual": 11.55,
+      "actual": 12.15,
       "target": 5000,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "consolidation",
-      "actual": 37.93,
+      "actual": 36.29,
       "target": 10000,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "bundle export",
-      "actual": 66.73,
+      "actual": 68.33,
       "target": 10000,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "bundle import",
-      "actual": 214.17,
+      "actual": 202.78,
       "target": 10000,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "semantic index build",
-      "actual": 508.13,
+      "actual": 497.09,
       "target": 30000,
       "unit": "ms",
       "status": "PASS"
     },
     {
       "metric": "semantic query p95",
-      "actual": 2.21,
+      "actual": 2.17,
       "target": 50,
       "unit": "ms",
       "status": "PASS"

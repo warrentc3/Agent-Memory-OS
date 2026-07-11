@@ -104,6 +104,71 @@ def test_migration_backfills_teams_from_agent_teams(tmp_path):
     assert any("ops note" in h.record.content for h in hits)
 
 
+def test_create_project_cannot_repoint_to_another_team(tmp_path):
+    """Review R1: re-pointing a project at a different team would break the
+    subset invariant — it must be rejected."""
+    c = _fixture(tmp_path)
+    c.store.create_team("zeus")
+    with pytest.raises(ValueError, match="already exists under team"):
+        c.store.create_project("apollo-web", "zeus")
+    # unchanged
+    assert c.store.get_project("apollo-web")["team_id"] == "apollo"
+
+
+def test_register_agent_none_teams_preserves_membership(tmp_path):
+    """Review R2: a metadata-only re-registration must not wipe memberships."""
+    c = _fixture(tmp_path)
+    assert set(c.store.teams_for("alice")) == {"apollo"}
+    assert "alice" in c.store.get_project("apollo-web")["members"]
+    # editing display name only (teams omitted / None)
+    c.store.register_agent("alice", kind="hermes", display_name="Alice Renamed")
+    assert set(c.store.teams_for("alice")) == {"apollo"}          # preserved
+    assert "alice" in c.store.get_project("apollo-web")["members"]  # preserved
+    # explicit empty list DOES clear
+    c.store.register_agent("alice", kind="hermes", teams=[])
+    assert c.store.teams_for("alice") == []
+
+
+def test_web_agent_edit_without_teams_preserves_membership(tmp_path):
+    web = TestClient(create_app(home=tmp_path))
+    web.post("/api/agents", json={"id": "alice", "kind": "hermes"})
+    web.post("/api/teams", json={"id": "apollo"})
+    web.post("/api/teams/apollo/members", json={"agent_id": "alice"})
+    # edit name, no teams field
+    web.post("/api/agents", json={"id": "alice", "display_name": "A", "kind": "hermes"})
+    assert web.get("/api/teams").json()["teams"][0]["members"] == ["alice"]
+
+
+def test_deleting_scope_strips_grant_no_id_reuse_resurrection(tmp_path):
+    """Review R5: deleting a team/project revokes its visibility grant so a
+    reused id can't resurrect read access to the old scope's memory."""
+    c = _fixture(tmp_path)
+    m = c.add("acme team secret", owner="alice", visibility=["team:apollo"])
+    c.store.delete_team("apollo")
+    assert c.get(m.id).visibility == []  # grant stripped -> owner-private
+    # recreate the id with a new member — must NOT see the old memory
+    c.store.register_agent("mallory", kind="hermes")
+    c.store.create_team("apollo")
+    c.store.add_team_member("apollo", "mallory")
+    assert not any("acme team secret" in h.record.content
+                   for h in c.search("acme", requester_agent_id="mallory"))
+
+
+def test_share_to_project_via_web(tmp_path):
+    """Review R3: project sharing must be reachable via the web API."""
+    web = TestClient(create_app(home=tmp_path))
+    web.post("/api/agents", json={"id": "alice", "kind": "hermes"})
+    web.post("/api/teams", json={"id": "apollo"})
+    web.post("/api/teams/apollo/members", json={"agent_id": "alice"})
+    web.post("/api/projects", json={"id": "web", "team_id": "apollo"})
+    web.post("/api/projects/web/members", json={"agent_id": "alice"})
+    mem = web.post("/api/memories", json={"content": "share target", "owner": "alice"}).json()
+    r = web.post(f"/api/memories/{mem['id']}/share",
+                 json={"actor": "alice", "to_project": "web"})
+    assert r.status_code == 200
+    assert r.json()["grant"] == "project:web"
+
+
 def test_teams_projects_api(tmp_path):
     web = TestClient(create_app(home=tmp_path))
     for a in ("alice", "bob"):

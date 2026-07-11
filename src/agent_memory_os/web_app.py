@@ -133,7 +133,9 @@ class AgentRequest(BaseModel):
     id: str = Field(min_length=1)
     display_name: str = ""
     kind: str = "custom"
-    teams: list[str] = Field(default_factory=list)
+    # None = leave team membership alone (managed in the Teams tab); a list
+    # reconciles it. So editing an agent's name never wipes its memberships.
+    teams: list[str] | None = None
     notes: str = ""
 
 
@@ -163,6 +165,7 @@ class ShareRequest(BaseModel):
     actor: str = Field(min_length=1)
     to_agent: str | None = None
     to_team: str | None = None
+    to_project: str | None = None
     deidentify: bool = False
 
 
@@ -610,6 +613,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
                     actor=request.actor,
                     to_agent=request.to_agent,
                     to_team=request.to_team,
+                    to_project=request.to_project,
                     deidentify=request.deidentify,
                 )
             except KeyError as exc:
@@ -628,6 +632,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
                     actor=request.actor,
                     to_agent=request.to_agent,
                     to_team=request.to_team,
+                    to_project=request.to_project,
                 )
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=f"memory not found: {exc.args[0]}") from exc

@@ -1059,11 +1059,13 @@ $("btn-agent-save").addEventListener("click", async () => {
   const id = $("ag-id").value.trim();
   if (!id) { toast("Agent id is required.", "err"); return; }
   try {
+    // Only send teams when the field has content; an empty field leaves team
+    // membership untouched (it is managed in the Teams tab).
+    const teamsRaw = $("ag-teams").value.trim();
+    const payload = { id: id, display_name: $("ag-name").value.trim(), kind: $("ag-kind").value };
+    if (teamsRaw) payload.teams = teamsRaw.split(",").map(t => t.trim()).filter(Boolean);
     await api("/api/agents", { method: "POST", headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        id: id, display_name: $("ag-name").value.trim(), kind: $("ag-kind").value,
-        teams: $("ag-teams").value.split(",").map(t => t.trim()).filter(Boolean),
-      }) });
+      body: JSON.stringify(payload) });
     toast("Agent saved.", "ok");
     $("ag-id").value = ""; $("ag-name").value = ""; $("ag-teams").value = "";
     refreshAgents();

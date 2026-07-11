@@ -894,7 +894,13 @@ class MemoryStore:
             raise ValueError("agent id must be non-empty")
         if kind not in self.AGENT_KINDS:
             raise ValueError(f"kind must be one of {sorted(self.AGENT_KINDS)}")
-        team_list = sorted({team.strip() for team in (teams or []) if team.strip()})
+        # teams=None means "leave team membership alone" (e.g. editing an
+        # agent's display name); only an explicit list reconciles membership,
+        # so a metadata-only update never wipes Teams-tab-managed memberships.
+        team_list = (
+            sorted({team.strip() for team in teams if team.strip()})
+            if teams is not None else None
+        )
         self.conn.execute(
             """
             INSERT INTO agents(id, display_name, kind, teams, notes, created_at)
@@ -902,16 +908,16 @@ class MemoryStore:
             ON CONFLICT(id) DO UPDATE SET
               display_name = excluded.display_name,
               kind = excluded.kind,
-              teams = excluded.teams,
               notes = excluded.notes
-            """,
-            (agent_id, display_name, kind, json.dumps(team_list), notes, utc_now()),
+            """ + ("" if team_list is None else ", teams = excluded.teams"),
+            (agent_id, display_name, kind, json.dumps(team_list or []), notes, utc_now()),
         )
         # team_members is authoritative for ACL: reconcile this agent's rows to
         # the declared list (create missing teams), so declaring an agent's
         # teams == setting its team membership. The agents.teams column is kept
         # as a denormalized convenience only.
-        self._reconcile_agent_teams(agent_id, team_list)
+        if team_list is not None:
+            self._reconcile_agent_teams(agent_id, team_list)
         self.conn.commit()
         self._invalidate_membership_caches()
         return self.get_agent(agent_id)
@@ -1025,12 +1031,31 @@ class MemoryStore:
         ).fetchall()]
         for pid in project_ids:
             self.conn.execute("DELETE FROM project_members WHERE project_id = ?", (pid,))
+            self._strip_visibility_grant(f"project:{pid}")
         self.conn.execute("DELETE FROM projects WHERE team_id = ?", (team_id,))
         self.conn.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
         cur = self.conn.execute("DELETE FROM teams WHERE id = ?", (team_id,))
+        # Revoke the now-orphaned grant so a reused team id can't resurrect
+        # read access to the old team's scoped memory.
+        self._strip_visibility_grant(f"team:{team_id}")
         self.conn.commit()
         self._invalidate_membership_caches()
         return cur.rowcount > 0
+
+    def _strip_visibility_grant(self, grant: str) -> None:
+        """Remove one `team:<id>`/`project:<id>`/`agent:<id>` grant from every
+        memory's visibility. Used when a scope is deleted so a reused id cannot
+        resurrect access. ACL-only change — does not touch updated_at."""
+        self.conn.execute(
+            """
+            UPDATE memories
+            SET visibility = COALESCE(
+                (SELECT json_group_array(value) FROM json_each(memories.visibility)
+                 WHERE value != ?), '[]')
+            WHERE EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = ?)
+            """,
+            (grant, grant),
+        )
 
     def add_team_member(self, team_id: str, agent_id: str) -> None:
         if self.get_team(team_id) is None:
@@ -1067,9 +1092,17 @@ class MemoryStore:
             raise ValueError("project id must be non-empty")
         if self.get_team(team_id) is None:
             raise KeyError(f"team not found: {team_id}")
+        existing = self.get_project(project_id)
+        if existing and existing["team_id"] != team_id:
+            # Re-pointing a project at a different team would leave members who
+            # aren't in the new team, breaking the subset invariant. Disallow it.
+            raise ValueError(
+                f"project {project_id!r} already exists under team "
+                f"{existing['team_id']!r}; delete it to recreate under another team"
+            )
         self.conn.execute(
             "INSERT INTO projects(id, team_id, name, created_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, team_id = excluded.team_id",
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
             (project_id, team_id, name or project_id, utc_now()),
         )
         self.conn.commit()
@@ -1098,6 +1131,8 @@ class MemoryStore:
     def delete_project(self, project_id: str) -> bool:
         self.conn.execute("DELETE FROM project_members WHERE project_id = ?", (project_id,))
         cur = self.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        # Revoke the orphaned grant so a reused project id can't resurrect access.
+        self._strip_visibility_grant(f"project:{project_id}")
         self.conn.commit()
         self._invalidate_membership_caches()
         return cur.rowcount > 0
