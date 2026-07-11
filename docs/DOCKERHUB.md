@@ -4,6 +4,10 @@
 
 <p align="center">A local-first, open-source memory engine for AI-agent <b>teams</b>.</p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/console-dashboard.png" alt="AgentMemoryOS web console" width="760">
+</p>
+
 ---
 
 One SQLite file is the whole brain: durable memories with a hard **requester-aware

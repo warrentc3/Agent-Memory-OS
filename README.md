@@ -20,6 +20,11 @@ A **local-first memory system for AI-agent teams** — not just giving one agent
   <a href="#why">Why</a> · <a href="#how-it-compares">Compare</a> · <a href="#install">Install</a> · <a href="#quickstart">Quickstart</a> · <a href="#features">Features</a> · <a href="#federation-multi-host-sync">Federation</a> · <a href="#web-ui">Web&nbsp;UI</a> · <a href="docs/USER_GUIDE.md">User&nbsp;Guide</a>
 </p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/console-dashboard.png" alt="AgentMemoryOS web console — dashboard" width="820">
+  <br><sub>The built-in web console: stats, token-usage by agent/team/project, scope &amp; type breakdowns, and 14-day activity.</sub>
+</p>
+
 ## Why
 
 Real work happens in **teams of agents** — a project might mix Claude Code, Codex, OpenClaw, and several Hermes profiles, across multiple teams and projects, on one machine or many. They need to share the *right* knowledge with the *right* teammates and keep private what should stay private:

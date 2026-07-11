@@ -20,6 +20,11 @@
   <a href="#為什麼">為什麼</a> · <a href="#與其他方案的定位差異">定位比較</a> · <a href="#安裝">安裝</a> · <a href="#快速上手">快速上手</a> · <a href="#功能特色">功能</a> · <a href="#聯邦多主機同步">聯邦</a> · <a href="#web-主控台">Web&nbsp;主控台</a> · <a href="docs/USER_GUIDE.md">使用手冊</a>
 </p>
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/console-dashboard.png" alt="AgentMemoryOS web 主控台 — 儀表板" width="820">
+  <br><sub>內建 web 主控台:統計、依 agent/team/project 的 token 用量、scope 與 type 分佈、14 天活動。</sub>
+</p>
+
 ## 為什麼
 
 真正的工作發生在**一群 agent 組成的團隊**裡——一個專案可能同時混用 Claude Code、Codex、OpenClaw 與數個 Hermes 設定檔,橫跨多個 team 與 project,在一台或多台機器上。它們需要把**對的知識**分享給**對的隊友**,同時把該保密的留在私有範圍:
