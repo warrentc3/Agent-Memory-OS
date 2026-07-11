@@ -4,7 +4,7 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [Unreleased]
+## [1.0.4] — 2026-07-12
 
 - **Richer MCP tool descriptions.** All 11 `memory_*` tools now carry a full
   docstring (purpose, when-to-use, behaviour/side-effects, ACL note, return
