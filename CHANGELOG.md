@@ -4,6 +4,15 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [Unreleased]
+
+- **Richer MCP tool descriptions.** All 11 `memory_*` tools now carry a full
+  docstring (purpose, when-to-use, behaviour/side-effects, ACL note, return
+  shape) and a description on every parameter (via `pydantic.Field`), so MCP
+  clients — and catalogs like Glama that score tool-definition quality — get
+  clear, self-describing tools. No behaviour change; the tool set and signatures
+  are unchanged.
+
 ## [1.0.3] — 2026-07-12
 
 Docker packaging release — the published image is now the complete AgentMemoryOS.
