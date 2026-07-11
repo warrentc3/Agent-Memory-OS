@@ -8,6 +8,7 @@
   <a href="https://github.com/yamantaka520/Agent-Memory-OS/actions"><img src="https://img.shields.io/github/actions/workflow/status/yamantaka520/Agent-Memory-OS/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="https://hub.docker.com/r/yamantaka520/agent-memory-os"><img src="https://img.shields.io/docker/pulls/yamantaka520/agent-memory-os?color=2496ED&logo=docker&logoColor=white" alt="Docker Pulls"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
+  <a href="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS"><img src="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS/badges/score.svg" alt="Glama score"></a>
 </p>
 
 <p align="center">
@@ -235,6 +236,8 @@ Peer 依 home 各自儲存;`sync auto`(或主控台的「Sync mesh now」)與每
 任何支援 MCP 的 agent 都能用同一套模式:把 `python -m agent_memory_os.mcp_server` 當成 stdio MCP server 執行,指向一個共享的 `AGENT_MEMORY_HOME`。
 
 ## MCP server
+
+<a href="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS"><img width="380" height="200" src="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS/badges/card.svg" alt="Glama 上的 AgentMemoryOS MCP server"></a>
 
 ```bash
 pip install 'agent-memory-os[mcp]'

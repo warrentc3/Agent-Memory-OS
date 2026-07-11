@@ -9,6 +9,7 @@
   <a href="https://github.com/yamantaka520/Agent-Memory-OS/actions"><img src="https://img.shields.io/github/actions/workflow/status/yamantaka520/Agent-Memory-OS/ci.yml?branch=main&label=CI" alt="CI"></a>
   <a href="https://hub.docker.com/r/yamantaka520/agent-memory-os"><img src="https://img.shields.io/docker/pulls/yamantaka520/agent-memory-os?color=2496ED&logo=docker&logoColor=white" alt="Docker Pulls"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
+  <a href="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS"><img src="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS/badges/score.svg" alt="Glama score"></a>
 </p>
 
 <p align="center">
@@ -283,6 +284,8 @@ Any MCP-capable agent can use the same pattern: run
 shared `AGENT_MEMORY_HOME`.
 
 ## MCP server
+
+<a href="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS"><img width="380" height="200" src="https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS/badges/card.svg" alt="AgentMemoryOS MCP server on Glama"></a>
 
 ```bash
 pip install 'agent-memory-os[mcp]'
