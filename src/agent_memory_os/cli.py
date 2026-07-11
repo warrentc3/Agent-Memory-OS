@@ -244,6 +244,18 @@ def _cmd_doctor(args) -> int:
     print(f"[{'ok' if token_set else 'none'}] Web UI token "
           f"({'set' if token_set else 'run: agent-memory token create'})")
 
+    # Stale running processes: on-disk version is current but a live web/MCP
+    # process started before it landed still serves the OLD code.
+    stale = _stale_amos_processes()
+    if stale:
+        print(f"[warn] {len(stale)} process(es) predate the installed version and likely run old code:")
+        for pid, kind, _cmd in stale:
+            hint = ("agent-memory service restart / kill+relaunch" if kind == "web"
+                    else "restart the host app, e.g. Claude Code")
+            print(f"        [{kind}] pid {pid} → {hint}")
+    else:
+        print("[ok] no stale processes (running code matches the installed version)")
+
     if missing_extras:
         spec = f"agent-memory-os[{','.join(missing_extras)}]"
         if args.install:

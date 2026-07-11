@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from .client import MemoryClient
@@ -243,6 +243,63 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/healthz")
+    def healthz() -> JSONResponse:
+        """Liveness + readiness for Docker/k8s healthchecks (unauthenticated,
+        no sensitive data): confirms the DB opens and integrity holds."""
+        try:
+            with lock:
+                ok = bool(client.integrity_check().get("ok", False))
+            return JSONResponse({"status": "ok" if ok else "degraded",
+                                 "node": client.node_name, "integrity": ok},
+                                status_code=200 if ok else 503)
+        except Exception as exc:  # noqa: BLE001 - health must never raise
+            return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
+
+    @app.get("/metrics")
+    def metrics() -> Response:
+        """Prometheus text-format operational metrics (aggregate counts only —
+        no memory content, ids, or secrets). Unauthenticated by convention so a
+        scraper needs no token; the values are non-sensitive totals."""
+        with lock:
+            scan = client.maintenance_scan()
+            peers = client.store.list_peers()
+        teams = scan.get("teams", 0)
+        projects = scan.get("projects", 0)
+        # A peer whose last sync recorded an error is "unhealthy"; count them so
+        # a mesh operator can alert on sync lag/failure.
+        peer_errors = sum(1 for p in peers if str(p.get("last_result", "")).startswith("error"))
+        lines = [
+            "# HELP agentmemory_memories_total Number of memories in the store.",
+            "# TYPE agentmemory_memories_total gauge",
+            f"agentmemory_memories_total {scan.get('memories', 0)}",
+            "# HELP agentmemory_orphan_memories Memories reachable by no one.",
+            "# TYPE agentmemory_orphan_memories gauge",
+            f"agentmemory_orphan_memories {scan.get('orphan_memories', 0)}",
+            "# HELP agentmemory_index_drift memories minus FTS-indexed rows (0 = healthy).",
+            "# TYPE agentmemory_index_drift gauge",
+            f"agentmemory_index_drift {abs(scan.get('memories', 0) - scan.get('indexed', 0))}",
+            "# HELP agentmemory_archived_total Cold-archived memories.",
+            "# TYPE agentmemory_archived_total gauge",
+            f"agentmemory_archived_total {scan.get('archived', 0)}",
+            "# HELP agentmemory_teams_total Teams.",
+            "# TYPE agentmemory_teams_total gauge",
+            f"agentmemory_teams_total {teams}",
+            "# HELP agentmemory_projects_total Projects.",
+            "# TYPE agentmemory_projects_total gauge",
+            f"agentmemory_projects_total {projects}",
+            "# HELP agentmemory_peers_total Registered sync peers.",
+            "# TYPE agentmemory_peers_total gauge",
+            f"agentmemory_peers_total {len(peers)}",
+            "# HELP agentmemory_peer_errors Peers whose last sync failed.",
+            "# TYPE agentmemory_peer_errors gauge",
+            f"agentmemory_peer_errors {peer_errors}",
+            "# HELP agentmemory_integrity_ok 1 if the DB passes integrity_check.",
+            "# TYPE agentmemory_integrity_ok gauge",
+            f"agentmemory_integrity_ok {1 if scan.get('schema_ok', True) else 0}",
+        ]
+        return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
 
     @app.get("/api/node")
     def node_identity() -> dict[str, Any]:
