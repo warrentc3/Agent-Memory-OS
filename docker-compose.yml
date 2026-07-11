@@ -6,6 +6,8 @@
 # Memories persist in the `amos-data` named volume across restarts.
 services:
   amos:
+    # Build locally, OR use the published image: comment out `build:` and set
+    #   image: yamantaka520/agent-memory-os:latest
     build:
       context: .
       args:

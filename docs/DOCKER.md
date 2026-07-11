@@ -4,7 +4,31 @@ The repo ships a `Dockerfile`, a single-instance `docker-compose.yml`, and a
 two-node `docker-compose.mesh.yml`. Memories persist in a named volume mounted
 at `/data` (the container's `AGENT_MEMORY_HOME`).
 
-## Quick start (docker compose)
+## Pull the published image
+
+Prebuilt multi-arch (amd64 + arm64) images are on Docker Hub:
+
+```bash
+docker pull yamantaka520/agent-memory-os:latest        # or a pinned version, :0.12.0
+docker run -d --name amos -p 8000:8000 -v amos-data:/data \
+  yamantaka520/agent-memory-os:latest
+docker exec amos agent-memory token show               # the auto-generated API token
+```
+
+To use the published image with compose instead of building locally, set
+`image:` and drop `build:` (or `docker compose pull`):
+
+```yaml
+services:
+  amos:
+    image: yamantaka520/agent-memory-os:latest
+    # build: .            # ← omit to use the pulled image
+```
+
+The Hub image is published by the `Publish Docker image` GitHub Action on every
+release tag. The rest of this guide builds locally from source.
+
+## Quick start (docker compose, builds locally)
 
 ```bash
 cp .env.example .env         # optional: set AGENT_MEMORY_WEB_TOKEN

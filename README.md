@@ -28,7 +28,7 @@ pip install 'agent-memory-os[full]'    # recommended: everything (Web UI, MCP, t
 
 Or pick pieces: `agent-memory-os` (core, zero dependencies), `[api]` (Web UI), `[mcp]` (MCP server), `[semantic]` (turbovec vector recall).
 
-**Docker:** `docker compose up -d` — console at http://localhost:8000, memories persist in a volume. See the [Docker guide](docs/DOCKER.md) (includes a two-node sync mesh).
+**Docker:** `docker run -p 8000:8000 -v amos-data:/data yamantaka520/agent-memory-os` (prebuilt, multi-arch) or `docker compose up -d`. Console at http://localhost:8000, memories persist in a volume. See the [Docker guide](docs/DOCKER.md) (Docker Hub image + a two-node sync mesh).
 
 Requires Python 3.11+ with SQLite FTS5 (included in standard CPython builds).
 
