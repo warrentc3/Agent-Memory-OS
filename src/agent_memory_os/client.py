@@ -237,20 +237,25 @@ class MemoryClient:
         team: str | None = None,
         project: str | None = None,
         include_private: bool = True,
+        include_org: bool = True,
     ) -> dict[str, int]:
         from .sync import export_bundle
 
         return export_bundle(
             self.store, path, since=since, team=team, project=project,
-            include_private=include_private, node_name=self.node_name,
+            include_private=include_private, include_org=include_org,
+            node_name=self.node_name,
         )
 
     def import_bundle(
-        self, path, *, source_peer: str | None = None, trusted: bool = True
+        self, path, *, source_peer: str | None = None, trusted: bool = True,
+        org_scope: str | None = "full",
     ) -> dict[str, int]:
         from .sync import import_bundle
 
-        stats = import_bundle(self.store, path, source_peer=source_peer, trusted=trusted)
+        stats = import_bundle(
+            self.store, path, source_peer=source_peer, trusted=trusted, org_scope=org_scope,
+        )
         self.cache.clear()
         return stats
 

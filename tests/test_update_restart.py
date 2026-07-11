@@ -112,11 +112,12 @@ def test_handle_running_processes_restarts_web_and_reports_mcp(monkeypatch, caps
         lambda: [(11, "web", "agent-memory-web --home /h"), (22, "mcp", "python -m agent_memory_os.mcp_server")],
     )
     monkeypatch.setattr(cli, "_web_service_installed", lambda: False)
-    restarted = []
-    monkeypatch.setattr(cli, "_restart_web_process", lambda pid, cmd: restarted.append(pid) or True)
-    cli._handle_running_processes(assume_yes=True, no_restart=False)
+    seen = []
+    monkeypatch.setattr(cli, "_restart_web_from_pidfile",
+                        lambda home: seen.append(home) or "restarted (new pid 999)")
+    cli._handle_running_processes(assume_yes=True, no_restart=False, home="/h")
     out = capsys.readouterr().out
-    assert restarted == [11]
+    assert seen == ["/h"]
     assert "restarted" in out
     assert "Claude Code" in out  # MCP restart-the-host-app notice
 
@@ -124,7 +125,7 @@ def test_handle_running_processes_restarts_web_and_reports_mcp(monkeypatch, caps
 def test_handle_running_processes_no_restart_flag(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_running_amos_processes", lambda: [(11, "web", "agent-memory-web")])
     called = []
-    monkeypatch.setattr(cli, "_restart_web_process", lambda pid, cmd: called.append(pid))
+    monkeypatch.setattr(cli, "_restart_web_from_pidfile", lambda home: called.append(home) or "x")
     cli._handle_running_processes(assume_yes=True, no_restart=True)
     assert called == []
     assert "NOT restarted" in capsys.readouterr().out
@@ -153,6 +154,42 @@ def test_handle_running_processes_quiet_when_nothing_runs(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_running_amos_processes", lambda: [])
     cli._handle_running_processes(assume_yes=True, no_restart=False)
     assert capsys.readouterr().out == ""
+
+
+# ---------- pidfile-based restart (security: never re-exec a ps-derived argv) ----------
+
+def test_restart_from_pidfile_missing_returns_manual(tmp_path):
+    # No pidfile written → must not signal or exec anything.
+    assert "manually" in cli._restart_web_from_pidfile(str(tmp_path))
+
+
+def test_restart_from_pidfile_dead_pid_not_relaunched(tmp_path, monkeypatch):
+    from agent_memory_os.pidfile import write_web_pidfile
+
+    # Record a pidfile whose pid is not alive; os.kill(pid,0) → ProcessLookupError.
+    write_web_pidfile(str(tmp_path), argv=["/bin/true"], cwd=str(tmp_path))
+    launched = []
+    import os as _os
+    import subprocess as sp
+    monkeypatch.setattr(sp, "Popen", lambda *a, **k: launched.append(a))
+
+    def fake_kill(pid, sig):
+        raise ProcessLookupError
+
+    monkeypatch.setattr(_os, "kill", fake_kill)
+    msg = cli._restart_web_from_pidfile(str(tmp_path))
+    assert "not running" in msg
+    assert launched == []  # never relaunched a dead/spoofable target
+
+
+def test_pidfile_roundtrip_rejects_garbage(tmp_path):
+    from agent_memory_os.pidfile import pidfile_path, read_web_pidfile, write_web_pidfile
+
+    write_web_pidfile(str(tmp_path), argv=["/usr/bin/x", "--home", str(tmp_path)])
+    rec = read_web_pidfile(str(tmp_path))
+    assert isinstance(rec["pid"], int) and rec["argv"][0] == "/usr/bin/x"
+    pidfile_path(str(tmp_path)).write_text("not json", encoding="utf-8")
+    assert read_web_pidfile(str(tmp_path)) is None
 
 
 # ---------- update flow wiring ----------
@@ -187,7 +224,7 @@ def test_update_upgrade_success_triggers_process_handling(monkeypatch, capsys):
     )
     rc = cli._cmd_update(_args(yes=True))
     assert rc == 0
-    assert handled == [{"assume_yes": True, "no_restart": False}]
+    assert handled == [{"assume_yes": True, "no_restart": False, "home": None}]
 
 
 def test_update_upgrade_failure_skips_process_handling(monkeypatch):

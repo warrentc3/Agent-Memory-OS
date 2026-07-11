@@ -152,6 +152,10 @@ class ProjectRequest(BaseModel):
 
 class MemberRequest(BaseModel):
     agent_id: str = Field(min_length=1)
+    # `actor` is accepted for backward compatibility but IGNORED for audit
+    # attribution: under the single shared token the server cannot authenticate
+    # a per-user identity, so a client-supplied actor would be forgeable. Web
+    # membership changes are recorded with the fixed channel actor "web".
     actor: str = "local"
 
 
@@ -432,7 +436,15 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
             return {"orphans": client.find_orphan_memories()}
 
     @app.post("/api/maintenance/orphans/delete")
-    def maintenance_orphans_delete() -> dict[str, Any]:
+    def maintenance_orphans_delete(confirm: str = Query(default="")) -> dict[str, Any]:
+        # Permanent, sync-propagating deletion — gate it like purge_owner so a
+        # stray click (or a cross-site form POST in token-less mode) can't wipe
+        # data. Caller must pass ?confirm=orphans.
+        if confirm != "orphans":
+            raise HTTPException(
+                status_code=400,
+                detail="confirmation required: pass ?confirm=orphans to delete orphan memories",
+            )
         with lock:
             return client.delete_orphan_memories()
 
@@ -450,7 +462,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def team_add_member(team_id: str, request: MemberRequest) -> dict[str, Any]:
         with lock:
             try:
-                client.store.add_team_member(team_id, request.agent_id, actor=request.actor)
+                client.store.add_team_member(team_id, request.agent_id, actor="web")
                 return client.store.get_team(team_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -458,7 +470,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     @app.delete("/api/teams/{team_id}/members")
     def team_remove_member(team_id: str, agent_id: str = Query(min_length=1)) -> dict[str, Any]:
         with lock:
-            client.store.remove_team_member(team_id, agent_id)
+            client.store.remove_team_member(team_id, agent_id, actor="web")
             return client.store.get_team(team_id) or {"removed": agent_id}
 
     # ---------- projects ----------
@@ -488,7 +500,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def project_add_member(project_id: str, request: MemberRequest) -> dict[str, Any]:
         with lock:
             try:
-                client.store.add_project_member(project_id, request.agent_id, actor=request.actor)
+                client.store.add_project_member(project_id, request.agent_id, actor="web")
                 return client.store.get_project(project_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -498,7 +510,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     @app.delete("/api/projects/{project_id}/members")
     def project_remove_member(project_id: str, agent_id: str = Query(min_length=1)) -> dict[str, Any]:
         with lock:
-            client.store.remove_project_member(project_id, agent_id)
+            client.store.remove_project_member(project_id, agent_id, actor="web")
             return client.store.get_project(project_id) or {"removed": agent_id}
 
     @app.get("/api/peers")
@@ -569,7 +581,14 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
 
     @app.post("/api/sync/import")
     async def sync_import(request: Request) -> dict[str, Any]:
-        """Accept a bundle body (peer push / browser upload) and merge it."""
+        """Accept a bundle body (peer push / browser upload) and merge it.
+
+        A pushed bundle is anonymous under the single shared token — we cannot
+        attribute it to a policy-scoped peer — so it is merged UNTRUSTED and may
+        NOT mutate org structure (`org_scope=None`): membership/ACL definitions
+        converge only via authenticated pull from a peer of known policy. This
+        closes the forge-membership / griefing vector on the push leg.
+        """
         import tempfile
 
         from .sync import import_bundle
@@ -579,7 +598,9 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
             with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
                 handle.write(body)
             try:
-                stats = import_bundle(client.store, handle.name)
+                stats = import_bundle(
+                    client.store, handle.name, trusted=False, org_scope=None,
+                )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             finally:
@@ -845,6 +866,14 @@ def main(argv: list[str] | None = None) -> None:
         print("      Protect it with:  agent-memory token create")
 
     print(f"Agent Memory OS '{settings.node_name}' → http://{host}:{port}")
+    # Record our pid + relaunch command so `agent-memory update` can restart the
+    # console it owns without trusting ps output. Cleared on clean exit.
+    import atexit
+
+    from .pidfile import clear_web_pidfile, write_web_pidfile
+
+    write_web_pidfile(args.home)
+    atexit.register(clear_web_pidfile, args.home)
     uvicorn.run(create_app(home=args.home, token=args.token), host=host, port=port)
 
 

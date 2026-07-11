@@ -1074,8 +1074,12 @@ class MemoryStore:
         self.conn.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
         cur = self.conn.execute("DELETE FROM teams WHERE id = ?", (team_id,))
         # Revoke the now-orphaned grant so a reused team id can't resurrect
-        # read access to the old team's scoped memory.
+        # read access to the old team's scoped memory. Two grant schemes carry
+        # team visibility (see _append_acl_filter): the explicit `team:<id>`
+        # value AND the legacy bare `team` value keyed by source.team_id. Strip
+        # both, else a reused id resurrects access through the bare scheme.
         self._strip_visibility_grant(f"team:{team_id}")
+        self._strip_bare_team_grant(team_id)
         # Tombstones so the deletion (and its projects') propagates over sync.
         for pid in project_ids:
             self._org_tombstone("project", pid)
@@ -1098,6 +1102,23 @@ class MemoryStore:
             WHERE EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = ?)
             """,
             (grant, grant),
+        )
+
+    def _strip_bare_team_grant(self, team_id: str) -> None:
+        """Remove the legacy bare `team` grant from memories keyed to this team
+        via source.team_id. The bare scheme is invisible to
+        `_strip_visibility_grant`'s single-string match, so a deleted team's id,
+        if reused, would otherwise resurrect read access through it."""
+        self.conn.execute(
+            """
+            UPDATE memories
+            SET visibility = COALESCE(
+                (SELECT json_group_array(value) FROM json_each(memories.visibility)
+                 WHERE value != 'team'), '[]')
+            WHERE json_extract(source, '$.team_id') = ?
+              AND EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = 'team')
+            """,
+            (team_id,),
         )
 
     def add_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
@@ -1123,9 +1144,14 @@ class MemoryStore:
             "DELETE FROM team_members WHERE team_id = ? AND agent_id = ?", (team_id, agent_id)
         )
         # Leaving a team removes the agent from that team's projects too — a
-        # project member must always be a team member.
+        # project member must always be a team member. Only the projects the
+        # agent was ACTUALLY in change; touching the rest would bump their
+        # updated_at with an unchanged member set and could clobber a concurrent
+        # peer's real membership edit on those projects during LWW sync.
         affected = [r[0] for r in self.conn.execute(
-            "SELECT id FROM projects WHERE team_id = ?", (team_id,)
+            "SELECT project_id FROM project_members WHERE agent_id = ? AND project_id IN "
+            "(SELECT id FROM projects WHERE team_id = ?)",
+            (agent_id, team_id),
         ).fetchall()]
         self.conn.execute(
             "DELETE FROM project_members WHERE agent_id = ? AND project_id IN "
@@ -2022,38 +2048,49 @@ class MemoryStore:
     # ---------- ops / maintenance ----------
 
     def find_orphan_memories(self, *, limit: int = 1000) -> list[dict[str, object]]:
-        """Memories that are shared but reachable by no one.
+        """Memories that are shared but reachable by no one — dead data.
 
-        A memory is an orphan when it has at least one `team:<id>`/`project:<id>`
-        grant, every such scope is empty (no members) or deleted, and it has no
-        other reachable grant (`global` or `agent:<id>`). Only admin (a
-        requester-less view) can see such a memory — it is dead data, produced
-        e.g. when the last member leaves a team/project.
+        A memory is an orphan only when EVERY path to it is gone:
+        - its owner is not a currently-registered agent (the ACL always grants
+          the owner access, so a live owner alone keeps a memory reachable), AND
+        - it has no `global` grant and no `agent:<id>` grant to a live agent, AND
+        - every `team:<id>`/`project:<id>` grant points at a scope that no longer
+          EXISTS (was deleted).
+
+        Existence — not membership count — is the gate: an empty-but-existing
+        team can gain a member again, so its memories are recoverable and must
+        NOT be classed as orphans (else `delete_orphan_memories` would destroy
+        live, re-shareable data).
         """
-        live_teams = {r[0] for r in self.conn.execute("SELECT DISTINCT team_id FROM team_members")}
-        live_projects = {r[0] for r in self.conn.execute(
-            "SELECT DISTINCT project_id FROM project_members"
-        )}
+        live_agents = {r[0] for r in self.conn.execute("SELECT id FROM agents")}
+        existing_teams = {r[0] for r in self.conn.execute("SELECT id FROM teams")}
+        existing_projects = {r[0] for r in self.conn.execute("SELECT id FROM projects")}
         orphans: list[dict[str, object]] = []
         rows = self.conn.execute(
             "SELECT id, content, visibility, owner FROM memories WHERE json_array_length(visibility) > 0"
         ).fetchall()
         for row in rows:
+            if row["owner"] in live_agents:
+                continue  # owner can always read it — never an orphan
             grants = json.loads(row["visibility"] or "[]")
             has_scoped = False
             reachable = False
             for g in grants:
-                if g == "global" or g.startswith("agent:"):
+                if g == "global":
                     reachable = True
                     break
-                if g.startswith("team:"):
+                if g.startswith("agent:"):
+                    if g[len("agent:"):] in live_agents:
+                        reachable = True
+                        break
+                elif g.startswith("team:"):
                     has_scoped = True
-                    if g[len("team:"):] in live_teams:
+                    if g[len("team:"):] in existing_teams:
                         reachable = True
                         break
                 elif g.startswith("project:"):
                     has_scoped = True
-                    if g[len("project:"):] in live_projects:
+                    if g[len("project:"):] in existing_projects:
                         reachable = True
                         break
             if has_scoped and not reachable:

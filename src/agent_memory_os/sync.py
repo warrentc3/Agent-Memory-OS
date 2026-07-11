@@ -71,6 +71,61 @@ def _incoming_wins(inc_ts: str, inc_content: str, ex_ts: str, ex_content: str) -
     return inc_content > ex_content  # same instant: larger content wins, deterministically
 
 
+# A forged far-future timestamp would win LWW forever and could never be
+# corrected by a legitimate later edit. Reject org timestamps beyond now+skew.
+_MAX_FUTURE_SKEW_SECONDS = 300
+
+
+def _ts_too_future(value: str | None) -> bool:
+    """True if an incoming org timestamp is implausibly far in the future."""
+    norm = _norm_ts(value)
+    if not norm:
+        return False
+    try:
+        ts = datetime.fromisoformat(norm)
+    except ValueError:
+        return False
+    now = datetime.now(ts.tzinfo) if ts.tzinfo else datetime.utcnow()
+    return (ts - now).total_seconds() > _MAX_FUTURE_SKEW_SECONDS
+
+
+def _org_member_wins(inc_members, ex_members) -> bool:
+    """Deterministic tie-break for equal-timestamp org member sets: the
+    lexicographically-greater sorted set wins, so both nodes converge to the
+    same membership instead of each keeping its own (a divergence bug)."""
+    return sorted(str(m) for m in (inc_members or [])) > sorted(
+        str(m) for m in (ex_members or [])
+    )
+
+
+def _org_scope_allows(org_scope: str | None, kind: str, id_: str,
+                      *, team_of: str | None) -> bool:
+    """Whether a peer authorized for `org_scope` may assert an org record.
+
+    org_scope is the pulling peer's policy: None (no org mutations permitted,
+    e.g. an anonymous push or a 'shared' peer), 'full' (own trusted replica —
+    anything), 'team:<id>' (only that team and projects under it), or
+    'project:<id>' (only that one project). `team_of` is the project's parent
+    team id when known (from the record or a local lookup), used to authorize a
+    team-scoped peer's project mutations.
+    """
+    if not org_scope:
+        return False
+    if org_scope == "full":
+        return True
+    if org_scope.startswith("team:"):
+        t = org_scope[len("team:"):]
+        if kind == "team":
+            return id_ == t
+        if kind == "project":
+            return team_of == t
+        return False
+    if org_scope.startswith("project:"):
+        p = org_scope[len("project:"):]
+        return kind == "project" and id_ == p
+    return False
+
+
 def export_bundle(
     store,
     path: str | Path,
@@ -79,6 +134,7 @@ def export_bundle(
     team: str | None = None,
     project: str | None = None,
     include_private: bool = True,
+    include_org: bool = True,
     node_name: str = "",
 ) -> dict[str, int]:
     """Write a bundle.
@@ -152,33 +208,53 @@ def export_bundle(
             )
             counts["tombstones"] += 1
         # Org structure (federate teams/projects/memberships so ACL definitions
-        # converge across nodes). Scoped to match the memory scope. Teams are
-        # written before projects so the import can honour the subset invariant.
-        if project:
-            proj = store.get_project(project)
-            team_rows = ([store.get_team(proj["team_id"])] if proj and store.get_team(proj["team_id"]) else [])
-            project_rows = [proj] if proj else []
-        elif team:
-            t = store.get_team(team)
-            team_rows = [t] if t else []
-            project_rows = store.list_projects(team)
-        else:
-            team_rows = store.list_teams()
-            project_rows = store.list_projects()
-        for t in team_rows:
-            handle.write(json.dumps({
-                "kind": "team", "id": t["id"], "name": t["name"],
-                "updated_at": t["updated_at"], "members": t["members"],
-            }, ensure_ascii=False) + "\n")
-        for pr in project_rows:
-            handle.write(json.dumps({
-                "kind": "project", "id": pr["id"], "team_id": pr["team_id"], "name": pr["name"],
-                "updated_at": pr["updated_at"], "members": pr["members"],
-            }, ensure_ascii=False) + "\n")
-        for tkind, tid, deleted_at in store.list_org_tombstones(since=since):
-            handle.write(json.dumps({
-                "kind": "org_tombstone", "tomb_kind": tkind, "id": tid, "deleted_at": deleted_at,
-            }) + "\n")
+        # converge across nodes). Only emitted when include_org — a memory-only
+        # 'shared' peer must not learn the node's whole membership graph. Scoped
+        # to match the memory scope; teams are written before projects so the
+        # import can honour the subset invariant.
+        if include_org:
+            if project:
+                proj = store.get_project(project)
+                parent = store.get_team(proj["team_id"]) if proj else None
+                # A project-scoped peer may only learn the project's own members.
+                # Emit the parent team with its roster narrowed to those members
+                # so the subset invariant holds on the peer WITHOUT leaking the
+                # ids of team members outside this project.
+                if parent:
+                    parent = {**parent, "members": [
+                        m for m in parent["members"] if m in set(proj["members"])
+                    ]}
+                team_rows = [parent] if parent else []
+                project_rows = [proj] if proj else []
+            elif team:
+                t = store.get_team(team)
+                team_rows = [t] if t else []
+                project_rows = store.list_projects(team)
+            else:
+                team_rows = store.list_teams()
+                project_rows = store.list_projects()
+
+            def _fresh(row):  # respect the incremental `since` cursor like memories do
+                return not since or _norm_ts(row["updated_at"]) > _norm_ts(since)
+
+            for t in team_rows:
+                if not _fresh(t):
+                    continue
+                handle.write(json.dumps({
+                    "kind": "team", "id": t["id"], "name": t["name"],
+                    "updated_at": t["updated_at"], "members": t["members"],
+                }, ensure_ascii=False) + "\n")
+            for pr in project_rows:
+                if not _fresh(pr):
+                    continue
+                handle.write(json.dumps({
+                    "kind": "project", "id": pr["id"], "team_id": pr["team_id"], "name": pr["name"],
+                    "updated_at": pr["updated_at"], "members": pr["members"],
+                }, ensure_ascii=False) + "\n")
+            for tkind, tid, deleted_at in store.list_org_tombstones(since=since):
+                handle.write(json.dumps({
+                    "kind": "org_tombstone", "tomb_kind": tkind, "id": tid, "deleted_at": deleted_at,
+                }) + "\n")
     return counts
 
 
@@ -188,19 +264,26 @@ def import_bundle(
     *,
     source_peer: str | None = None,
     trusted: bool = True,
+    org_scope: str | None = "full",
 ) -> dict[str, int]:
     """Merge a bundle into the store.
 
     `trusted=False` (a semi-trusted 'shared'/'team' peer) forbids injecting
-    NEW globally-visible memories and records `source.synced_from`. The whole
-    merge is atomic: a corrupt line rolls everything back.
+    NEW globally-visible memories and records `source.synced_from`.
+
+    `org_scope` authorizes org-structure (team/project/membership) mutations —
+    these DEFINE ACLs, so an untrusted peer must not rewrite arbitrary ones.
+    'full' (a local/admin import or own replica): any org record. 'team:<id>' /
+    'project:<id>': only that scope. None: no org mutations at all (an anonymous
+    network push, or a memory-only 'shared' peer). The whole merge is atomic: a
+    corrupt line rolls everything back.
     """
     path = Path(path).expanduser()
     stats = {
         "memories_added": 0, "memories_updated": 0, "memories_skipped": 0,
         "links_added": 0, "links_merged": 0, "profiles_upserted": 0,
         "tombstones_applied": 0, "teams_upserted": 0, "projects_upserted": 0,
-        "org_tombstones_applied": 0,
+        "org_tombstones_applied": 0, "org_records_rejected": 0,
     }
     # A semi-trusted peer must not forge a memory authored by one of OUR local
     # agents (impersonation). Compute the guarded id set once.
@@ -225,11 +308,11 @@ def import_bundle(
                 elif kind == "tombstone":
                     _apply_tombstone(store, entry, stats)
                 elif kind == "team":
-                    _merge_team(store, entry, stats)
+                    _merge_team(store, entry, stats, org_scope=org_scope)
                 elif kind == "project":
-                    _merge_project(store, entry, stats)
+                    _merge_project(store, entry, stats, org_scope=org_scope)
                 elif kind == "org_tombstone":
-                    _apply_org_tombstone(store, entry, stats)
+                    _apply_org_tombstone(store, entry, stats, org_scope=org_scope)
     except Exception:
         store.conn.rollback()
         raise
@@ -323,45 +406,95 @@ def _org_tomb_at(store, kind: str, id_: str) -> str | None:
     return row[0] if row else None
 
 
-def _merge_team(store, entry: dict, stats: dict) -> None:
+def _merge_team(store, entry: dict, stats: dict, *, org_scope: str | None) -> None:
     """Converge a team's definition + full member set by last-writer-wins on
-    updated_at; a member set REPLACE means removals propagate too."""
+    updated_at; a member set REPLACE means removals propagate too.
+
+    Gated: only a peer authorized for this team (org_scope 'full' or
+    'team:<this id>') may rewrite it, and an implausibly future-dated record is
+    rejected so it cannot win LWW forever.
+    """
     tid, upd = entry["id"], entry.get("updated_at") or ""
+    if not _org_scope_allows(org_scope, "team", tid, team_of=None):
+        stats["org_records_rejected"] += 1
+        return
+    if _ts_too_future(upd):
+        stats["org_records_rejected"] += 1
+        return
     tomb = _org_tomb_at(store, "team", tid)
     if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
         return  # deleted at/after this version — don't resurrect
+    members = entry.get("members") or []
     existing = store.conn.execute("SELECT updated_at FROM teams WHERE id = ?", (tid,)).fetchone()
-    if existing is not None and _norm_ts(upd) <= _norm_ts(existing["updated_at"]):
-        return
+    if existing is not None:
+        inc, ex = _norm_ts(upd), _norm_ts(existing["updated_at"])
+        if inc < ex:
+            return
+        if inc == ex:
+            # Same instant on both nodes: converge deterministically instead of
+            # each keeping its own member set.
+            ex_members = [r[0] for r in store.conn.execute(
+                "SELECT agent_id FROM team_members WHERE team_id = ?", (tid,)
+            ).fetchall()]
+            if not _org_member_wins(members, ex_members):
+                return
     store.conn.execute(
         "INSERT INTO teams(id, name, created_at, updated_at) VALUES (?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
         (tid, entry.get("name") or tid, upd, upd),
     )
     store.conn.execute("DELETE FROM team_members WHERE team_id = ?", (tid,))
-    for agent_id in entry.get("members") or []:
+    for agent_id in members:
         store.conn.execute(
             "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)", (tid, agent_id)
         )
+    # Subset invariant on import: a project member must still be a team member.
+    # After replacing the team roster, drop project members no longer in it.
+    store.conn.execute(
+        "DELETE FROM project_members WHERE project_id IN "
+        "(SELECT id FROM projects WHERE team_id = ?) AND agent_id NOT IN "
+        "(SELECT agent_id FROM team_members WHERE team_id = ?)",
+        (tid, tid),
+    )
     stats["teams_upserted"] += 1
 
 
-def _merge_project(store, entry: dict, stats: dict) -> None:
+def _merge_project(store, entry: dict, stats: dict, *, org_scope: str | None) -> None:
     pid, upd = entry["id"], entry.get("updated_at") or ""
+    team_id = entry.get("team_id") or ""
+    # A team-scoped peer may assert a project only if it belongs to that team;
+    # trust the record's team_id, falling back to the local parent when absent.
+    parent = team_id or (lambda r: r[0] if r else None)(
+        store.conn.execute("SELECT team_id FROM projects WHERE id = ?", (pid,)).fetchone()
+    )
+    if not _org_scope_allows(org_scope, "project", pid, team_of=parent):
+        stats["org_records_rejected"] += 1
+        return
+    if _ts_too_future(upd):
+        stats["org_records_rejected"] += 1
+        return
     tomb = _org_tomb_at(store, "project", pid)
     if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
         return
+    members = entry.get("members") or []
     existing = store.conn.execute("SELECT updated_at FROM projects WHERE id = ?", (pid,)).fetchone()
-    if existing is not None and _norm_ts(upd) <= _norm_ts(existing["updated_at"]):
-        return
-    team_id = entry.get("team_id") or ""
+    if existing is not None:
+        inc, ex = _norm_ts(upd), _norm_ts(existing["updated_at"])
+        if inc < ex:
+            return
+        if inc == ex:
+            ex_members = [r[0] for r in store.conn.execute(
+                "SELECT agent_id FROM project_members WHERE project_id = ?", (pid,)
+            ).fetchall()]
+            if not _org_member_wins(members, ex_members):
+                return
     store.conn.execute(
         "INSERT INTO projects(id, team_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
         (pid, team_id, entry.get("name") or pid, upd, upd),
     )
     store.conn.execute("DELETE FROM project_members WHERE project_id = ?", (pid,))
-    for agent_id in entry.get("members") or []:
+    for agent_id in members:
         # Preserve the subset invariant even if the team member set is out of
         # sync: only keep project members who are current team members.
         is_member = store.conn.execute(
@@ -375,8 +508,20 @@ def _merge_project(store, entry: dict, stats: dict) -> None:
     stats["projects_upserted"] += 1
 
 
-def _apply_org_tombstone(store, entry: dict, stats: dict) -> None:
+def _apply_org_tombstone(store, entry: dict, stats: dict, *, org_scope: str | None) -> None:
     kind, id_, deleted_at = entry["tomb_kind"], entry["id"], entry.get("deleted_at") or ""
+    # Authorize against the peer's scope. For a project tombstone under a
+    # team-scoped peer, resolve the parent team locally.
+    parent = None
+    if kind == "project":
+        row = store.conn.execute("SELECT team_id FROM projects WHERE id = ?", (id_,)).fetchone()
+        parent = row[0] if row else None
+    if not _org_scope_allows(org_scope, kind, id_, team_of=parent):
+        stats["org_records_rejected"] += 1
+        return
+    if _ts_too_future(deleted_at):
+        stats["org_records_rejected"] += 1
+        return
     if kind == "team":
         row = store.conn.execute("SELECT updated_at FROM teams WHERE id = ?", (id_,)).fetchone()
         if row is not None and _norm_ts(deleted_at) >= _norm_ts(row["updated_at"]):
@@ -466,18 +611,36 @@ def _merge_profile(store, entry: dict, stats: dict) -> None:
 
 
 def _export_kwargs_for_policy(policy: str) -> dict:
-    """Translate a peer policy into export_bundle keyword arguments."""
+    """Translate a peer policy into export_bundle keyword arguments.
+
+    A 'shared' peer gets memories but NO org structure (org membership is the
+    whole node's ACL graph — not something a memory-only peer should learn).
+    """
     if policy == "full":
-        return {"include_private": True}
+        return {"include_private": True, "include_org": True}
     if policy.startswith("team:"):
-        return {"team": policy[len("team:"):], "include_private": False}
+        return {"team": policy[len("team:"):], "include_private": False, "include_org": True}
     if policy.startswith("project:"):
-        return {"project": policy[len("project:"):], "include_private": False}
-    return {"include_private": False}  # 'shared' and any unknown value: safe default
+        return {"project": policy[len("project:"):], "include_private": False, "include_org": True}
+    return {"include_private": False, "include_org": False}  # 'shared'/unknown: memories only
+
+
+def _org_scope_for_policy(policy: str) -> str | None:
+    """The org-mutation authorization a peer with this policy carries on IMPORT.
+
+    Mirrors the export scope: 'full' may assert anything, a scoped peer only its
+    own team/project, a 'shared' (or unknown) peer nothing.
+    """
+    if policy == "full":
+        return "full"
+    if policy.startswith("team:") or policy.startswith("project:"):
+        return policy
+    return None
 
 
 def pull_from_peer(client, base_url: str, *, since: str | None = None,
-                   peer_token: str | None = None, trusted: bool = True, lock=None) -> dict[str, int]:
+                   peer_token: str | None = None, trusted: bool = True,
+                   org_scope: str | None = None, lock=None) -> dict[str, int]:
     """Fetch a peer's bundle over HTTP (unlocked) and merge it locally (locked)."""
     import tempfile
 
@@ -487,7 +650,10 @@ def pull_from_peer(client, base_url: str, *, since: str | None = None,
         handle.write(body)
     try:
         with _guard(lock):
-            return client.import_bundle(handle.name, source_peer=base_url.rstrip("/"), trusted=trusted)
+            return client.import_bundle(
+                handle.name, source_peer=base_url.rstrip("/"),
+                trusted=trusted, org_scope=org_scope,
+            )
     finally:
         Path(handle.name).unlink(missing_ok=True)
 
@@ -519,7 +685,10 @@ def sync_with_peer(client, url: str, *, peer_token: str | None = None,
     across the peer HTTP round-trips.
     """
     trusted = policy == "full"
-    pulled = pull_from_peer(client, url, peer_token=peer_token, trusted=trusted, lock=lock)
+    pulled = pull_from_peer(
+        client, url, peer_token=peer_token, trusted=trusted,
+        org_scope=_org_scope_for_policy(policy), lock=lock,
+    )
     pushed = push_to_peer(client, url, peer_token=peer_token, policy=policy, lock=lock)
     return {"peer": url, "pulled": pulled, "pushed": pushed, "ok": True}
 

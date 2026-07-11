@@ -254,20 +254,38 @@ def test_membership_changes_are_audited(tmp_path):
 
 
 def test_orphan_memory_detection_and_cleanup(tmp_path):
-    """New-A/B: emptying a scope orphans its memory; maintenance finds+cleans it."""
+    """An orphan is reachable by NOBODY: its scope no longer exists AND its owner
+    is not a live agent. A live owner or an existing (even empty) scope keeps a
+    memory recoverable, so it must never be flagged — deleting it would be data
+    loss (the v0.14-review data-loss fix)."""
     c = MemoryClient(home=tmp_path)
     c.store.register_agent("alice", kind="hermes")
     c.store.create_team("apollo"); c.store.add_team_member("apollo", "alice")
-    m = c.add("apollo team knowledge", owner="alice", visibility=["team:apollo"])
+
+    # (1) A truly orphaned memory: owner is not a registered agent and it is
+    # scoped to a team this node does not have (e.g. synced in, then the team
+    # was never created / was tombstoned).
+    orphan = c.add("ghost team knowledge", owner="ext-node", visibility=["team:ghost"])
+    # (2) NOT an orphan — a live owner can always read it, even scoped to a ghost team.
+    owned = c.add("alice's note", owner="alice", visibility=["team:ghost"])
+    # (3) NOT an orphan — global.
     g = c.add("global note", owner="alice", visibility=["global"])
+    # (4) NOT an orphan — private memory of a live owner.
     p = c.add("private note", owner="alice", visibility=[])
-    assert c.orphan_count() == 0
-    c.store.remove_team_member("apollo", "alice")     # apollo now empty
+
     orphans = c.find_orphan_memories()
-    assert [o["id"] for o in orphans] == [m.id]       # only the team-scoped one
+    assert [o["id"] for o in orphans] == [orphan.id]
+
+    # Emptying an EXISTING team must NOT orphan its memories (recoverable by
+    # re-adding a member; owner also still reads them).
+    tm = c.add("apollo team note", owner="ext-node", visibility=["team:apollo"])
+    c.store.remove_team_member("apollo", "alice")     # apollo now empty but EXISTS
+    assert tm.id not in {o["id"] for o in c.find_orphan_memories()}
+
     assert c.delete_orphan_memories() == {"orphans_deleted": 1}
-    assert c.get(m.id) is None
-    assert c.get(g.id) is not None and c.get(p.id) is not None  # untouched
+    assert c.get(orphan.id) is None
+    for keep in (owned, g, p, tm):
+        assert c.get(keep.id) is not None             # all untouched
 
 
 def test_maintenance_scan_and_vacuum(tmp_path):

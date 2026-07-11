@@ -1075,7 +1075,7 @@ async function maint(path, method, label) {
   catch (e) { out.textContent = e.message; }
 }
 $("btn-maint-scan").addEventListener("click", () => maint("/api/maintenance/scan", null, t("Health")));
-$("btn-maint-orphans").addEventListener("click", () => { if (confirm(t("Delete all orphan memories?"))) maint("/api/maintenance/orphans/delete", "POST", t("Orphans")); });
+$("btn-maint-orphans").addEventListener("click", () => { if (confirm(t("Delete all orphan memories?"))) maint("/api/maintenance/orphans/delete?confirm=orphans", "POST", t("Orphans")); });
 $("btn-maint-reindex").addEventListener("click", () => maint("/api/maintenance/reindex", "POST", t("Reindex")));
 $("btn-maint-vacuum").addEventListener("click", () => maint("/api/maintenance/vacuum", "POST", t("Vacuum")));
 $("btn-team-create").addEventListener("click", async () => {

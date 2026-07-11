@@ -465,59 +465,87 @@ def _stale_amos_processes() -> list[tuple[int, str, str]]:
     return stale
 
 
-def _restart_web_process(pid: int, cmdline: str) -> bool:
-    """SIGTERM the old console and relaunch it with its original command line."""
+def _restart_web_from_pidfile(home) -> str:
+    """Restart the console recorded in <home>/web.pid.
+
+    SECURITY: the relaunch argv comes from the pidfile that the console wrote
+    about ITSELF — never from `ps` output, which any local process could spoof
+    into being re-executed. Only the recorded pid is signalled, and only if it
+    is actually alive. Returns a short status string for the caller to print.
+    """
     import os
-    import shlex
     import signal
     import subprocess
     import sys
     import time
 
+    from .pidfile import read_web_pidfile
+    from .tokens import resolve_home
+
+    rec = read_web_pidfile(home)
+    if not rec:
+        return "no pidfile — restart the console manually"
+    pid, argv, cwd = rec["pid"], rec["argv"], rec.get("cwd") or None
     if sys.platform == "win32":
-        return False  # no SIGTERM/start_new_session; user restarts manually
+        return "automatic restart unsupported on Windows — restart the console manually"
+    try:
+        os.kill(pid, 0)  # is the recorded process actually alive & signal-able?
+    except ProcessLookupError:
+        return f"recorded pid {pid} is not running — start the console manually"
+    except PermissionError:
+        return f"recorded pid {pid} not owned by this user — restart it manually"
     try:
         os.kill(pid, signal.SIGTERM)
     except OSError:
-        return False
-    for _ in range(20):
+        return f"could not signal pid {pid} — restart the console manually"
+    for _ in range(40):  # up to ~10s for the port to be released
         try:
             os.kill(pid, 0)
         except OSError:
             break
         time.sleep(0.25)
-    argv = shlex.split(cmdline)
     stdout = subprocess.DEVNULL
     stderr = subprocess.DEVNULL
-    if "--home" in argv[:-1]:
-        try:
-            home = Path(argv[argv.index("--home") + 1]).expanduser()
-            stdout = open(home / "web.log", "ab")  # noqa: SIM115 - handed to child
-            stderr = subprocess.STDOUT
-        except OSError:
-            pass
     try:
-        subprocess.Popen(argv, stdout=stdout, stderr=stderr, start_new_session=True)
-        return True
-    except Exception:  # noqa: BLE001
-        return False
+        log = open(Path(resolve_home(home)) / "web.log", "ab")  # noqa: SIM115 - handed to child
+        stdout, stderr = log, subprocess.STDOUT
+    except OSError:
+        pass
+    try:
+        child = subprocess.Popen(argv, cwd=cwd, stdout=stdout, stderr=stderr,
+                                 start_new_session=True)
+    except Exception as exc:  # noqa: BLE001
+        return f"relaunch failed ({exc}) — restart the console manually"
+    time.sleep(1.0)  # liveness: confirm the new process didn't immediately die
+    if child.poll() is not None:
+        return (f"relaunched process exited (code {child.returncode}) — the old "
+                f"port may still be held; restart the console manually")
+    return f"restarted (new pid {child.pid})"
 
 
 def _web_service_installed() -> bool:
+    import subprocess
     import sys
 
     from . import service as svc
 
+    if sys.platform == "win32":
+        # No unit file — query the scheduled task instead.
+        try:
+            return subprocess.run(
+                ["schtasks", "/Query", "/TN", svc.SERVICE_NAME],
+                capture_output=True, timeout=10,
+            ).returncode == 0
+        except Exception:  # noqa: BLE001
+            return False
     try:
         return svc._unit_path(sys.platform).exists()
-    except Exception:  # noqa: BLE001 - e.g. win32 has no unit file
+    except Exception:  # noqa: BLE001
         return False
 
 
-def _handle_running_processes(*, assume_yes: bool, no_restart: bool) -> None:
+def _handle_running_processes(*, assume_yes: bool, no_restart: bool, home=None) -> None:
     """Post-upgrade cleanup: everything still running loads the OLD code."""
-    import sys
-
     procs = _running_amos_processes()
     web = [p for p in procs if p[1] == "web"]
     mcp = [p for p in procs if p[1] == "mcp"]
@@ -543,11 +571,7 @@ def _handle_running_processes(*, assume_yes: bool, no_restart: bool) -> None:
                     resp = "n"
                 do_restart = resp in ("", "y", "yes")
             if do_restart:
-                for pid, _, cmd in web:
-                    ok = _restart_web_process(pid, cmd)
-                    print(f"web console pid {pid}: {'restarted' if ok else 'restart failed — restart manually'}")
-                if sys.platform == "win32":
-                    print("(Windows: automatic restart unsupported — restart the console manually.)")
+                print(f"web console: {_restart_web_from_pidfile(home)}")
             else:
                 print("Skipped. Restart the web console manually to load the new version.")
     if mcp:
@@ -619,7 +643,9 @@ def _cmd_update(args) -> int:
     print("running:", " ".join(cmd))
     rc = subprocess.call(cmd)
     if rc == 0:
-        _handle_running_processes(assume_yes=args.yes, no_restart=args.no_restart)
+        _handle_running_processes(
+            assume_yes=args.yes, no_restart=args.no_restart, home=args.home,
+        )
     return rc
 
 
