@@ -74,6 +74,7 @@ Global flag: `--home <dir>`.
 | `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP. |
 | `sync auto` | Converge with every registered peer. |
 | `import-hermes --profile --profile-home` | Import Hermes `MEMORY.md`/`USER.md` (idempotent). |
+| `import --from mem0\|zep\|chatgpt <file> [--owner --visibility --type]` | Import an export from another memory system (idempotent; private by default). See [docs/IMPORTERS.md](IMPORTERS.md). |
 | `golden-recall --cases <file>` | Recall-quality evaluation gate. |
 | `shadow-summary --log <jsonl>` | Shadow-mode evidence summary. |
 

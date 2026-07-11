@@ -111,6 +111,15 @@ CONSOLIDATION_MIN_CLUSTER_SIZE = 3
 RETENTION_MIN_HALF_LIVES = 4.0
 
 
+def _is_local_url(url: str) -> bool:
+    """True if a peer URL points at the local host (loopback), where plain HTTP
+    carries no network-exposure risk."""
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower()
+    return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or host.endswith(".localhost")
+
+
 def _migration_decay_columns(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(memories)")}
     columns = {
@@ -1379,6 +1388,15 @@ class MemoryStore:
         url = url.strip().rstrip("/")
         if not url.startswith(("http://", "https://")):
             raise ValueError("peer URL must start with http:// or https://")
+        if url.startswith("http://") and not _is_local_url(url):
+            import warnings
+
+            warnings.warn(
+                f"peer {url} uses plain HTTP over the network — the bearer token "
+                "and memory content will cross the wire unencrypted. Use https:// "
+                "(a TLS reverse proxy or tunnel) for any non-localhost peer.",
+                stacklevel=2,
+            )
         policy = self._validate_peer_policy(policy)
         name = (name or "").strip()
         self.conn.execute(

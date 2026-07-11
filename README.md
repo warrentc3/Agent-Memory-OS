@@ -278,6 +278,12 @@ pip install 'agent-memory-os[mcp]'
 python -m agent_memory_os.mcp_server
 ```
 
+Wire it into Claude Code in one line (set the agent identity so memories are owned correctly):
+
+```bash
+claude mcp add agent-memory --env AGENT_MEMORY_AGENT_ID=cc-main -- python -m agent_memory_os.mcp_server
+```
+
 Tools (11): `memory_add`, `memory_search`, `memory_context_pack`, `memory_orchestrate_context`, `memory_link`, `memory_update`, `memory_recall_feedback`, `memory_consolidate`, `memory_offload_context`, `memory_reload_context`, `memory_snapshot_diff`. Set `AGENT_MEMORY_AGENT_ID` so each agent acts under its own identity.
 
 ## Web UI
@@ -332,6 +338,9 @@ see the [CHANGELOG](CHANGELOG.md) for what each release added.
 - **[User Guide](docs/USER_GUIDE.md)** — concepts, full CLI / HTTP API / MCP references, multi-agent and federation walkthroughs, ops checklist
 - **[Docker guide](docs/DOCKER.md)** — `docker`/`docker compose` startup, config via env, two-node sync mesh
 - [SPEC](SPEC.md) — contracts and invariants, by milestone
+- **[Security](SECURITY.md)** & **[Threat model](docs/THREAT_MODEL.md)** — disclosure policy, trust boundaries, and honest known limitations
+- **[Embeddings & scale](docs/EMBEDDINGS.md)** — plug in a real embedding model; behaviour from 10k to 1M memories
+- **[Importers](docs/IMPORTERS.md)** — migrate from Mem0 / Zep / ChatGPT · **[Compatibility](COMPATIBILITY.md)** — the 1.x semver promise
 - **[Reviews & reports](docs/reviews/)** — fan-out code + security reviews (through v1.0.0), the performance/security report, and the validation harness (`scripts/validation_run.py`)
 - [CHANGELOG](CHANGELOG.md) · [Roadmap](docs/ROADMAP.md) · [Integration guides](docs/integrations/claude-code.md)
 
