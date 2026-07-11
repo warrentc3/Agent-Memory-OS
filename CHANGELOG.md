@@ -4,7 +4,7 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [0.12.0] — unreleased
+## [0.12.0] — 2026-07-11
 
 **Multiple instances on one machine.** Run several Agent Memory OS instances
 side by side (each with its own `--home`) without port clashes, and identify
@@ -24,6 +24,10 @@ each other by name during sync.
 - **`agent-memory node`** shows/sets `node_name`/`host`/`port`; `service install`
   and the console honour the configured port; the console header shows this
   instance's node name.
+- **Fix**: port availability is probed by connection, not bind — a restarted
+  server re-binds its usual port instead of drifting (TIME_WAIT on POSIX,
+  SO_REUSEADDR on Windows), which had surfaced as "failed to fetch" in the
+  console. The graph view also degrades gracefully on unexpected data.
 
 **Docker.** `Dockerfile` + `docker-compose.yml` run the Web console with memories
 persisted in a `/data` volume; a two-node `docker-compose.mesh.yml` shows
