@@ -1,3 +1,4 @@
+<!-- mcp-name: io.github.yamantaka520/agent-memory-os -->
 <p align="center">
   <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/agent-memory-os-logo-integrated-v2.png" alt="Agent Memory OS" width="560">
 </p>

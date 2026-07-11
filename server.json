@@ -1,0 +1,32 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.yamantaka520/agent-memory-os",
+  "description": "Local-first memory engine for AI-agent teams: private/team/project ACL, associative recall, and federated sync. No LLM required.",
+  "repository": {
+    "url": "https://github.com/yamantaka520/Agent-Memory-OS",
+    "source": "github"
+  },
+  "version": "0.0.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "agent-memory-os",
+      "version": "0.0.0",
+      "transport": { "type": "stdio" },
+      "environmentVariables": [
+        {
+          "description": "This agent's identity; memories default to this owner and recall carries its ACL.",
+          "isRequired": false,
+          "format": "string",
+          "name": "AGENT_MEMORY_AGENT_ID"
+        },
+        {
+          "description": "Data home directory (default ~/.agent-memory).",
+          "isRequired": false,
+          "format": "string",
+          "name": "AGENT_MEMORY_HOME"
+        }
+      ]
+    }
+  ]
+}
