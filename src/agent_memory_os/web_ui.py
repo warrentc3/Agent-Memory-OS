@@ -546,7 +546,7 @@ const I18N = {
 "Link two memories":"連結兩筆記憶","Link":"建立關聯","src memory id":"來源記憶 ID","dst memory id":"目標記憶 ID",
 "Consolidate":"整併","Run consolidation":"執行整併",
 "Retention & archive":"保留策略與歸檔","Archive expired":"歸檔過期記憶","Also archive decayed":"連同深度衰減","Archive is empty.":"歸檔是空的。","restore":"還原",
-"Federation":"聯邦同步","⬇ Download bundle":"⬇ 下載 Bundle","⬆ Import bundle":"⬆ 匯入 Bundle","Add peer":"加入節點","⇆ Sync mesh now":"⇆ 立即同步網格","peer url, e.g. http://host:8000":"節點網址,例:http://host:8000","peer token (optional)":"節點 token(選填)","peer name (optional)":"節點名稱(選填)","No peers registered — this host syncs alone.":"尚未註冊任何節點——本機獨立運作。","remove":"移除","full policy shares private memories — use only for your own trusted nodes":"full 政策會外傳私有記憶——僅用於你自己的信任節點",
+"Federation":"聯邦同步","⬇ Download bundle":"⬇ 下載 Bundle","⬆ Import bundle":"⬆ 匯入 Bundle","Add peer":"加入節點","⇆ Sync mesh now":"⇆ 立即同步網格","peer url, e.g. http://host:8000":"節點網址,例:http://host:8000","peer token (optional)":"節點 token(選填)","peer name (optional)":"節點名稱(選填)","Graph unavailable.":"圖譜暫時無法載入。","No peers registered — this host syncs alone.":"尚未註冊任何節點——本機獨立運作。","remove":"移除","full policy shares private memories — use only for your own trusted nodes":"full 政策會外傳私有記憶——僅用於你自己的信任節點",
 "⚠ Danger zone — forget an agent":"⚠ 危險區——遺忘一個代理","Delete all memories":"刪除全部記憶","agent / owner id (e.g. mizuki)":"代理/擁有者 ID(例:mizuki)",
 "✎ Edit":"✎ 編輯","👍 Helpful":"👍 有幫助","👎 Misleading":"👎 誤導","🔗 Links":"🔗 關聯","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 複製 ID","🗑 Delete":"🗑 刪除","why?":"為什麼?","Save":"儲存","Cancel":"取消","No links yet.":"尚無關聯。","Loading…":"載入中……","Ready.":"就緒。","🔒 private":"🔒 私有"
 },
@@ -572,7 +572,7 @@ const I18N = {
 "Link two memories":"连接两条记忆","Link":"建立关联","src memory id":"源记忆 ID","dst memory id":"目标记忆 ID",
 "Consolidate":"整并","Run consolidation":"执行整并",
 "Retention & archive":"保留策略与归档","Archive expired":"归档过期记忆","Also archive decayed":"连同深度衰减","Archive is empty.":"归档是空的。","restore":"恢复",
-"Federation":"联邦同步","⬇ Download bundle":"⬇ 下载 Bundle","⬆ Import bundle":"⬆ 导入 Bundle","Add peer":"添加节点","⇆ Sync mesh now":"⇆ 立即同步网格","peer url, e.g. http://host:8000":"节点地址,如:http://host:8000","peer token (optional)":"节点 token(可选)","peer name (optional)":"节点名称(可选)","No peers registered — this host syncs alone.":"尚未注册任何节点——本机独立运行。","remove":"移除","full policy shares private memories — use only for your own trusted nodes":"full 策略会外传私有记忆——仅用于你自己的信任节点",
+"Federation":"联邦同步","⬇ Download bundle":"⬇ 下载 Bundle","⬆ Import bundle":"⬆ 导入 Bundle","Add peer":"添加节点","⇆ Sync mesh now":"⇆ 立即同步网格","peer url, e.g. http://host:8000":"节点地址,如:http://host:8000","peer token (optional)":"节点 token(可选)","peer name (optional)":"节点名称(可选)","Graph unavailable.":"图谱暂时无法加载。","No peers registered — this host syncs alone.":"尚未注册任何节点——本机独立运行。","remove":"移除","full policy shares private memories — use only for your own trusted nodes":"full 策略会外传私有记忆——仅用于你自己的信任节点",
 "⚠ Danger zone — forget an agent":"⚠ 危险区——遗忘一个代理","Delete all memories":"删除全部记忆","agent / owner id (e.g. mizuki)":"代理/所有者 ID(如:mizuki)",
 "✎ Edit":"✎ 编辑","👍 Helpful":"👍 有帮助","👎 Misleading":"👎 误导","🔗 Links":"🔗 关联","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 复制 ID","🗑 Delete":"🗑 删除","why?":"为什么?","Save":"保存","Cancel":"取消","No links yet.":"暂无关联。","Loading…":"加载中……","Ready.":"就绪。","🔒 private":"🔒 私有"
 },
@@ -598,7 +598,7 @@ const I18N = {
 "Link two memories":"記憶をリンク","Link":"リンク","src memory id":"元の記憶ID","dst memory id":"先の記憶ID",
 "Consolidate":"統合","Run consolidation":"統合を実行",
 "Retention & archive":"保持とアーカイブ","Archive expired":"期限切れをアーカイブ","Also archive decayed":"減衰分も含める","Archive is empty.":"アーカイブは空です。","restore":"復元",
-"Federation":"フェデレーション","⬇ Download bundle":"⬇ バンドルをダウンロード","⬆ Import bundle":"⬆ バンドルをインポート","Add peer":"ピアを追加","⇆ Sync mesh now":"⇆ 今すぐメッシュ同期","peer url, e.g. http://host:8000":"ピアURL(例:http://host:8000)","peer token (optional)":"ピアトークン(任意)","peer name (optional)":"ピア名(任意)","No peers registered — this host syncs alone.":"ピア未登録——このホストは単独で動作します。","remove":"削除","full policy shares private memories — use only for your own trusted nodes":"fullポリシーはプライベート記憶も送信します——自分の信頼できるノードのみに使用してください",
+"Federation":"フェデレーション","⬇ Download bundle":"⬇ バンドルをダウンロード","⬆ Import bundle":"⬆ バンドルをインポート","Add peer":"ピアを追加","⇆ Sync mesh now":"⇆ 今すぐメッシュ同期","peer url, e.g. http://host:8000":"ピアURL(例:http://host:8000)","peer token (optional)":"ピアトークン(任意)","peer name (optional)":"ピア名(任意)","Graph unavailable.":"グラフを読み込めません。","No peers registered — this host syncs alone.":"ピア未登録——このホストは単独で動作します。","remove":"削除","full policy shares private memories — use only for your own trusted nodes":"fullポリシーはプライベート記憶も送信します——自分の信頼できるノードのみに使用してください",
 "⚠ Danger zone — forget an agent":"⚠ 危険ゾーン——エージェントを忘却","Delete all memories":"全記憶を削除","agent / owner id (e.g. mizuki)":"エージェント/所有者ID(例:mizuki)",
 "✎ Edit":"✎ 編集","👍 Helpful":"👍 役立った","👎 Misleading":"👎 誤解を招く","🔗 Links":"🔗 リンク","⇢ Share":"⇢ 共有","⧉ Copy id":"⧉ IDコピー","🗑 Delete":"🗑 削除","why?":"理由は?","Save":"保存","Cancel":"キャンセル","No links yet.":"リンクはまだありません。","Loading…":"読み込み中……","Ready.":"準備完了。","🔒 private":"🔒 プライベート"
 },
@@ -624,7 +624,7 @@ const I18N = {
 "Link two memories":"기억 두 개 연결","Link":"연결","src memory id":"원본 기억 ID","dst memory id":"대상 기억 ID",
 "Consolidate":"통합","Run consolidation":"통합 실행",
 "Retention & archive":"보존 및 보관","Archive expired":"만료 기억 보관","Also archive decayed":"감쇠 기억도 포함","Archive is empty.":"보관함이 비어 있습니다.","restore":"복원",
-"Federation":"페더레이션","⬇ Download bundle":"⬇ 번들 다운로드","⬆ Import bundle":"⬆ 번들 가져오기","Add peer":"피어 추가","⇆ Sync mesh now":"⇆ 지금 메시 동기화","peer url, e.g. http://host:8000":"피어 URL, 예: http://host:8000","peer token (optional)":"피어 토큰(선택)","peer name (optional)":"피어 이름(선택)","No peers registered — this host syncs alone.":"등록된 피어가 없습니다 — 이 호스트는 단독으로 동작합니다.","remove":"제거","full policy shares private memories — use only for your own trusted nodes":"full 정책은 비공개 기억까지 전송합니다 — 신뢰하는 자체 노드에만 사용하세요",
+"Federation":"페더레이션","⬇ Download bundle":"⬇ 번들 다운로드","⬆ Import bundle":"⬆ 번들 가져오기","Add peer":"피어 추가","⇆ Sync mesh now":"⇆ 지금 메시 동기화","peer url, e.g. http://host:8000":"피어 URL, 예: http://host:8000","peer token (optional)":"피어 토큰(선택)","peer name (optional)":"피어 이름(선택)","Graph unavailable.":"그래프를 불러올 수 없습니다.","No peers registered — this host syncs alone.":"등록된 피어가 없습니다 — 이 호스트는 단독으로 동작합니다.","remove":"제거","full policy shares private memories — use only for your own trusted nodes":"full 정책은 비공개 기억까지 전송합니다 — 신뢰하는 자체 노드에만 사용하세요",
 "⚠ Danger zone — forget an agent":"⚠ 위험 구역 — 에이전트 망각","Delete all memories":"모든 기억 삭제","agent / owner id (e.g. mizuki)":"에이전트/소유자 ID(예: mizuki)",
 "✎ Edit":"✎ 편집","👍 Helpful":"👍 도움됨","👎 Misleading":"👎 오해 유발","🔗 Links":"🔗 연결","⇢ Share":"⇢ 공유","⧉ Copy id":"⧉ ID 복사","🗑 Delete":"🗑 삭제","why?":"이유는?","Save":"저장","Cancel":"취소","No links yet.":"아직 연결이 없습니다.","Loading…":"불러오는 중……","Ready.":"준비 완료.","🔒 private":"🔒 비공개"
 }
@@ -1218,6 +1218,7 @@ async function loadGraph() {
     legend.appendChild(key);
   }
 
+  if (!data || !Array.isArray(data.nodes)) { toast(t("Graph unavailable."), "err"); return; }
   if (!data.nodes.length) {
     context.clearRect(0, 0, width, height);
     context.fillStyle = getComputedStyle(document.body).getPropertyValue("color");
@@ -1235,7 +1236,11 @@ async function loadGraph() {
     vx: 0, vy: 0, r: 6 + Math.min(10, n.degree * 1.6),
   }));
   const byId = Object.fromEntries(nodes.map((n) => [n.id, n]));
-  const edges = data.edges.map((e) => ({ ...e, a: byId[e.src], b: byId[e.dst] }));
+  // Defensive: only keep edges whose endpoints are actually present, so a
+  // stray edge can never make stepGraph read .x of undefined and freeze.
+  const edges = (data.edges || [])
+    .map((e) => ({ ...e, a: byId[e.src], b: byId[e.dst] }))
+    .filter((e) => e.a && e.b);
   graphState = { nodes: nodes, edges: edges, ctx: context, w: width, h: height, frame: 0, drag: null, hover: null };
   requestAnimationFrame(stepGraph);
 }
