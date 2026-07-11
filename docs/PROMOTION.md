@@ -4,7 +4,8 @@ Status of each channel, plus ready-to-use copy.
 
 | Channel | Status |
 |---|---|
-| **awesome-mcp-servers** | ✅ PR opened — [punkpeye/awesome-mcp-servers#9876](https://github.com/punkpeye/awesome-mcp-servers/pull/9876) (Knowledge & Memory) |
+| **awesome-mcp-servers** | ✅ PR [#9876](https://github.com/punkpeye/awesome-mcp-servers/pull/9876) — Glama badge added per maintainer request; awaiting merge |
+| **Glama** | ✅ Listed, claimed & checks passing — [glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS](https://glama.ai/mcp/servers/yamantaka520/Agent-Memory-OS) |
 | **modelcontextprotocol/servers** (official) | N/A — no longer accepts third-party PRs; it redirects to the MCP Registry |
 | **MCP Registry** | ⚙️ Wired — `server.json` + `mcp-name:` marker + OIDC workflow; **auto-publishes on the next release** (see below) |
 | Show HN / Reddit / X | ✍️ Drafts below — post when you're ready |
