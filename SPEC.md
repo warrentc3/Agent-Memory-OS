@@ -448,4 +448,26 @@ Teams and projects are first-class, with membership as the ACL authority.
 - **Surfaces**: WebUI Teams tab, CLI `agent-memory team|project`, and the
   `/api/teams` + `/api/projects` endpoints (with member sub-resources).
   `register_agent(teams=…)` (and `agents.toml`) set an agent's team membership
-  by reconciling `team_members` to the declared list.
+  by reconciling `team_members` to the declared list; `register_agent(teams=None)`
+  leaves membership untouched.
+
+## v0.14 Federated org structure
+
+The org structure federates so cross-node team/project ACL is consistent.
+
+- **Versioning (migration 14)**: `teams.updated_at` / `projects.updated_at` bump
+  on any membership change. An `org_audit` log records create/delete and member
+  add/remove (actor + timestamp). `org_tombstones(kind, id, deleted_at)` records
+  team/project deletions.
+- **Bundle v3**: carries `team` / `project` records (id, name, `updated_at`,
+  full member list) and `org_tombstone` records, scoped to match the memory
+  scope of the bundle.
+- **Import — convergent LWW**: a team/project is upserted and its member set
+  REPLACED when the incoming `updated_at` wins, so additions and removals both
+  converge; an `org_tombstone` at/after the local `updated_at` deletes the
+  team/project (and cascades), and is retained so an older live record can't
+  resurrect it. Imported project members are filtered to current team members
+  (subset invariant preserved even under partial sync).
+- **Known follow-ups**: revocation still doesn't retract already-synced
+  *memory* from a node; per-peer policy isn't auto-derived from local
+  membership.

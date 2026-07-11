@@ -169,6 +169,90 @@ def test_share_to_project_via_web(tmp_path):
     assert r.json()["grant"] == "project:web"
 
 
+def _sync(src, dst, tmp_path, name="b.jsonl"):
+    b = tmp_path / name
+    src.export_bundle(b, include_private=False)
+    return dst.import_bundle(b, trusted=True)
+
+
+def test_org_structure_syncs_and_converges(tmp_path):
+    """G2: teams/projects/memberships federate; additions AND removals and
+    deletions all converge across nodes."""
+    A = MemoryClient(home=tmp_path / "a")
+    B = MemoryClient(home=tmp_path / "b")
+    for n in ("alice", "bob"):
+        A.store.register_agent(n, kind="hermes")
+    A.store.create_team("apollo")
+    A.store.add_team_member("apollo", "alice")
+    A.store.add_team_member("apollo", "bob")
+    A.store.create_project("web", "apollo")
+    A.store.add_project_member("web", "alice")
+
+    _sync(A, B, tmp_path)
+    assert B.store.get_team("apollo")["members"] == ["alice", "bob"]
+    assert B.store.get_project("web")["members"] == ["alice"]
+
+    # membership REMOVAL propagates (member-set replace on LWW)
+    import time
+    time.sleep(1.05)
+    A.store.remove_team_member("apollo", "bob")
+    _sync(A, B, tmp_path)
+    assert B.store.get_team("apollo")["members"] == ["alice"]
+
+    # deletions propagate via org tombstones
+    time.sleep(1.05)
+    A.store.delete_project("web")
+    _sync(A, B, tmp_path)
+    assert B.store.get_project("web") is None
+    time.sleep(1.05)
+    A.store.delete_team("apollo")
+    _sync(A, B, tmp_path)
+    assert B.store.get_team("apollo") is None
+
+
+def test_synced_org_makes_project_acl_consistent_cross_node(tmp_path):
+    """After org sync, a project:<id> memory synced to B resolves for the same
+    member it did on A."""
+    A = MemoryClient(home=tmp_path / "a")
+    B = MemoryClient(home=tmp_path / "b")
+    A.store.register_agent("alice", kind="hermes")
+    A.store.create_team("apollo"); A.store.add_team_member("apollo", "alice")
+    A.store.create_project("web", "apollo"); A.store.add_project_member("web", "alice")
+    A.add("web project note", owner="alice", visibility=["project:web"])
+    _sync(A, B, tmp_path)
+    # B now has the project structure AND the memory; alice resolves it on B
+    assert any("web project note" in h.record.content
+               for h in B.search("web project note", requester_agent_id="alice"))
+
+
+def test_org_tombstone_blocks_resurrection(tmp_path):
+    """A deleted team can't be resurrected by an older team record in a bundle."""
+    A = MemoryClient(home=tmp_path / "a")
+    B = MemoryClient(home=tmp_path / "b")
+    A.store.register_agent("alice", kind="hermes")
+    A.store.create_team("apollo"); A.store.add_team_member("apollo", "alice")
+    seed = tmp_path / "seed.jsonl"
+    A.export_bundle(seed, include_private=False)  # bundle with the live team
+    B.import_bundle(seed, trusted=True)
+    assert B.store.get_team("apollo") is not None
+    import time
+    time.sleep(1.05)
+    B.store.delete_team("apollo")                 # B deletes it (tombstone)
+    B.import_bundle(seed, trusted=True)           # re-import the older live team
+    assert B.store.get_team("apollo") is None     # tombstone wins
+
+
+def test_membership_changes_are_audited(tmp_path):
+    c = MemoryClient(home=tmp_path)
+    c.store.register_agent("alice", kind="hermes")
+    c.store.create_team("apollo")
+    c.store.add_team_member("apollo", "alice", actor="admin")
+    actions = [a["action"] for a in c.org_audit_log()]
+    assert "create_team" in actions and "add_team_member" in actions
+    add = next(a for a in c.org_audit_log() if a["action"] == "add_team_member")
+    assert add["actor"] == "admin" and "alice" in add["detail"]
+
+
 def test_teams_projects_api(tmp_path):
     web = TestClient(create_app(home=tmp_path))
     for a in ("alice", "bob"):

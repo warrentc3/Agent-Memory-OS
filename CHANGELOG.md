@@ -4,6 +4,30 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.14.0] — unreleased
+
+**Federated org structure** (migration 14). Teams, projects, and their
+membership now converge across nodes, so cross-node team/project ACL is
+consistent — the missing piece that makes "team operation" correct in a mesh.
+
+- **Convergent org sync**: bundles (v3) carry each team/project with an
+  `updated_at` and its full member set. Import applies last-writer-wins on
+  `updated_at` and REPLACES the member set, so additions AND removals converge.
+  Deletions propagate via `org_tombstones` (a reused id can't resurrect a
+  deleted team/project). Org export is scoped like memory (`full`/`shared` →
+  all; `team:<id>` → that team + its projects; `project:<id>` → that project +
+  its team). The subset invariant is preserved on import.
+- **Membership audit** (`org_audit`): create/delete team & project and every
+  member add/remove is recorded with actor + timestamp; readable via
+  `client.org_audit_log()` and `GET /api/org/audit`. API member routes accept
+  an `actor`.
+- Review fixes from `docs/reviews/20260711-v0.13.0-review.md` (shipped in this
+  release): `create_project` can't re-point a project to a different team;
+  `register_agent(teams=None)` leaves membership untouched (metadata edits no
+  longer wipe it); `to_project` reachable in the share API; the CLI reports
+  domain errors cleanly; deleting a team/project revokes its orphaned
+  visibility grant (no id-reuse resurrection).
+
 ## [0.13.0] — 2026-07-11
 
 **First-class Teams & Projects** (migration 13). Teams and projects are now

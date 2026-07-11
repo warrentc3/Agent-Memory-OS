@@ -186,11 +186,11 @@ class MemoryClient:
     def delete_team(self, team_id: str) -> bool:
         return self.store.delete_team(team_id)
 
-    def add_team_member(self, team_id: str, agent_id: str) -> None:
-        self.store.add_team_member(team_id, agent_id)
+    def add_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
+        self.store.add_team_member(team_id, agent_id, actor=actor)
 
-    def remove_team_member(self, team_id: str, agent_id: str) -> None:
-        self.store.remove_team_member(team_id, agent_id)
+    def remove_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
+        self.store.remove_team_member(team_id, agent_id, actor=actor)
 
     def create_project(self, project_id: str, team_id: str, *, name: str = "") -> dict[str, object]:
         return self.store.create_project(project_id, team_id, name=name)
@@ -201,11 +201,14 @@ class MemoryClient:
     def delete_project(self, project_id: str) -> bool:
         return self.store.delete_project(project_id)
 
-    def add_project_member(self, project_id: str, agent_id: str) -> None:
-        self.store.add_project_member(project_id, agent_id)
+    def add_project_member(self, project_id: str, agent_id: str, *, actor: str = "local") -> None:
+        self.store.add_project_member(project_id, agent_id, actor=actor)
 
-    def remove_project_member(self, project_id: str, agent_id: str) -> None:
-        self.store.remove_project_member(project_id, agent_id)
+    def remove_project_member(self, project_id: str, agent_id: str, *, actor: str = "local") -> None:
+        self.store.remove_project_member(project_id, agent_id, actor=actor)
+
+    def org_audit_log(self, *, limit: int = 100) -> list[dict[str, str]]:
+        return self.store.org_audit_log(limit=limit)
 
     def export_bundle(
         self,

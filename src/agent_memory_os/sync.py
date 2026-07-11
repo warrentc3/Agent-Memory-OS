@@ -35,7 +35,7 @@ def _guard(lock):
     """
     return lock if lock is not None else nullcontext()
 
-BUNDLE_VERSION = 2
+BUNDLE_VERSION = 3
 _MEMORY_KEYS = (
     "id", "owner", "scope", "type", "content", "summary", "tags", "visibility",
     "source", "confidence", "importance", "created_at", "updated_at",
@@ -151,6 +151,34 @@ def export_bundle(
                 json.dumps({"kind": "tombstone", "id": mem_id, "deleted_at": deleted_at}) + "\n"
             )
             counts["tombstones"] += 1
+        # Org structure (federate teams/projects/memberships so ACL definitions
+        # converge across nodes). Scoped to match the memory scope. Teams are
+        # written before projects so the import can honour the subset invariant.
+        if project:
+            proj = store.get_project(project)
+            team_rows = ([store.get_team(proj["team_id"])] if proj and store.get_team(proj["team_id"]) else [])
+            project_rows = [proj] if proj else []
+        elif team:
+            t = store.get_team(team)
+            team_rows = [t] if t else []
+            project_rows = store.list_projects(team)
+        else:
+            team_rows = store.list_teams()
+            project_rows = store.list_projects()
+        for t in team_rows:
+            handle.write(json.dumps({
+                "kind": "team", "id": t["id"], "name": t["name"],
+                "updated_at": t["updated_at"], "members": t["members"],
+            }, ensure_ascii=False) + "\n")
+        for pr in project_rows:
+            handle.write(json.dumps({
+                "kind": "project", "id": pr["id"], "team_id": pr["team_id"], "name": pr["name"],
+                "updated_at": pr["updated_at"], "members": pr["members"],
+            }, ensure_ascii=False) + "\n")
+        for tkind, tid, deleted_at in store.list_org_tombstones(since=since):
+            handle.write(json.dumps({
+                "kind": "org_tombstone", "tomb_kind": tkind, "id": tid, "deleted_at": deleted_at,
+            }) + "\n")
     return counts
 
 
@@ -171,7 +199,8 @@ def import_bundle(
     stats = {
         "memories_added": 0, "memories_updated": 0, "memories_skipped": 0,
         "links_added": 0, "links_merged": 0, "profiles_upserted": 0,
-        "tombstones_applied": 0,
+        "tombstones_applied": 0, "teams_upserted": 0, "projects_upserted": 0,
+        "org_tombstones_applied": 0,
     }
     # A semi-trusted peer must not forge a memory authored by one of OUR local
     # agents (impersonation). Compute the guarded id set once.
@@ -179,7 +208,7 @@ def import_bundle(
     try:
         with path.open("r", encoding="utf-8") as handle:
             header = json.loads(handle.readline())
-            if header.get("kind") != "bundle" or header.get("version") not in (1, 2):
+            if header.get("kind") != "bundle" or header.get("version") not in (1, 2, 3):
                 raise ValueError("not a compatible agent-memory-os bundle")
             for line in handle:
                 entry = json.loads(line)
@@ -195,10 +224,19 @@ def import_bundle(
                     _merge_profile(store, entry, stats)
                 elif kind == "tombstone":
                     _apply_tombstone(store, entry, stats)
+                elif kind == "team":
+                    _merge_team(store, entry, stats)
+                elif kind == "project":
+                    _merge_project(store, entry, stats)
+                elif kind == "org_tombstone":
+                    _apply_org_tombstone(store, entry, stats)
     except Exception:
         store.conn.rollback()
         raise
     store.conn.commit()
+    # Imported memberships change ACL resolution — drop the cached sets.
+    if hasattr(store, "_invalidate_membership_caches"):
+        store._invalidate_membership_caches()
     return stats
 
 
@@ -275,6 +313,94 @@ def _apply_tombstone(store, entry: dict, stats: dict) -> None:
         "CASE WHEN excluded.deleted_at > tombstones.deleted_at "
         "THEN excluded.deleted_at ELSE tombstones.deleted_at END",
         (mem_id, deleted_at),
+    )
+
+
+def _org_tomb_at(store, kind: str, id_: str) -> str | None:
+    row = store.conn.execute(
+        "SELECT deleted_at FROM org_tombstones WHERE kind = ? AND id = ?", (kind, id_)
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _merge_team(store, entry: dict, stats: dict) -> None:
+    """Converge a team's definition + full member set by last-writer-wins on
+    updated_at; a member set REPLACE means removals propagate too."""
+    tid, upd = entry["id"], entry.get("updated_at") or ""
+    tomb = _org_tomb_at(store, "team", tid)
+    if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
+        return  # deleted at/after this version — don't resurrect
+    existing = store.conn.execute("SELECT updated_at FROM teams WHERE id = ?", (tid,)).fetchone()
+    if existing is not None and _norm_ts(upd) <= _norm_ts(existing["updated_at"]):
+        return
+    store.conn.execute(
+        "INSERT INTO teams(id, name, created_at, updated_at) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+        (tid, entry.get("name") or tid, upd, upd),
+    )
+    store.conn.execute("DELETE FROM team_members WHERE team_id = ?", (tid,))
+    for agent_id in entry.get("members") or []:
+        store.conn.execute(
+            "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)", (tid, agent_id)
+        )
+    stats["teams_upserted"] += 1
+
+
+def _merge_project(store, entry: dict, stats: dict) -> None:
+    pid, upd = entry["id"], entry.get("updated_at") or ""
+    tomb = _org_tomb_at(store, "project", pid)
+    if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
+        return
+    existing = store.conn.execute("SELECT updated_at FROM projects WHERE id = ?", (pid,)).fetchone()
+    if existing is not None and _norm_ts(upd) <= _norm_ts(existing["updated_at"]):
+        return
+    team_id = entry.get("team_id") or ""
+    store.conn.execute(
+        "INSERT INTO projects(id, team_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+        (pid, team_id, entry.get("name") or pid, upd, upd),
+    )
+    store.conn.execute("DELETE FROM project_members WHERE project_id = ?", (pid,))
+    for agent_id in entry.get("members") or []:
+        # Preserve the subset invariant even if the team member set is out of
+        # sync: only keep project members who are current team members.
+        is_member = store.conn.execute(
+            "SELECT 1 FROM team_members WHERE team_id = ? AND agent_id = ?", (team_id, agent_id)
+        ).fetchone()
+        if is_member:
+            store.conn.execute(
+                "INSERT OR IGNORE INTO project_members(project_id, agent_id) VALUES (?, ?)",
+                (pid, agent_id),
+            )
+    stats["projects_upserted"] += 1
+
+
+def _apply_org_tombstone(store, entry: dict, stats: dict) -> None:
+    kind, id_, deleted_at = entry["tomb_kind"], entry["id"], entry.get("deleted_at") or ""
+    if kind == "team":
+        row = store.conn.execute("SELECT updated_at FROM teams WHERE id = ?", (id_,)).fetchone()
+        if row is not None and _norm_ts(deleted_at) >= _norm_ts(row["updated_at"]):
+            for pr in store.conn.execute("SELECT id FROM projects WHERE team_id = ?", (id_,)).fetchall():
+                store.conn.execute("DELETE FROM project_members WHERE project_id = ?", (pr[0],))
+                store._strip_visibility_grant(f"project:{pr[0]}")
+            store.conn.execute("DELETE FROM projects WHERE team_id = ?", (id_,))
+            store.conn.execute("DELETE FROM team_members WHERE team_id = ?", (id_,))
+            store.conn.execute("DELETE FROM teams WHERE id = ?", (id_,))
+            store._strip_visibility_grant(f"team:{id_}")
+            stats["org_tombstones_applied"] += 1
+    elif kind == "project":
+        row = store.conn.execute("SELECT updated_at FROM projects WHERE id = ?", (id_,)).fetchone()
+        if row is not None and _norm_ts(deleted_at) >= _norm_ts(row["updated_at"]):
+            store.conn.execute("DELETE FROM project_members WHERE project_id = ?", (id_,))
+            store.conn.execute("DELETE FROM projects WHERE id = ?", (id_,))
+            store._strip_visibility_grant(f"project:{id_}")
+            stats["org_tombstones_applied"] += 1
+    store.conn.execute(
+        "INSERT INTO org_tombstones(kind, id, deleted_at) VALUES (?, ?, ?) "
+        "ON CONFLICT(kind, id) DO UPDATE SET deleted_at = "
+        "CASE WHEN excluded.deleted_at > org_tombstones.deleted_at "
+        "THEN excluded.deleted_at ELSE org_tombstones.deleted_at END",
+        (kind, id_, deleted_at),
     )
 
 

@@ -347,6 +347,40 @@ def _iso_now_for_migration(conn: sqlite3.Connection) -> str:
     return row[0]
 
 
+def _migration_org_federation(conn: sqlite3.Connection) -> None:
+    # Federate the org structure: each team/project carries an updated_at that
+    # bumps on any membership change, so a bundle can carry the full member set
+    # and importers converge by last-writer-wins. Deletions propagate via
+    # org_tombstones; membership changes are recorded in org_audit.
+    now = _iso_now_for_migration(conn)
+    for table in ("teams", "projects"):
+        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+        if "updated_at" not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN updated_at TEXT")
+            conn.execute(f"UPDATE {table} SET updated_at = COALESCE(created_at, ?)", (now,))
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS org_tombstones (
+          kind TEXT NOT NULL,          -- 'team' | 'project'
+          id TEXT NOT NULL,
+          deleted_at TEXT NOT NULL,
+          PRIMARY KEY (kind, id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS org_audit (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          at TEXT NOT NULL,
+          actor TEXT NOT NULL DEFAULT 'local',
+          action TEXT NOT NULL,        -- create_team|delete_team|add_team_member|...
+          detail TEXT NOT NULL DEFAULT ''
+        )
+        """
+    )
+
+
 def _migration_archive_links(conn: sqlite3.Connection) -> None:
     # Cold-archive the association edges alongside the memory, so restore
     # brings a memory back with its graph instead of at degree 0. No FK to
@@ -384,6 +418,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (11, "configured decay base half-life", _migration_decay_base),
     (12, "peer display name for sync identification", _migration_peer_name),
     (13, "first-class teams and projects with membership", _migration_teams_projects),
+    (14, "federate org structure: versioning + tombstones + audit", _migration_org_federation),
 ]
 
 
@@ -925,18 +960,19 @@ class MemoryStore:
     def _reconcile_agent_teams(self, agent_id: str, team_list: Sequence[str]) -> None:
         now = utc_now()
         wanted = {t for t in team_list if t}
-        for team_id in wanted:
+        current = {r[0] for r in self.conn.execute(
+            "SELECT team_id FROM team_members WHERE agent_id = ?", (agent_id,)
+        ).fetchall()}
+        for team_id in wanted - current:
             self.conn.execute(
-                "INSERT OR IGNORE INTO teams(id, name, created_at) VALUES (?, ?, ?)",
-                (team_id, team_id, now),
+                "INSERT OR IGNORE INTO teams(id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+                (team_id, team_id, now, now),
             )
             self.conn.execute(
                 "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
                 (team_id, agent_id),
             )
-        current = {r[0] for r in self.conn.execute(
-            "SELECT team_id FROM team_members WHERE agent_id = ?", (agent_id,)
-        ).fetchall()}
+            self._touch_team(team_id)  # membership change -> version bump for sync
         for team_id in current - wanted:
             self._remove_team_member_row(team_id, agent_id)
 
@@ -999,11 +1035,13 @@ class MemoryStore:
         team_id = team_id.strip()
         if not team_id:
             raise ValueError("team id must be non-empty")
+        now = utc_now()
         self.conn.execute(
-            "INSERT INTO teams(id, name, created_at) VALUES (?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
-            (team_id, name or team_id, utc_now()),
+            "INSERT INTO teams(id, name, created_at, updated_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+            (team_id, name or team_id, now, now),
         )
+        self._org_audit("create_team", team_id)
         self.conn.commit()
         return self.get_team(team_id)
 
@@ -1018,7 +1056,7 @@ class MemoryStore:
             "SELECT id FROM projects WHERE team_id = ? ORDER BY id", (team_id,)
         ).fetchall()]
         return {"id": row["id"], "name": row["name"], "created_at": row["created_at"],
-                "members": members, "projects": projects}
+                "updated_at": row["updated_at"], "members": members, "projects": projects}
 
     def list_teams(self) -> list[dict[str, object]]:
         rows = self.conn.execute("SELECT id FROM teams ORDER BY id").fetchall()
@@ -1038,6 +1076,11 @@ class MemoryStore:
         # Revoke the now-orphaned grant so a reused team id can't resurrect
         # read access to the old team's scoped memory.
         self._strip_visibility_grant(f"team:{team_id}")
+        # Tombstones so the deletion (and its projects') propagates over sync.
+        for pid in project_ids:
+            self._org_tombstone("project", pid)
+        self._org_tombstone("team", team_id)
+        self._org_audit("delete_team", team_id)
         self.conn.commit()
         self._invalidate_membership_caches()
         return cur.rowcount > 0
@@ -1057,18 +1100,21 @@ class MemoryStore:
             (grant, grant),
         )
 
-    def add_team_member(self, team_id: str, agent_id: str) -> None:
+    def add_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
         if self.get_team(team_id) is None:
             raise KeyError(f"team not found: {team_id}")
         self.conn.execute(
             "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
             (team_id, agent_id),
         )
+        self._touch_team(team_id)
+        self._org_audit("add_team_member", f"{agent_id} -> team:{team_id}", actor)
         self.conn.commit()
         self._invalidate_membership_caches()
 
-    def remove_team_member(self, team_id: str, agent_id: str) -> None:
+    def remove_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
         self._remove_team_member_row(team_id, agent_id)
+        self._org_audit("remove_team_member", f"{agent_id} -> team:{team_id}", actor)
         self.conn.commit()
         self._invalidate_membership_caches()
 
@@ -1078,11 +1124,18 @@ class MemoryStore:
         )
         # Leaving a team removes the agent from that team's projects too — a
         # project member must always be a team member.
+        affected = [r[0] for r in self.conn.execute(
+            "SELECT id FROM projects WHERE team_id = ?", (team_id,)
+        ).fetchall()]
         self.conn.execute(
             "DELETE FROM project_members WHERE agent_id = ? AND project_id IN "
             "(SELECT id FROM projects WHERE team_id = ?)",
             (agent_id, team_id),
         )
+        # Version bump so the membership change converges over sync.
+        self._touch_team(team_id)
+        for pid in affected:
+            self._touch_project(pid)
 
     # ---------- project management ----------
 
@@ -1100,11 +1153,13 @@ class MemoryStore:
                 f"project {project_id!r} already exists under team "
                 f"{existing['team_id']!r}; delete it to recreate under another team"
             )
+        now = utc_now()
         self.conn.execute(
-            "INSERT INTO projects(id, team_id, name, created_at) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
-            (project_id, team_id, name or project_id, utc_now()),
+            "INSERT INTO projects(id, team_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
+            (project_id, team_id, name or project_id, now, now),
         )
+        self._org_audit("create_project", f"{project_id} (team:{team_id})")
         self.conn.commit()
         return self.get_project(project_id)
 
@@ -1117,7 +1172,8 @@ class MemoryStore:
             (project_id,),
         ).fetchall()]
         return {"id": row["id"], "team_id": row["team_id"], "name": row["name"],
-                "created_at": row["created_at"], "members": members}
+                "created_at": row["created_at"], "updated_at": row["updated_at"],
+                "members": members}
 
     def list_projects(self, team_id: str | None = None) -> list[dict[str, object]]:
         if team_id:
@@ -1133,11 +1189,13 @@ class MemoryStore:
         cur = self.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         # Revoke the orphaned grant so a reused project id can't resurrect access.
         self._strip_visibility_grant(f"project:{project_id}")
+        self._org_tombstone("project", project_id)
+        self._org_audit("delete_project", project_id)
         self.conn.commit()
         self._invalidate_membership_caches()
         return cur.rowcount > 0
 
-    def add_project_member(self, project_id: str, agent_id: str) -> None:
+    def add_project_member(self, project_id: str, agent_id: str, *, actor: str = "local") -> None:
         project = self.get_project(project_id)
         if project is None:
             raise KeyError(f"project not found: {project_id}")
@@ -1155,20 +1213,61 @@ class MemoryStore:
             "INSERT OR IGNORE INTO project_members(project_id, agent_id) VALUES (?, ?)",
             (project_id, agent_id),
         )
+        self._touch_project(project_id)
+        self._org_audit("add_project_member", f"{agent_id} -> project:{project_id}", actor)
         self.conn.commit()
         self._invalidate_membership_caches()
 
-    def remove_project_member(self, project_id: str, agent_id: str) -> None:
+    def remove_project_member(self, project_id: str, agent_id: str, *, actor: str = "local") -> None:
         self.conn.execute(
             "DELETE FROM project_members WHERE project_id = ? AND agent_id = ?",
             (project_id, agent_id),
         )
+        self._touch_project(project_id)
+        self._org_audit("remove_project_member", f"{agent_id} -> project:{project_id}", actor)
         self.conn.commit()
         self._invalidate_membership_caches()
 
     def _invalidate_membership_caches(self) -> None:
         self._teams_cache = {}
         self._projects_cache = {}
+
+    # ---------- org versioning, audit & tombstones (federation) ----------
+
+    def _touch_team(self, team_id: str) -> None:
+        self.conn.execute("UPDATE teams SET updated_at = ? WHERE id = ?", (utc_now(), team_id))
+
+    def _touch_project(self, project_id: str) -> None:
+        self.conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (utc_now(), project_id))
+
+    def _org_audit(self, action: str, detail: str, actor: str = "local") -> None:
+        self.conn.execute(
+            "INSERT INTO org_audit(at, actor, action, detail) VALUES (?, ?, ?, ?)",
+            (utc_now(), actor or "local", action, detail),
+        )
+
+    def org_audit_log(self, *, limit: int = 100) -> list[dict[str, str]]:
+        rows = self.conn.execute(
+            "SELECT at, actor, action, detail FROM org_audit ORDER BY id DESC LIMIT ?",
+            (max(1, limit),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def _org_tombstone(self, kind: str, id_: str) -> None:
+        self.conn.execute(
+            "INSERT INTO org_tombstones(kind, id, deleted_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(kind, id) DO UPDATE SET deleted_at = excluded.deleted_at",
+            (kind, id_, utc_now()),
+        )
+
+    def list_org_tombstones(self, *, since: str | None = None) -> list[tuple[str, str, str]]:
+        if since:
+            rows = self.conn.execute(
+                "SELECT kind, id, deleted_at FROM org_tombstones WHERE deleted_at > ?", (since,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute("SELECT kind, id, deleted_at FROM org_tombstones").fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
 
     PEER_POLICIES = {"full", "shared"}  # plus dynamic "team:<id>" / "project:<id>"
 

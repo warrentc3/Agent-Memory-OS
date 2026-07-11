@@ -152,6 +152,7 @@ class ProjectRequest(BaseModel):
 
 class MemberRequest(BaseModel):
     agent_id: str = Field(min_length=1)
+    actor: str = "local"
 
 
 class PeerRequest(BaseModel):
@@ -413,11 +414,16 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
             raise HTTPException(status_code=404, detail=f"team not found: {team_id}")
         return {"removed": team_id}
 
+    @app.get("/api/org/audit")
+    def org_audit(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:
+        with lock:
+            return {"audit": client.store.org_audit_log(limit=limit)}
+
     @app.post("/api/teams/{team_id}/members")
     def team_add_member(team_id: str, request: MemberRequest) -> dict[str, Any]:
         with lock:
             try:
-                client.store.add_team_member(team_id, request.agent_id)
+                client.store.add_team_member(team_id, request.agent_id, actor=request.actor)
                 return client.store.get_team(team_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -455,7 +461,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def project_add_member(project_id: str, request: MemberRequest) -> dict[str, Any]:
         with lock:
             try:
-                client.store.add_project_member(project_id, request.agent_id)
+                client.store.add_project_member(project_id, request.agent_id, actor=request.actor)
                 return client.store.get_project(project_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
