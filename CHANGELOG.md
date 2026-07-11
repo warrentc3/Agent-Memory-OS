@@ -25,6 +25,14 @@ each other by name during sync.
   and the console honour the configured port; the console header shows this
   instance's node name.
 
+**Docker.** `Dockerfile` + `docker-compose.yml` run the Web console with memories
+persisted in a `/data` volume; a two-node `docker-compose.mesh.yml` shows
+instances syncing by name. The image binds `0.0.0.0` with `--strict-port`,
+auto-generates a token on first run (secure by default), and configures entirely
+through env (`AGENT_MEMORY_WEB_TOKEN`, `AGENT_MEMORY_NODE_NAME`,
+`AGENT_MEMORY_WEB_HOST/PORT`) — env now overrides `instance.toml`. Semantic +
+MCP are opt-in via `--build-arg EXTRAS=full`. See `docs/DOCKER.md`.
+
 ## [0.11.1] — 2026-07-11
 
 Correctness, ranking, and privacy fixes — review batches 2 and 3, closing every

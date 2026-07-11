@@ -35,6 +35,18 @@ def test_client_exposes_node_name_from_settings(tmp_path):
     assert client.node_name == "node-A"
 
 
+def test_env_overrides_settings_file(tmp_path, monkeypatch):
+    """12-factor: a container configures node/host/port purely via env."""
+    st.update_instance_settings(tmp_path, node_name="from-file", port=8000)
+    monkeypatch.setenv("AGENT_MEMORY_NODE_NAME", "from-env")
+    monkeypatch.setenv("AGENT_MEMORY_WEB_PORT", "9090")
+    monkeypatch.setenv("AGENT_MEMORY_WEB_HOST", "0.0.0.0")
+    s = st.load_instance_settings(tmp_path)
+    assert s.node_name == "from-env"
+    assert s.port == 9090
+    assert s.host == "0.0.0.0"
+
+
 def test_find_available_port_skips_taken(tmp_path):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
         # Hold the port exclusively (no SO_REUSEADDR) so the probe must skip it

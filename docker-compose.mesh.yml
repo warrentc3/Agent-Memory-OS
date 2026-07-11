@@ -1,0 +1,51 @@
+# Two Agent Memory OS instances that can sync with each other — a minimal mesh
+# on one host, showcasing per-instance node names and the sync trust model.
+#
+#   AGENT_MEMORY_WEB_TOKEN=<shared-secret> docker compose -f docker-compose.mesh.yml up -d
+#
+# Then register the peers (services resolve each other by name on the network):
+#   docker compose -f docker-compose.mesh.yml exec node-a \
+#     agent-memory peers add http://node-b:8000 --peer-token "$AGENT_MEMORY_WEB_TOKEN" --policy full
+#   docker compose -f docker-compose.mesh.yml exec node-b \
+#     agent-memory peers add http://node-a:8000 --peer-token "$AGENT_MEMORY_WEB_TOKEN" --policy full
+#   docker compose -f docker-compose.mesh.yml exec node-a agent-memory sync auto
+#
+# A shared token lets the two nodes authenticate to each other. 'full' policy
+# means these are your own trusted replicas (private memories replicate); use
+# 'shared' between nodes you don't fully trust.
+x-amos: &amos
+  build:
+    context: .
+    args:
+      EXTRAS: api
+  image: agent-memory-os:local
+  restart: unless-stopped
+  environment: &amos-env
+    AGENT_MEMORY_WEB_TOKEN: ${AGENT_MEMORY_WEB_TOKEN:?set a shared token, e.g. in .env}
+
+services:
+  node-a:
+    <<: *amos
+    container_name: amos-node-a
+    ports:
+      - "8000:8000"
+    volumes:
+      - node-a-data:/data
+    environment:
+      <<: *amos-env
+      AGENT_MEMORY_NODE_NAME: node-a
+
+  node-b:
+    <<: *amos
+    container_name: amos-node-b
+    ports:
+      - "8001:8000"
+    volumes:
+      - node-b-data:/data
+    environment:
+      <<: *amos-env
+      AGENT_MEMORY_NODE_NAME: node-b
+
+volumes:
+  node-a-data:
+  node-b-data:

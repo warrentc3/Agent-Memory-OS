@@ -17,6 +17,7 @@ don't collide.
 
 from __future__ import annotations
 
+import os
 import socket
 import tomllib
 from dataclasses import dataclass
@@ -59,13 +60,21 @@ def load_instance_settings(home: str | Path | None) -> InstanceSettings:
         if not isinstance(section, dict):
             raise ValueError(f"invalid {path}: [instance] table expected")
         data = section
-    node_name = str(data.get("node_name") or "").strip() or default_node_name(home)
-    host = str(data.get("host") or DEFAULT_HOST).strip() or DEFAULT_HOST
-    port = data.get("port", DEFAULT_PORT)
+    # Env overrides the file (12-factor), so a container can be configured
+    # entirely through environment variables with no config file mounted.
+    node_name = (
+        str(os.getenv("AGENT_MEMORY_NODE_NAME") or data.get("node_name") or "").strip()
+        or default_node_name(home)
+    )
+    host = (
+        str(os.getenv("AGENT_MEMORY_WEB_HOST") or data.get("host") or DEFAULT_HOST).strip()
+        or DEFAULT_HOST
+    )
+    port = os.getenv("AGENT_MEMORY_WEB_PORT") or data.get("port", DEFAULT_PORT)
     try:
         port = int(port)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"invalid {path}: port must be an integer") from exc
+        raise ValueError(f"invalid port (env AGENT_MEMORY_WEB_PORT or {path}): must be an integer") from exc
     if not (0 < port < 65536):
         raise ValueError(f"invalid {path}: port must be 1-65535")
     return InstanceSettings(node_name=node_name, host=host, port=port)

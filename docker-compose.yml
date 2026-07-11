@@ -1,0 +1,27 @@
+# Single Agent Memory OS instance.
+#
+#   cp .env.example .env      # (optional) set a fixed API token
+#   docker compose up -d      # console at http://localhost:8000
+#
+# Memories persist in the `amos-data` named volume across restarts.
+services:
+  amos:
+    build:
+      context: .
+      args:
+        EXTRAS: api           # "full" adds turbovec semantic recall + MCP
+    image: agent-memory-os:local
+    container_name: agent-memory-os
+    ports:
+      - "8000:8000"
+    volumes:
+      - amos-data:/data
+    environment:
+      # Leave unset to auto-generate a token on first run (see entrypoint note).
+      AGENT_MEMORY_WEB_TOKEN: ${AGENT_MEMORY_WEB_TOKEN:-}
+      # Name shown to peers during sync (defaults to a host+home label).
+      AGENT_MEMORY_NODE_NAME: ${AGENT_MEMORY_NODE_NAME:-}
+    restart: unless-stopped
+
+volumes:
+  amos-data:
