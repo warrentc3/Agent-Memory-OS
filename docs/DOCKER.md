@@ -69,6 +69,21 @@ docker exec amos agent-memory node                 # show this node's identity
 docker exec amos agent-memory retention
 ```
 
+## One image, three modes
+
+The image is complete — Web console, **MCP server**, and CLI are all installed.
+The first argument to `docker run` selects the mode:
+
+```bash
+docker run -p 8000:8000 -v amos-data:/data agent-memory-os        # (default) web console
+docker run -i --rm agent-memory-os mcp                            # stdio MCP server
+docker run --rm -v amos-data:/data agent-memory-os check          # any CLI command
+```
+
+The `mcp` mode is the stdio MCP server (`python -m agent_memory_os.mcp_server`) —
+point an MCP client, or an MCP catalog's introspection, at
+`docker run -i --rm yamantaka520/agent-memory-os mcp`.
+
 ## Configuration (all optional, via environment)
 
 | Variable | Default | Purpose |

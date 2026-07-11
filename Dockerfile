@@ -1,10 +1,12 @@
-# Agent Memory OS — Web console container.
+# Agent Memory OS — complete container (Web console + MCP server + CLI).
 #
 #   docker build -t agent-memory-os .
-#   docker run -p 8000:8000 -v amos-data:/data agent-memory-os
+#   docker run -p 8000:8000 -v amos-data:/data agent-memory-os        # web console (default)
+#   docker run -i --rm agent-memory-os mcp                             # stdio MCP server
+#   docker run --rm -v amos-data:/data agent-memory-os check          # any CLI command
 #
-# Semantic recall (turbovec) + MCP are opt-in to keep the default build fast
-# and dependency-light:  docker build --build-arg EXTRAS=full  .
+# The image installs the 'full' extra (turbovec + MCP) so every surface works
+# out of the box. For a lean, web-only build:  docker build --build-arg EXTRAS=api .
 FROM python:3.12-slim
 
 ENV PYTHONUNBUFFERED=1 \
@@ -15,8 +17,8 @@ ENV PYTHONUNBUFFERED=1 \
 WORKDIR /app
 COPY . /app
 
-# 'api' = FastAPI + uvicorn (the Web console). 'full' adds turbovec + MCP.
-ARG EXTRAS=api
+# 'full' = Web console + MCP server + turbovec (complete). 'api' = web only (lean).
+ARG EXTRAS=full
 RUN pip install ".[${EXTRAS}]"
 
 # Run unprivileged; /data holds memories.db, the token, and instance.toml and

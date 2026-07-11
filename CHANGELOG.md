@@ -4,6 +4,15 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [Unreleased]
+
+- **Docker image is now complete and multi-mode.** The image installs the `full`
+  extra (Web console + MCP server + turbovec + CLI), and the entrypoint dispatches
+  on the first argument: `web` (default), `mcp` (the stdio MCP server), or any
+  other args run the `agent-memory` CLI. One image, every surface. Verified end
+  to end, including a real MCP introspection handshake against
+  `docker run -i … mcp`. (`--build-arg EXTRAS=api` still gives a lean web-only build.)
+
 ## [1.0.2] — 2026-07-12
 
 Maturity pass for the 1.x line — docs, one opt-in feature, guards, and one fix.
