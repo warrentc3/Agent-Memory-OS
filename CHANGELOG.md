@@ -4,6 +4,17 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.0.1] — 2026-07-12
+
+Docs-only release to refresh the PyPI project page (the description is frozen
+per version). No code changes.
+
+- README: status badges (PyPI / Python / CI / Docker pulls / License), a top
+  navigation bar, and a fact-based "How it compares" positioning table vs Mem0
+  and Zep/Graphiti (architecture, not a benchmark).
+- New 繁體中文 README (`README.zh-Hant.md`) with an English⇄中文 language switch.
+- Web console dashboard screenshot in the README and the Docker Hub overview.
+
 ## [1.0.0] — 2026-07-12
 
 First stable release. Everything below lands on top of v0.14.0's federated org
