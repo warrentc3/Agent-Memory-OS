@@ -107,6 +107,19 @@ def build_parser() -> argparse.ArgumentParser:
     node.add_argument("--set-host", default=None, help="Set the Web UI bind host")
     node.add_argument("--set-port", type=int, default=None, help="Set the Web UI port")
 
+    team = sub.add_parser("team", help="Manage teams and their node members")
+    team.add_argument("action", choices=["list", "create", "delete", "add-member", "remove-member"])
+    team.add_argument("team_id", nargs="?", default=None)
+    team.add_argument("agent_id", nargs="?", default=None)
+    team.add_argument("--name", default="", help="Display name (create)")
+
+    project = sub.add_parser("project", help="Manage projects under a team (members ⊆ team)")
+    project.add_argument("action", choices=["list", "create", "delete", "add-member", "remove-member"])
+    project.add_argument("project_id", nargs="?", default=None)
+    project.add_argument("agent_id", nargs="?", default=None)
+    project.add_argument("--team", dest="team_id", default=None, help="Team id (create / list filter)")
+    project.add_argument("--name", default="", help="Display name (create)")
+
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
         "--half-lives", type=float, default=None,
@@ -330,6 +343,44 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps({
                 "node_name": settings.node_name, "host": settings.host, "port": settings.port,
             }, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "team":
+            s = client.store
+            if args.action == "list":
+                print(json.dumps(s.list_teams(), ensure_ascii=False, indent=2))
+            elif args.action == "create":
+                if not args.team_id:
+                    print("team create requires a team id"); return 2
+                print(json.dumps(s.create_team(args.team_id, name=args.name), ensure_ascii=False))
+            elif args.action == "delete":
+                print("deleted" if s.delete_team(args.team_id) else "not found")
+            elif args.action in ("add-member", "remove-member"):
+                if not (args.team_id and args.agent_id):
+                    print(f"team {args.action} requires <team_id> <agent_id>"); return 2
+                if args.action == "add-member":
+                    s.add_team_member(args.team_id, args.agent_id)
+                else:
+                    s.remove_team_member(args.team_id, args.agent_id)
+                print(json.dumps(s.get_team(args.team_id), ensure_ascii=False))
+            return 0
+        if args.command == "project":
+            s = client.store
+            if args.action == "list":
+                print(json.dumps(s.list_projects(args.team_id), ensure_ascii=False, indent=2))
+            elif args.action == "create":
+                if not (args.project_id and args.team_id):
+                    print("project create requires <project_id> --team <team_id>"); return 2
+                print(json.dumps(s.create_project(args.project_id, args.team_id, name=args.name), ensure_ascii=False))
+            elif args.action == "delete":
+                print("deleted" if s.delete_project(args.project_id) else "not found")
+            elif args.action in ("add-member", "remove-member"):
+                if not (args.project_id and args.agent_id):
+                    print(f"project {args.action} requires <project_id> <agent_id>"); return 2
+                if args.action == "add-member":
+                    s.add_project_member(args.project_id, args.agent_id)
+                else:
+                    s.remove_project_member(args.project_id, args.agent_id)
+                print(json.dumps(s.get_project(args.project_id), ensure_ascii=False))
             return 0
         if args.command == "peers":
             if args.action == "list":

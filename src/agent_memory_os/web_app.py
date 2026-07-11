@@ -137,6 +137,21 @@ class AgentRequest(BaseModel):
     notes: str = ""
 
 
+class TeamRequest(BaseModel):
+    id: str = Field(min_length=1)
+    name: str = ""
+
+
+class ProjectRequest(BaseModel):
+    id: str = Field(min_length=1)
+    team_id: str = Field(min_length=1)
+    name: str = ""
+
+
+class MemberRequest(BaseModel):
+    agent_id: str = Field(min_length=1)
+
+
 class PeerRequest(BaseModel):
     url: str = Field(min_length=8)
     token: str | None = None
@@ -371,6 +386,84 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         if not removed:
             raise HTTPException(status_code=404, detail=f"agent not registered: {agent_id}")
         return {"removed": agent_id}
+
+    # ---------- teams ----------
+
+    @app.get("/api/teams")
+    def teams_list() -> dict[str, Any]:
+        with lock:
+            return {"teams": client.store.list_teams()}
+
+    @app.post("/api/teams")
+    def teams_create(request: TeamRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                return client.store.create_team(request.id, name=request.name)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/teams/{team_id}")
+    def teams_delete(team_id: str) -> dict[str, Any]:
+        with lock:
+            removed = client.store.delete_team(team_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"team not found: {team_id}")
+        return {"removed": team_id}
+
+    @app.post("/api/teams/{team_id}/members")
+    def team_add_member(team_id: str, request: MemberRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                client.store.add_team_member(team_id, request.agent_id)
+                return client.store.get_team(team_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    @app.delete("/api/teams/{team_id}/members")
+    def team_remove_member(team_id: str, agent_id: str = Query(min_length=1)) -> dict[str, Any]:
+        with lock:
+            client.store.remove_team_member(team_id, agent_id)
+            return client.store.get_team(team_id) or {"removed": agent_id}
+
+    # ---------- projects ----------
+
+    @app.get("/api/projects")
+    def projects_list(team: str | None = None) -> dict[str, Any]:
+        with lock:
+            return {"projects": client.store.list_projects(team or None)}
+
+    @app.post("/api/projects")
+    def projects_create(request: ProjectRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                return client.store.create_project(request.id, request.team_id, name=request.name)
+            except (ValueError, KeyError) as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/projects/{project_id}")
+    def projects_delete(project_id: str) -> dict[str, Any]:
+        with lock:
+            removed = client.store.delete_project(project_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail=f"project not found: {project_id}")
+        return {"removed": project_id}
+
+    @app.post("/api/projects/{project_id}/members")
+    def project_add_member(project_id: str, request: MemberRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                client.store.add_project_member(project_id, request.agent_id)
+                return client.store.get_project(project_id)
+            except KeyError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.delete("/api/projects/{project_id}/members")
+    def project_remove_member(project_id: str, agent_id: str = Query(min_length=1)) -> dict[str, Any]:
+        with lock:
+            client.store.remove_project_member(project_id, agent_id)
+            return client.store.get_project(project_id) or {"removed": agent_id}
 
     @app.get("/api/peers")
     def peers_list() -> dict[str, Any]:

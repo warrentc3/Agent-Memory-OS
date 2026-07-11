@@ -425,3 +425,27 @@ Several instances can share one machine, each with its own `--home`.
   peer's advertised `node_name` when a peer is added (overridable). Bundles
   carry the exporter's `node_name` in their header. Identity is display-only —
   ACL and merge rules are unchanged.
+
+## v0.13 Teams & Projects
+
+Teams and projects are first-class, with membership as the ACL authority.
+
+- **Schema (migration 13)**: `teams(id, name)`, `team_members(team_id,
+  agent_id)`, `projects(id, team_id, name)`, `project_members(project_id,
+  agent_id)`. The join tables are authoritative; `agents.teams` is a
+  denormalized convenience backfilled into `team_members` on upgrade.
+- **Invariants**: a project belongs to exactly one team; a project member MUST
+  be a member of that team (enforced on add). Leaving a team removes the agent
+  from that team's projects; deleting a team deletes its projects and
+  memberships; removing an agent clears all its memberships.
+- **ACL**: `visibility: ["team:<id>"]` resolves to team members;
+  `visibility: ["project:<id>"]` resolves to project members (a subset). Both
+  are hard gates, resolved from membership and cached with a 30s TTL.
+- **Scoped sync**: `export_bundle(team=…|project=…)` and peer policies
+  `team:<id>` / `project:<id>` restrict a bundle to that scope's shared memory
+  and that scope's members' recall profiles — so project memory only ever
+  reaches project members' nodes.
+- **Surfaces**: WebUI Teams tab, CLI `agent-memory team|project`, and the
+  `/api/teams` + `/api/projects` endpoints (with member sub-resources).
+  `register_agent(teams=…)` (and `agents.toml`) set an agent's team membership
+  by reconciling `team_members` to the declared list.

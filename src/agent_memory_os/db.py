@@ -281,6 +281,72 @@ def _migration_peer_name(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE sync_peers ADD COLUMN name TEXT NOT NULL DEFAULT ''")
 
 
+def _migration_teams_projects(conn: sqlite3.Connection) -> None:
+    # First-class teams and projects with explicit membership, so team-shared
+    # vs project-shared memory can be scoped correctly. Membership join tables
+    # are authoritative; a project's members must be a subset of its team's.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS teams (
+          id TEXT PRIMARY KEY,
+          name TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS team_members (
+          team_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          PRIMARY KEY (team_id, agent_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS projects (
+          id TEXT PRIMARY KEY,
+          team_id TEXT NOT NULL,
+          name TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS project_members (
+          project_id TEXT NOT NULL,
+          agent_id TEXT NOT NULL,
+          PRIMARY KEY (project_id, agent_id)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS team_members_agent ON team_members(agent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS project_members_agent ON project_members(agent_id)")
+    conn.execute("CREATE INDEX IF NOT EXISTS projects_team ON projects(team_id)")
+    # Backfill from the old flat agent.teams so existing memberships survive.
+    now = _iso_now_for_migration(conn)
+    for row in conn.execute("SELECT id, teams FROM agents").fetchall():
+        for team_id in json.loads(row[1] or "[]"):
+            team_id = str(team_id).strip()
+            if not team_id:
+                continue
+            conn.execute(
+                "INSERT OR IGNORE INTO teams(id, name, created_at) VALUES (?, ?, ?)",
+                (team_id, team_id, now),
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
+                (team_id, row[0]),
+            )
+
+
+def _iso_now_for_migration(conn: sqlite3.Connection) -> str:
+    row = conn.execute("SELECT strftime('%Y-%m-%dT%H:%M:%S+00:00','now')").fetchone()
+    return row[0]
+
+
 def _migration_archive_links(conn: sqlite3.Connection) -> None:
     # Cold-archive the association edges alongside the memory, so restore
     # brings a memory back with its graph instead of at degree 0. No FK to
@@ -317,6 +383,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (10, "archive association edges for lossless restore", _migration_archive_links),
     (11, "configured decay base half-life", _migration_decay_base),
     (12, "peer display name for sync identification", _migration_peer_name),
+    (13, "first-class teams and projects with membership", _migration_teams_projects),
 ]
 
 
@@ -840,9 +907,32 @@ class MemoryStore:
             """,
             (agent_id, display_name, kind, json.dumps(team_list), notes, utc_now()),
         )
+        # team_members is authoritative for ACL: reconcile this agent's rows to
+        # the declared list (create missing teams), so declaring an agent's
+        # teams == setting its team membership. The agents.teams column is kept
+        # as a denormalized convenience only.
+        self._reconcile_agent_teams(agent_id, team_list)
         self.conn.commit()
-        self._teams_cache = {}
+        self._invalidate_membership_caches()
         return self.get_agent(agent_id)
+
+    def _reconcile_agent_teams(self, agent_id: str, team_list: Sequence[str]) -> None:
+        now = utc_now()
+        wanted = {t for t in team_list if t}
+        for team_id in wanted:
+            self.conn.execute(
+                "INSERT OR IGNORE INTO teams(id, name, created_at) VALUES (?, ?, ?)",
+                (team_id, team_id, now),
+            )
+            self.conn.execute(
+                "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
+                (team_id, agent_id),
+            )
+        current = {r[0] for r in self.conn.execute(
+            "SELECT team_id FROM team_members WHERE agent_id = ?", (agent_id,)
+        ).fetchall()}
+        for team_id in current - wanted:
+            self._remove_team_member_row(team_id, agent_id)
 
     def get_agent(self, agent_id: str) -> dict[str, object] | None:
         row = self.conn.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)).fetchone()
@@ -850,7 +940,7 @@ class MemoryStore:
             return None
         return {
             "id": row["id"], "display_name": row["display_name"], "kind": row["kind"],
-            "teams": json.loads(row["teams"] or "[]"), "notes": row["notes"],
+            "teams": self.teams_for(row["id"]), "notes": row["notes"],
             "created_at": row["created_at"], "last_seen_at": row["last_seen_at"],
         }
 
@@ -867,8 +957,10 @@ class MemoryStore:
 
     def remove_agent(self, agent_id: str) -> bool:
         cur = self.conn.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        self.conn.execute("DELETE FROM team_members WHERE agent_id = ?", (agent_id,))
+        self.conn.execute("DELETE FROM project_members WHERE agent_id = ?", (agent_id,))
         self.conn.commit()
-        self._teams_cache = {}
+        self._invalidate_membership_caches()
         return cur.rowcount > 0
 
     def touch_agent(self, agent_id: str) -> None:
@@ -881,20 +973,181 @@ class MemoryStore:
     def teams_for(self, agent_id: str | None) -> list[str]:
         if not agent_id:
             return []
-        row = self.conn.execute(
-            "SELECT teams FROM agents WHERE id = ?", (agent_id,)
-        ).fetchone()
-        return json.loads(row["teams"] or "[]") if row else []
+        rows = self.conn.execute(
+            "SELECT team_id FROM team_members WHERE agent_id = ? ORDER BY team_id", (agent_id,)
+        ).fetchall()
+        return [r[0] for r in rows]
 
-    PEER_POLICIES = {"full", "shared"}  # plus dynamic "team:<id>"
+    def projects_for(self, agent_id: str | None) -> list[str]:
+        if not agent_id:
+            return []
+        rows = self.conn.execute(
+            "SELECT project_id FROM project_members WHERE agent_id = ? ORDER BY project_id",
+            (agent_id,),
+        ).fetchall()
+        return [r[0] for r in rows]
+
+    # ---------- team management ----------
+
+    def create_team(self, team_id: str, *, name: str = "") -> dict[str, object]:
+        team_id = team_id.strip()
+        if not team_id:
+            raise ValueError("team id must be non-empty")
+        self.conn.execute(
+            "INSERT INTO teams(id, name, created_at) VALUES (?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name",
+            (team_id, name or team_id, utc_now()),
+        )
+        self.conn.commit()
+        return self.get_team(team_id)
+
+    def get_team(self, team_id: str) -> dict[str, object] | None:
+        row = self.conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
+        if row is None:
+            return None
+        members = [r[0] for r in self.conn.execute(
+            "SELECT agent_id FROM team_members WHERE team_id = ? ORDER BY agent_id", (team_id,)
+        ).fetchall()]
+        projects = [r[0] for r in self.conn.execute(
+            "SELECT id FROM projects WHERE team_id = ? ORDER BY id", (team_id,)
+        ).fetchall()]
+        return {"id": row["id"], "name": row["name"], "created_at": row["created_at"],
+                "members": members, "projects": projects}
+
+    def list_teams(self) -> list[dict[str, object]]:
+        rows = self.conn.execute("SELECT id FROM teams ORDER BY id").fetchall()
+        return [self.get_team(r[0]) for r in rows]
+
+    def delete_team(self, team_id: str) -> bool:
+        # Cascade: the team's projects, and all memberships, go with it.
+        project_ids = [r[0] for r in self.conn.execute(
+            "SELECT id FROM projects WHERE team_id = ?", (team_id,)
+        ).fetchall()]
+        for pid in project_ids:
+            self.conn.execute("DELETE FROM project_members WHERE project_id = ?", (pid,))
+        self.conn.execute("DELETE FROM projects WHERE team_id = ?", (team_id,))
+        self.conn.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
+        cur = self.conn.execute("DELETE FROM teams WHERE id = ?", (team_id,))
+        self.conn.commit()
+        self._invalidate_membership_caches()
+        return cur.rowcount > 0
+
+    def add_team_member(self, team_id: str, agent_id: str) -> None:
+        if self.get_team(team_id) is None:
+            raise KeyError(f"team not found: {team_id}")
+        self.conn.execute(
+            "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
+            (team_id, agent_id),
+        )
+        self.conn.commit()
+        self._invalidate_membership_caches()
+
+    def remove_team_member(self, team_id: str, agent_id: str) -> None:
+        self._remove_team_member_row(team_id, agent_id)
+        self.conn.commit()
+        self._invalidate_membership_caches()
+
+    def _remove_team_member_row(self, team_id: str, agent_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM team_members WHERE team_id = ? AND agent_id = ?", (team_id, agent_id)
+        )
+        # Leaving a team removes the agent from that team's projects too — a
+        # project member must always be a team member.
+        self.conn.execute(
+            "DELETE FROM project_members WHERE agent_id = ? AND project_id IN "
+            "(SELECT id FROM projects WHERE team_id = ?)",
+            (agent_id, team_id),
+        )
+
+    # ---------- project management ----------
+
+    def create_project(self, project_id: str, team_id: str, *, name: str = "") -> dict[str, object]:
+        project_id = project_id.strip()
+        if not project_id:
+            raise ValueError("project id must be non-empty")
+        if self.get_team(team_id) is None:
+            raise KeyError(f"team not found: {team_id}")
+        self.conn.execute(
+            "INSERT INTO projects(id, team_id, name, created_at) VALUES (?, ?, ?, ?) "
+            "ON CONFLICT(id) DO UPDATE SET name = excluded.name, team_id = excluded.team_id",
+            (project_id, team_id, name or project_id, utc_now()),
+        )
+        self.conn.commit()
+        return self.get_project(project_id)
+
+    def get_project(self, project_id: str) -> dict[str, object] | None:
+        row = self.conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        if row is None:
+            return None
+        members = [r[0] for r in self.conn.execute(
+            "SELECT agent_id FROM project_members WHERE project_id = ? ORDER BY agent_id",
+            (project_id,),
+        ).fetchall()]
+        return {"id": row["id"], "team_id": row["team_id"], "name": row["name"],
+                "created_at": row["created_at"], "members": members}
+
+    def list_projects(self, team_id: str | None = None) -> list[dict[str, object]]:
+        if team_id:
+            rows = self.conn.execute(
+                "SELECT id FROM projects WHERE team_id = ? ORDER BY id", (team_id,)
+            ).fetchall()
+        else:
+            rows = self.conn.execute("SELECT id FROM projects ORDER BY id").fetchall()
+        return [self.get_project(r[0]) for r in rows]
+
+    def delete_project(self, project_id: str) -> bool:
+        self.conn.execute("DELETE FROM project_members WHERE project_id = ?", (project_id,))
+        cur = self.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        self.conn.commit()
+        self._invalidate_membership_caches()
+        return cur.rowcount > 0
+
+    def add_project_member(self, project_id: str, agent_id: str) -> None:
+        project = self.get_project(project_id)
+        if project is None:
+            raise KeyError(f"project not found: {project_id}")
+        # Enforce the subset invariant: a project member must be a team member.
+        is_team_member = self.conn.execute(
+            "SELECT 1 FROM team_members WHERE team_id = ? AND agent_id = ?",
+            (project["team_id"], agent_id),
+        ).fetchone()
+        if not is_team_member:
+            raise ValueError(
+                f"{agent_id!r} must be a member of team {project['team_id']!r} "
+                f"before joining project {project_id!r}"
+            )
+        self.conn.execute(
+            "INSERT OR IGNORE INTO project_members(project_id, agent_id) VALUES (?, ?)",
+            (project_id, agent_id),
+        )
+        self.conn.commit()
+        self._invalidate_membership_caches()
+
+    def remove_project_member(self, project_id: str, agent_id: str) -> None:
+        self.conn.execute(
+            "DELETE FROM project_members WHERE project_id = ? AND agent_id = ?",
+            (project_id, agent_id),
+        )
+        self.conn.commit()
+        self._invalidate_membership_caches()
+
+    def _invalidate_membership_caches(self) -> None:
+        self._teams_cache = {}
+        self._projects_cache = {}
+
+    PEER_POLICIES = {"full", "shared"}  # plus dynamic "team:<id>" / "project:<id>"
 
     @classmethod
     def _validate_peer_policy(cls, policy: str) -> str:
         policy = (policy or "").strip()
-        if policy in cls.PEER_POLICIES or policy.startswith("team:") and len(policy) > 5:
+        scoped = (
+            (policy.startswith("team:") or policy.startswith("project:"))
+            and len(policy.split(":", 1)[1]) > 0
+        )
+        if policy in cls.PEER_POLICIES or scoped:
             return policy
         raise ValueError(
-            "peer policy must be 'full', 'shared', or 'team:<id>' "
+            "peer policy must be 'full', 'shared', 'team:<id>', or 'project:<id>' "
             f"(got {policy!r})"
         )
 
@@ -1304,6 +1557,7 @@ class MemoryStore:
         actor: str,
         to_agent: str | None = None,
         to_team: str | None = None,
+        to_project: str | None = None,
         deidentify: bool = False,
     ) -> dict[str, object]:
         """Owner-controlled memory sharing with an audit trail.
@@ -1318,16 +1572,14 @@ class MemoryStore:
             raise KeyError(memory_id)
         if record.owner != actor:
             raise PermissionError(f"only owner {record.owner!r} may share this memory")
-        if bool(to_agent) == bool(to_team):
-            raise ValueError("specify exactly one of to_agent / to_team")
-        grant = f"agent:{to_agent}" if to_agent else f"team:{to_team}"
+        grant = self._share_grant(to_agent, to_team, to_project)
 
         if deidentify:
             scrubbed = record.content.replace(record.owner, "a teammate")
             copy = MemoryRecord(
                 content=scrubbed,
-                owner=to_team or "shared",
-                scope="team" if to_team else record.scope,
+                owner=to_team or to_project or "shared",
+                scope="project" if to_project else "team" if to_team else record.scope,
                 # Tags are dropped: they can carry owner-identifying labels that
                 # would defeat de-identification for the recipient.
                 tags=[],
@@ -1358,20 +1610,28 @@ class MemoryStore:
         actor: str,
         to_agent: str | None = None,
         to_team: str | None = None,
+        to_project: str | None = None,
     ) -> dict[str, object]:
         record = self.get(memory_id)
         if record is None:
             raise KeyError(memory_id)
         if record.owner != actor:
             raise PermissionError(f"only owner {record.owner!r} may revoke access")
-        if bool(to_agent) == bool(to_team):
-            raise ValueError("specify exactly one of to_agent / to_team")
-        grant = f"agent:{to_agent}" if to_agent else f"team:{to_team}"
+        grant = self._share_grant(to_agent, to_team, to_project)
         visibility = [entry for entry in record.visibility if entry != grant]
         if len(visibility) != len(record.visibility):
             self._set_visibility(memory_id, visibility)
         self._audit(memory_id, actor, "revoke", grant)
         return {"memory_id": memory_id, "revoked": grant}
+
+    @staticmethod
+    def _share_grant(to_agent: str | None, to_team: str | None, to_project: str | None) -> str:
+        chosen = [("agent", to_agent), ("team", to_team), ("project", to_project)]
+        chosen = [(kind, val) for kind, val in chosen if val]
+        if len(chosen) != 1:
+            raise ValueError("specify exactly one of to_agent / to_team / to_project")
+        kind, val = chosen[0]
+        return f"{kind}:{val}"
 
     def _set_visibility(self, memory_id: str, visibility: list[str]) -> None:
         """Change only the ACL of a memory, leaving updated_at untouched.
@@ -2311,6 +2571,13 @@ class MemoryStore:
                 ]
             )
             params.extend([team_id, f"team:{team_id}"])
+        # Project memberships resolve the same way: project:<id> memory is
+        # visible only to that project's members (a subset of the team).
+        for project_id in self._cached_projects_for(requester_agent_id):
+            acl_clauses.append(
+                f"EXISTS (SELECT 1 FROM json_each({alias}visibility) WHERE value = ?)"
+            )
+            params.append(f"project:{project_id}")
         where.append("(" + " OR ".join(acl_clauses) + ")")
 
     # Team memberships are cached for one search's worth of ACL clauses. A
@@ -2327,6 +2594,16 @@ class MemoryStore:
             self._teams_cache_at = now
         if agent_id not in cache:
             cache[agent_id] = self.teams_for(agent_id)
+        return cache[agent_id]
+
+    def _cached_projects_for(self, agent_id: str) -> list[str]:
+        cache = getattr(self, "_projects_cache", None)
+        now = time.monotonic()
+        if cache is None or now - getattr(self, "_projects_cache_at", 0.0) > self._TEAMS_CACHE_TTL_SECONDS:
+            cache = self._projects_cache = {}
+            self._projects_cache_at = now
+        if agent_id not in cache:
+            cache[agent_id] = self.projects_for(agent_id)
         return cache[agent_id]
 
     def _score_row(

@@ -147,10 +147,12 @@ class MemoryClient:
         actor: str,
         to_agent: str | None = None,
         to_team: str | None = None,
+        to_project: str | None = None,
         deidentify: bool = False,
     ) -> dict[str, object]:
         result = self.store.share_memory(
-            memory_id, actor=actor, to_agent=to_agent, to_team=to_team, deidentify=deidentify
+            memory_id, actor=actor, to_agent=to_agent, to_team=to_team,
+            to_project=to_project, deidentify=deidentify,
         )
         self.cache.clear()
         return result
@@ -162,9 +164,10 @@ class MemoryClient:
         actor: str,
         to_agent: str | None = None,
         to_team: str | None = None,
+        to_project: str | None = None,
     ) -> dict[str, object]:
         result = self.store.revoke_share(
-            memory_id, actor=actor, to_agent=to_agent, to_team=to_team
+            memory_id, actor=actor, to_agent=to_agent, to_team=to_team, to_project=to_project
         )
         self.cache.clear()
         return result
@@ -172,19 +175,52 @@ class MemoryClient:
     def audit_log(self, memory_id: str) -> list[dict[str, str]]:
         return self.store.audit_log(memory_id)
 
+    # ---------- team / project management (delegate to the store) ----------
+
+    def create_team(self, team_id: str, *, name: str = "") -> dict[str, object]:
+        return self.store.create_team(team_id, name=name)
+
+    def list_teams(self) -> list[dict[str, object]]:
+        return self.store.list_teams()
+
+    def delete_team(self, team_id: str) -> bool:
+        return self.store.delete_team(team_id)
+
+    def add_team_member(self, team_id: str, agent_id: str) -> None:
+        self.store.add_team_member(team_id, agent_id)
+
+    def remove_team_member(self, team_id: str, agent_id: str) -> None:
+        self.store.remove_team_member(team_id, agent_id)
+
+    def create_project(self, project_id: str, team_id: str, *, name: str = "") -> dict[str, object]:
+        return self.store.create_project(project_id, team_id, name=name)
+
+    def list_projects(self, team_id: str | None = None) -> list[dict[str, object]]:
+        return self.store.list_projects(team_id)
+
+    def delete_project(self, project_id: str) -> bool:
+        return self.store.delete_project(project_id)
+
+    def add_project_member(self, project_id: str, agent_id: str) -> None:
+        self.store.add_project_member(project_id, agent_id)
+
+    def remove_project_member(self, project_id: str, agent_id: str) -> None:
+        self.store.remove_project_member(project_id, agent_id)
+
     def export_bundle(
         self,
         path,
         *,
         since: str | None = None,
         team: str | None = None,
+        project: str | None = None,
         include_private: bool = True,
     ) -> dict[str, int]:
         from .sync import export_bundle
 
         return export_bundle(
-            self.store, path, since=since, team=team, include_private=include_private,
-            node_name=self.node_name,
+            self.store, path, since=since, team=team, project=project,
+            include_private=include_private, node_name=self.node_name,
         )
 
     def import_bundle(

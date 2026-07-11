@@ -77,16 +77,18 @@ def export_bundle(
     *,
     since: str | None = None,
     team: str | None = None,
+    project: str | None = None,
     include_private: bool = True,
     node_name: str = "",
 ) -> dict[str, int]:
     """Write a bundle.
 
-    `team` restricts it to one project/team's shared memory. `include_private`
-    (default True) controls whether private `visibility=[]` memories are
-    written — peer sync passes False for any non-'full' peer so private memory
-    never leaves the machine. Tombstones are always included (an id + timestamp
-    carry no content).
+    `team` restricts it to one team's shared memory; `project` restricts it to
+    one project's shared memory (so project bundles only ever reach project
+    members' nodes). `include_private` (default True) controls whether private
+    `visibility=[]` memories are written — peer sync passes False for any
+    non-'full' peer so private memory never leaves the machine. Tombstones are
+    always included (an id + timestamp carry no content).
     """
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -102,6 +104,11 @@ def export_bundle(
             "            AND json_extract(source, '$.team_id') = ?))"
         )
         params.extend([f"team:{team}", team])
+    if project:
+        clauses.append(
+            "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)"
+        )
+        params.append(f"project:{project}")
     if not include_private:
         # Private == empty visibility array. Keep only rows granted to someone.
         clauses.append("json_array_length(visibility) > 0")
@@ -127,7 +134,10 @@ def export_bundle(
             handle.write(json.dumps({"kind": "link", **payload}, ensure_ascii=False) + "\n")
             counts["links"] += 1
         members = None
-        if team:
+        if project:
+            proj = store.get_project(project)
+            members = set(proj["members"]) if proj else set()
+        elif team:
             members = {
                 agent["id"] for agent in store.list_agents() if team in agent["teams"]
             }
@@ -335,6 +345,8 @@ def _export_kwargs_for_policy(policy: str) -> dict:
         return {"include_private": True}
     if policy.startswith("team:"):
         return {"team": policy[len("team:"):], "include_private": False}
+    if policy.startswith("project:"):
+        return {"project": policy[len("project:"):], "include_private": False}
     return {"include_private": False}  # 'shared' and any unknown value: safe default
 
 

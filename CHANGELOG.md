@@ -4,6 +4,27 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.13.0] — unreleased
+
+**First-class Teams & Projects** (migration 13). Teams and projects are now
+real, manageable entities with explicit membership, so team-shared vs
+project-shared memory is scoped and synced correctly.
+
+- **Membership model**: `teams`, `team_members`, `projects` (belongs to a team),
+  `project_members` — the join tables are authoritative for ACL. A project's
+  members must be a subset of its team's; leaving a team cascades out of its
+  projects; deleting a team removes its projects; removing an agent clears all
+  its memberships. Existing flat `agent.teams` are backfilled into `team_members`.
+- **`project:<id>` ACL**: `visibility: ["team:apollo"]` reaches every team
+  member; `visibility: ["project:apollo-web"]` reaches only that project's
+  members. Resolved through membership, cached with the same 30s TTL as teams.
+- **Scoped sync**: `export_bundle(project=…)` and a `project:<id>` peer policy
+  bundle only a project's shared memory (to project members' nodes), so project
+  memory never reaches non-members. `share_memory`/`revoke_share` gain `to_project`.
+- **Management everywhere**: WebUI **Teams** tab (create a team and pick node
+  members; create projects under it and pick members from the team), CLI
+  `agent-memory team|project …`, and `/api/teams`, `/api/projects` (+members).
+
 ## [0.12.1] — 2026-07-11
 
 - **Web console login fix**: the console now shows a proper in-page token

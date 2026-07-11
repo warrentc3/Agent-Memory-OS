@@ -293,6 +293,7 @@ PAGE = r"""<!doctype html>
     <button data-tab="browse">Browse</button>
     <button data-tab="graph">Graph</button>
     <button data-tab="agents">Agents</button>
+    <button data-tab="teams">Teams</button>
     <button data-tab="add">Add memory</button>
     <button data-tab="tools">Tools</button>
   </nav>
@@ -377,6 +378,19 @@ PAGE = r"""<!doctype html>
       </div>
     </div>
     <div class="cards" id="agents-list"></div>
+  </section>
+
+  <section class="tab" id="tab-teams">
+    <div class="panel">
+      <h3>Create a team</h3>
+      <p class="hint" style="font-size:12.5px;color:var(--muted);margin:0 0 12px">A team is a set of node members. A team can hold multiple projects; each project's members are chosen from the team's members. Team memory (<code>team:&lt;id&gt;</code>) reaches all team members; project memory (<code>project:&lt;id&gt;</code>) reaches only that project's members.</p>
+      <div class="filterrow">
+        <input id="tm-id" type="text" placeholder="team id (e.g. apollo)">
+        <input id="tm-name" type="text" placeholder="display name (optional)">
+        <button class="ghost" id="btn-team-create">Create team</button>
+      </div>
+    </div>
+    <div id="teams-list" style="margin-top:12px"></div>
   </section>
 
   <section class="tab" id="tab-add">
@@ -774,6 +788,7 @@ document.querySelectorAll("nav.tabs button").forEach((button) => {
     if (button.dataset.tab === "graph") loadGraph();
     if (button.dataset.tab === "dashboard") loadDashboard();
     if (button.dataset.tab === "agents") refreshAgents();
+    if (button.dataset.tab === "teams") refreshTeams();
   });
 });
 
@@ -870,6 +885,112 @@ async function loadDashboard() {
 }
 
 /* ---------- agents ---------- */
+async function refreshTeams() {
+  const box = $("teams-list");
+  try {
+    const [teamsData, agentsData] = await Promise.all([api("/api/teams"), api("/api/agents")]);
+    const allAgents = agentsData.agents.map((a) => a.id);
+    box.innerHTML = "";
+    if (!teamsData.teams.length) {
+      const empty = el("div", "empty");
+      empty.appendChild(el("div", "big", "\u{1F465}"));
+      empty.appendChild(document.createTextNode(t("No teams yet. Create one above.")));
+      box.appendChild(empty);
+      return;
+    }
+    for (const team of teamsData.teams) box.appendChild(renderTeam(team, allAgents));
+  } catch (e) { /* pre-auth */ }
+}
+
+function chipRemove(label, onRemove) {
+  const chip = el("span", "tag");
+  chip.appendChild(document.createTextNode(label));
+  const x = el("button", null, "×");
+  x.style.cssText = "margin-left:6px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:14px";
+  x.addEventListener("click", onRemove);
+  chip.appendChild(x);
+  return chip;
+}
+
+function memberPicker(candidates, onAdd) {
+  const row = el("div", "row"); row.style.cssText = "margin-top:6px;gap:6px";
+  const sel = el("select");
+  sel.appendChild(Object.assign(document.createElement("option"), { value: "", textContent: t("select node…") }));
+  for (const id of candidates) sel.appendChild(Object.assign(document.createElement("option"), { value: id, textContent: id }));
+  const btn = el("button", "ghost", t("+ Add")); btn.style.cssText = "font-size:11px;padding:2px 10px";
+  btn.addEventListener("click", () => { if (sel.value) onAdd(sel.value); });
+  row.appendChild(sel); row.appendChild(btn);
+  return row;
+}
+
+function renderTeam(team, allAgents) {
+  const panel = el("div", "panel"); panel.style.marginBottom = "12px";
+  const head = el("div", "top");
+  const title = el("span", "owner"); title.appendChild(el("b", null, "\u{1F465} " + team.id));
+  if (team.name && team.name !== team.id) title.appendChild(document.createTextNode(" · " + team.name));
+  head.appendChild(title);
+  const del = el("button", "ghost", t("delete team")); del.style.cssText = "font-size:11px;padding:2px 10px";
+  del.addEventListener("click", async () => {
+    if (!confirm(t("Delete team?") + " " + team.id)) return;
+    try { await api("/api/teams/" + encodeURIComponent(team.id), { method: "DELETE" }); refreshTeams(); }
+    catch (e) { toast(e.message, "err"); }
+  });
+  head.appendChild(del); panel.appendChild(head);
+
+  panel.appendChild(el("div", "sm", t("Members")));
+  const mchips = el("div", "tags");
+  for (const m of team.members) mchips.appendChild(chipRemove(m, async () => {
+    await api("/api/teams/" + encodeURIComponent(team.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams();
+  }));
+  if (!team.members.length) mchips.appendChild(el("span", "sm", t("no members")));
+  panel.appendChild(mchips);
+  panel.appendChild(memberPicker(allAgents.filter((a) => !team.members.includes(a)), async (id) => {
+    try { await api("/api/teams/" + encodeURIComponent(team.id) + "/members", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agent_id: id }) }); refreshTeams(); }
+    catch (e) { toast(e.message, "err"); }
+  }));
+
+  const projWrap = el("div"); projWrap.style.cssText = "margin-top:12px;padding-left:12px;border-left:2px solid var(--border,#2a2f45)";
+  projWrap.appendChild(el("div", "sm", t("Projects (members chosen from the team)")));
+  const projList = el("div"); projWrap.appendChild(projList);
+  const cp = el("div", "row"); cp.style.cssText = "margin-top:8px;gap:6px";
+  const pid = el("input"); pid.placeholder = t("project id");
+  const pname = el("input"); pname.placeholder = t("name (optional)"); pname.style.maxWidth = "150px";
+  const cpBtn = el("button", "ghost", t("+ Project")); cpBtn.style.cssText = "font-size:11px;padding:2px 10px";
+  cpBtn.addEventListener("click", async () => {
+    if (!pid.value.trim()) return;
+    try { await api("/api/projects", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: pid.value.trim(), team_id: team.id, name: pname.value.trim() }) }); refreshTeams(); }
+    catch (e) { toast(e.message, "err"); }
+  });
+  cp.appendChild(pid); cp.appendChild(pname); cp.appendChild(cpBtn);
+  projWrap.appendChild(cp); panel.appendChild(projWrap);
+  loadProjects(team, projList);
+  return panel;
+}
+
+async function loadProjects(team, projList) {
+  let projects = [];
+  try { projects = (await api("/api/projects?team=" + encodeURIComponent(team.id))).projects; } catch (e) { return; }
+  for (const proj of projects) {
+    const pbox = el("div"); pbox.style.margin = "8px 0";
+    const ph = el("div", "sm"); ph.appendChild(el("b", null, "\u{1F4C1} " + proj.id));
+    if (proj.name && proj.name !== proj.id) ph.appendChild(document.createTextNode(" · " + proj.name));
+    const pdel = el("button", null, "×"); pdel.style.cssText = "margin-left:6px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:14px";
+    pdel.addEventListener("click", async () => { await api("/api/projects/" + encodeURIComponent(proj.id), { method: "DELETE" }); refreshTeams(); });
+    ph.appendChild(pdel); pbox.appendChild(ph);
+    const pchips = el("div", "tags");
+    for (const m of proj.members) pchips.appendChild(chipRemove(m, async () => {
+      await api("/api/projects/" + encodeURIComponent(proj.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams();
+    }));
+    if (!proj.members.length) pchips.appendChild(el("span", "sm", t("no members")));
+    pbox.appendChild(pchips);
+    pbox.appendChild(memberPicker(team.members.filter((a) => !proj.members.includes(a)), async (id) => {
+      try { await api("/api/projects/" + encodeURIComponent(proj.id) + "/members", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ agent_id: id }) }); refreshTeams(); }
+      catch (e) { toast(e.message, "err"); }
+    }));
+    projList.appendChild(pbox);
+  }
+}
+
 async function refreshAgents() {
   const list = $("agents-list");
   try {
@@ -925,6 +1046,11 @@ async function refreshAgents() {
     }
   } catch (e) { /* pre-auth */ }
 }
+$("btn-team-create").addEventListener("click", async () => {
+  const id = $("tm-id").value.trim(); if (!id) return;
+  try { await api("/api/teams", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: id, name: $("tm-name").value.trim() }) }); $("tm-id").value = ""; $("tm-name").value = ""; refreshTeams(); }
+  catch (e) { toast(e.message, "err"); }
+});
 $("btn-agent-save").addEventListener("click", async () => {
   const id = $("ag-id").value.trim();
   if (!id) { toast("Agent id is required.", "err"); return; }

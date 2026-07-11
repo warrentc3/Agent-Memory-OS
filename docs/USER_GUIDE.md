@@ -65,6 +65,8 @@ Global flag: `--home <dir>`.
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
 | `peers add\|remove\|list [url] [--peer-token] [--policy shared\|full\|team:<id>] [--name <n>]` | Federation peer registry; `--policy` scopes what syncs to the peer, `--name` labels it (auto-fetched if omitted). |
 | `node [--set-name <n>] [--set-host <h>] [--set-port <p>]` | Show or set this instance's sync identity and Web UI host/port (`<home>/instance.toml`). |
+| `team list\|create\|delete\|add-member\|remove-member [id] [agent] [--name]` | Manage teams and their node members. |
+| `project list\|create\|delete\|add-member\|remove-member [id] [agent] [--team] [--name]` | Manage projects under a team (members ⊆ team). |
 | `sync export <file> [--since --team]` | Write a bundle (optionally one project's memory). |
 | `sync import <file>` | Merge a bundle (last-writer-wins / strongest-wins). |
 | `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP. |
@@ -187,6 +189,41 @@ port = 8000                   # taken? the launcher advances to a free port
 you register a peer, its name is auto-fetched from `GET /api/node` (or set it
 with `peers add --name`), so peer lists and sync results read
 `mizuki-laptop · http://host:8000` instead of a bare URL.
+
+### Teams & projects
+
+A **team** is a set of node members. A team can hold multiple **projects**, and
+each project's members are a **subset** of the team's members. Team memory
+(`visibility: ["team:<id>"]`) reaches every team member; project memory
+(`visibility: ["project:<id>"]`) reaches only that project's members.
+
+```bash
+agent-memory team create apollo --name Apollo
+agent-memory team add-member apollo alice
+agent-memory team add-member apollo bob
+agent-memory project create apollo-web --team apollo --name "Apollo Web"
+agent-memory project add-member apollo-web alice     # must already be on the team
+agent-memory team list ; agent-memory project list --team apollo
+```
+
+Or manage it visually in the console's **Teams** tab (create a team → pick node
+members; create a project under it → pick members from the team). Invariants are
+enforced everywhere: a project member must be a team member; leaving a team
+removes the agent from that team's projects; deleting a team removes its
+projects.
+
+Write scoped memory and sync it correctly:
+
+```python
+client.add("apollo-wide runbook", owner="neo", visibility=["team:apollo"])
+client.add("apollo-web deploy key location", owner="neo", visibility=["project:apollo-web"])
+# a peer that only replicates one project's shared memory:
+agent-memory peers add http://web-box:8000 --peer-token <t> --policy project:apollo-web
+```
+
+The `project:apollo-web` peer bundle carries only that project's shared
+memories (and its members' profiles), so project memory never reaches a node
+whose agents aren't project members.
 
 Merge rules (identical for files, HTTP, and mesh): memories & profiles —
 last-writer-wins on normalized `updated_at` with a content tie-break so
