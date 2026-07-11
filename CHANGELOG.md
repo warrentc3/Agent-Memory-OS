@@ -4,6 +4,27 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.12.0] — unreleased
+
+**Multiple instances on one machine.** Run several Agent Memory OS instances
+side by side (each with its own `--home`) without port clashes, and identify
+each other by name during sync.
+
+- **Instance settings** `<home>/instance.toml` (`[instance]` → `node_name`,
+  `host`, `port`) — all optional, sensible defaults; `node_name` defaults to a
+  host+home label so co-located instances don't collide.
+- **Auto port selection**: `agent-memory-web` resolves the port as CLI `--port`
+  > `instance.toml` > 8000, and if it's taken, advances to the next free port
+  (`--strict-port` to fail instead). It prints the bound URL and node name.
+- **Node identity for sync (migration 12)**: `GET /api/node` advertises this
+  instance's `node_name`; a registered peer stores a friendly `name` (auto-
+  fetched from the peer on add, or `peers add --name` / the console field), so
+  the peer list and sync results show names instead of bare URLs. Bundles carry
+  the origin `node_name` in their header.
+- **`agent-memory node`** shows/sets `node_name`/`host`/`port`; `service install`
+  and the console honour the configured port; the console header shows this
+  instance's node name.
+
 ## [0.11.1] — 2026-07-11
 
 Correctness, ranking, and privacy fixes — review batches 2 and 3, closing every

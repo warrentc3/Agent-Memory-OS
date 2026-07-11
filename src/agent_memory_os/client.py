@@ -51,6 +51,12 @@ class MemoryClient:
         from .agents_config import apply_agents_config
 
         self.configured_agents = apply_agents_config(self.store, home_path)
+        # Per-instance identity (name shown to peers during sync) + Web UI
+        # host/port defaults, from <home>/instance.toml.
+        from .settings import load_instance_settings
+
+        self.settings = load_instance_settings(home_path)
+        self.node_name = self.settings.node_name
         self.profile = profile
         self.cache: LRUCache[tuple, object] = LRUCache(max_items=cache_items)
         self._profile_cache: dict[str, RecallProfile | None] = {}
@@ -177,7 +183,8 @@ class MemoryClient:
         from .sync import export_bundle
 
         return export_bundle(
-            self.store, path, since=since, team=team, include_private=include_private
+            self.store, path, since=since, team=team, include_private=include_private,
+            node_name=self.node_name,
         )
 
     def import_bundle(

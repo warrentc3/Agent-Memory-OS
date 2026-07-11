@@ -409,3 +409,19 @@ edge; the team-ACL cache has a 30 s TTL; `/api/sync/run` never holds the app
 lock across peer HTTP; the orchestrator lets a cap-dropped section hit fall
 through to the task section; and a partial `agents.toml` entry preserves the
 console-set fields it doesn't mention.
+
+## v0.12 Multi-instance identity & ports
+
+Several instances can share one machine, each with its own `--home`.
+
+- **`<home>/instance.toml`** (all optional): `[instance]` with `node_name`
+  (shown to peers during sync), `host`, and `port`. `node_name` defaults to a
+  `hostname-<home>` label so co-located instances are distinct out of the box.
+- **Web UI port resolution**: `--port` > `instance.toml` > 8000. A taken port
+  auto-advances to the next free one unless `--strict-port` is given. The same
+  configured port is used by `service install`.
+- **Node identity (migration 12)**: `GET /api/node` returns `{node_name,
+  version}`. The peer registry gains a `name` column, auto-filled from the
+  peer's advertised `node_name` when a peer is added (overridable). Bundles
+  carry the exporter's `node_name` in their header. Identity is display-only —
+  ACL and merge rules are unchanged.

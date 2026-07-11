@@ -74,8 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
         "service", help="Install the Web console as a login service (launchd/systemd/Task Scheduler)"
     )
     service.add_argument("action", choices=["install", "uninstall", "start", "stop", "status"])
-    service.add_argument("--host", default="127.0.0.1")
-    service.add_argument("--port", type=int, default=8000)
+    service.add_argument("--host", default=None, help="Bind host (default: instance.toml or 127.0.0.1)")
+    service.add_argument("--port", type=int, default=None, help="Bind port (default: instance.toml or 8000)")
     service.add_argument("--dry-run", action="store_true", help="Print actions without executing")
 
     sync = sub.add_parser("sync", help="Federated sync: file bundles, peer HTTP endpoints, or the whole mesh")
@@ -97,6 +97,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="What to sync to this peer: 'shared' (no private memory, default), "
              "'full' (whole store — own trusted nodes only), or 'team:<id>'",
     )
+    peers.add_argument(
+        "--name", dest="peer_name", default="",
+        help="Friendly name for this peer (auto-fetched from the peer if omitted)",
+    )
+
+    node = sub.add_parser("node", help="Show or set this instance's identity and Web UI port")
+    node.add_argument("--set-name", default=None, help="Set node_name (shown to peers during sync)")
+    node.add_argument("--set-host", default=None, help="Set the Web UI bind host")
+    node.add_argument("--set-port", type=int, default=None, help="Set the Web UI port")
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -108,14 +117,18 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _cmd_service(args) -> int:
     from . import service as svc
+    from .settings import load_instance_settings
 
-    config = svc.make_config(args.home, args.host, args.port)
+    settings = load_instance_settings(args.home)
+    host = args.host or settings.host
+    port = args.port if args.port is not None else settings.port
+    config = svc.make_config(args.home, host, port)
     if args.action == "install":
         actions = svc.install(config, dry_run=args.dry_run)
         for action in actions:
             print(("would: " if args.dry_run else "") + action)
         if not args.dry_run:
-            print(f"installed — console at http://{args.host}:{args.port}/ (starts at login)")
+            print(f"installed — console at http://{host}:{port}/ (starts at login)")
         return 0
     if args.action == "uninstall":
         for action in svc.uninstall(dry_run=args.dry_run):
@@ -305,6 +318,19 @@ def main(argv: list[str] | None = None) -> int:
             report = client.integrity_check()
             print(json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True))
             return 0 if report["ok"] else 1
+        if args.command == "node":
+            from .settings import load_instance_settings, update_instance_settings
+
+            if args.set_name is not None or args.set_host is not None or args.set_port is not None:
+                settings = update_instance_settings(
+                    args.home, node_name=args.set_name, host=args.set_host, port=args.set_port
+                )
+            else:
+                settings = load_instance_settings(args.home)
+            print(json.dumps({
+                "node_name": settings.node_name, "host": settings.host, "port": settings.port,
+            }, ensure_ascii=False, indent=2))
+            return 0
         if args.command == "peers":
             if args.action == "list":
                 print(json.dumps(client.store.list_peers(), ensure_ascii=False, indent=2))
@@ -313,8 +339,12 @@ def main(argv: list[str] | None = None) -> int:
                 print("peers add/remove require a URL")
                 return 2
             if args.action == "add":
+                name = args.peer_name.strip()
+                if not name:
+                    from .sync import fetch_peer_node_name
+                    name = fetch_peer_node_name(args.url, token=args.peer_token)
                 print(json.dumps(client.store.add_peer(
-                    args.url, token=args.peer_token, policy=args.peer_policy
+                    args.url, token=args.peer_token, policy=args.peer_policy, name=name
                 )))
             else:
                 removed = client.store.remove_peer(args.url)

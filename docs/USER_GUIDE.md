@@ -63,7 +63,8 @@ Global flag: `--home <dir>`.
 | `service install\|uninstall\|start\|stop\|status [--host --port --dry-run]` | Native login service. |
 | `backup <dest>` / `restore <src> [--force]` | WAL-safe online backup / restore. |
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
-| `peers add\|remove\|list [url] [--peer-token] [--policy shared\|full\|team:<id>]` | Federation peer registry; `--policy` scopes what syncs to the peer. |
+| `peers add\|remove\|list [url] [--peer-token] [--policy shared\|full\|team:<id>] [--name <n>]` | Federation peer registry; `--policy` scopes what syncs to the peer, `--name` labels it (auto-fetched if omitted). |
+| `node [--set-name <n>] [--set-host <h>] [--set-port <p>]` | Show or set this instance's sync identity and Web UI host/port (`<home>/instance.toml`). |
 | `sync export <file> [--since --team]` | Write a bundle (optionally one project's memory). |
 | `sync import <file>` | Merge a bundle (last-writer-wins / strongest-wins). |
 | `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP. |
@@ -160,6 +161,32 @@ private* — use only for your own trusted replica nodes), or `team:<id>` (one
 project). Private memories never leave under `shared`/`team`, and the HTTP
 `/api/sync/export` a peer pulls is always `shared`-scoped — full private
 replication travels only over the push leg between your own `full` nodes.
+
+### Multiple instances on one machine
+
+Each instance is a separate `--home`. Give each a name and let the console pick
+a free port:
+
+```bash
+agent-memory --home ~/mem-a node --set-name mizuki-laptop
+agent-memory --home ~/mem-b node --set-name codex-box
+agent-memory-web --home ~/mem-a          # binds 8000
+agent-memory-web --home ~/mem-b          # 8000 taken → auto-binds 8001
+```
+
+Settings live in `<home>/instance.toml`:
+
+```toml
+[instance]
+node_name = "mizuki-laptop"   # shown to peers during sync
+host = "127.0.0.1"
+port = 8000                   # taken? the launcher advances to a free port
+```
+
+`--port` overrides the file; `--strict-port` fails instead of advancing. When
+you register a peer, its name is auto-fetched from `GET /api/node` (or set it
+with `peers add --name`), so peer lists and sync results read
+`mizuki-laptop · http://host:8000` instead of a bare URL.
 
 Merge rules (identical for files, HTTP, and mesh): memories & profiles —
 last-writer-wins on normalized `updated_at` with a content tie-break so

@@ -78,6 +78,7 @@ def export_bundle(
     since: str | None = None,
     team: str | None = None,
     include_private: bool = True,
+    node_name: str = "",
 ) -> dict[str, int]:
     """Write a bundle.
 
@@ -107,7 +108,10 @@ def export_bundle(
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     exported_ids: set[str] = set()
     with path.open("w", encoding="utf-8") as handle:
-        handle.write(json.dumps({"kind": "bundle", "version": BUNDLE_VERSION}) + "\n")
+        header = {"kind": "bundle", "version": BUNDLE_VERSION}
+        if node_name:
+            header["node_name"] = node_name
+        handle.write(json.dumps(header, ensure_ascii=False) + "\n")
         for row in store.conn.execute(f"SELECT * FROM memories {where}", params):
             payload = {key: row[key] for key in _MEMORY_KEYS}
             exported_ids.add(row["id"])
@@ -412,6 +416,15 @@ def sync_all_peers(client, *, lock=None) -> list[dict[str, object]]:
         client.store.record_peer_sync(url, summary)
         results.append(result)
     return results
+
+
+def fetch_peer_node_name(url: str, *, token: str | None = None) -> str:
+    """Ask a peer for its advertised node_name (empty string on any failure)."""
+    try:
+        body = _http(url.rstrip("/") + "/api/node", token=token)
+        return str(json.loads(body).get("node_name") or "").strip()
+    except Exception:  # noqa: BLE001 - identity is best-effort, never fatal to add-peer
+        return ""
 
 
 def _http(url: str, *, token: str | None, post: str | None = None) -> str:

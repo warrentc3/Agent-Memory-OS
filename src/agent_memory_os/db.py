@@ -273,6 +273,14 @@ def _migration_decay_base(conn: sqlite3.Connection) -> None:
         )
 
 
+def _migration_peer_name(conn: sqlite3.Connection) -> None:
+    # A human-friendly name for a peer, shown instead of the bare URL during
+    # sync (auto-filled from the peer's advertised node_name when available).
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_peers)")}
+    if "name" not in cols:
+        conn.execute("ALTER TABLE sync_peers ADD COLUMN name TEXT NOT NULL DEFAULT ''")
+
+
 def _migration_archive_links(conn: sqlite3.Connection) -> None:
     # Cold-archive the association edges alongside the memory, so restore
     # brings a memory back with its graph instead of at degree 0. No FK to
@@ -308,6 +316,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (9, "federation trust: peer policy + tombstones", _migration_federation_trust),
     (10, "archive association edges for lossless restore", _migration_archive_links),
     (11, "configured decay base half-life", _migration_decay_base),
+    (12, "peer display name for sync identification", _migration_peer_name),
 ]
 
 
@@ -890,7 +899,8 @@ class MemoryStore:
         )
 
     def add_peer(
-        self, url: str, *, token: str | None = None, policy: str = "shared"
+        self, url: str, *, token: str | None = None, policy: str = "shared",
+        name: str = "",
     ) -> dict[str, object]:
         """Register a sync peer.
 
@@ -899,20 +909,33 @@ class MemoryStore:
           Private memories never leave the machine.
         - 'full': the entire store — use only for your own trusted replica nodes.
         - 'team:<id>': just that one team/project's shared memory.
+
+        `name` is a friendly label shown instead of the URL during sync.
         """
         url = url.strip().rstrip("/")
         if not url.startswith(("http://", "https://")):
             raise ValueError("peer URL must start with http:// or https://")
         policy = self._validate_peer_policy(policy)
+        name = (name or "").strip()
         self.conn.execute(
             """
-            INSERT INTO sync_peers(url, token, added_at, policy) VALUES (?, ?, ?, ?)
-            ON CONFLICT(url) DO UPDATE SET token = excluded.token, policy = excluded.policy
+            INSERT INTO sync_peers(url, token, added_at, policy, name) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET
+              token = excluded.token, policy = excluded.policy,
+              name = CASE WHEN excluded.name != '' THEN excluded.name ELSE sync_peers.name END
             """,
-            (url, token, utc_now(), policy),
+            (url, token, utc_now(), policy, name),
         )
         self.conn.commit()
-        return {"url": url, "has_token": token is not None, "policy": policy}
+        return {"url": url, "has_token": token is not None, "policy": policy, "name": name}
+
+    def set_peer_name(self, url: str, name: str) -> bool:
+        cur = self.conn.execute(
+            "UPDATE sync_peers SET name = ? WHERE url = ?",
+            ((name or "").strip(), url.strip().rstrip("/")),
+        )
+        self.conn.commit()
+        return cur.rowcount > 0
 
     def set_peer_policy(self, url: str, policy: str) -> bool:
         policy = self._validate_peer_policy(policy)
@@ -937,13 +960,14 @@ class MemoryStore:
     def list_peers(self) -> list[dict[str, object]]:
         rows = self.conn.execute(
             "SELECT url, token IS NOT NULL AS has_token, added_at, last_synced_at, "
-            "last_result, policy FROM sync_peers ORDER BY added_at"
+            "last_result, policy, name FROM sync_peers ORDER BY added_at"
         ).fetchall()
         return [
             {
                 "url": row["url"], "has_token": bool(row["has_token"]),
                 "added_at": row["added_at"], "last_synced_at": row["last_synced_at"],
                 "last_result": row["last_result"], "policy": row["policy"],
+                "name": row["name"],
             }
             for row in rows
         ]

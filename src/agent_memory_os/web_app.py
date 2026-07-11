@@ -141,6 +141,7 @@ class PeerRequest(BaseModel):
     url: str = Field(min_length=8)
     token: str | None = None
     policy: str = "shared"
+    name: str = ""
 
 
 class ShareRequest(BaseModel):
@@ -219,6 +220,17 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/api/node")
+    def node_identity() -> dict[str, Any]:
+        """This instance's sync identity — the name peers show for it."""
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            ver = version("agent-memory-os")
+        except PackageNotFoundError:
+            ver = "unknown"
+        return {"node_name": client.node_name, "version": ver}
 
     @app.get("/api/stats")
     def stats() -> dict[str, Any]:
@@ -367,10 +379,17 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
 
     @app.post("/api/peers")
     def peers_add(request: PeerRequest) -> dict[str, Any]:
+        # Auto-fill the peer's friendly name from its advertised node identity
+        # (outside the lock — it's a network call) unless one was given.
+        name = request.name.strip()
+        if not name:
+            from .sync import fetch_peer_node_name
+
+            name = fetch_peer_node_name(request.url, token=request.token)
         with lock:
             try:
                 return client.store.add_peer(
-                    request.url, token=request.token, policy=request.policy
+                    request.url, token=request.token, policy=request.policy, name=name
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -406,7 +425,8 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
 
         with lock:
             with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
-                export_bundle(client.store, handle.name, since=since or None, include_private=False)
+                export_bundle(client.store, handle.name, since=since or None,
+                              include_private=False, node_name=client.node_name)
                 handle.seek(0)
                 body = Path(handle.name).read_text(encoding="utf-8")
             Path(handle.name).unlink(missing_ok=True)
@@ -657,23 +677,44 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="agent-memory-web", description="Run the AgentMemoryOS Web UI")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--host", default=None, help="Bind host (default: instance.toml or 127.0.0.1)")
+    parser.add_argument("--port", type=int, default=None, help="Bind port (default: instance.toml or 8000)")
     parser.add_argument("--home", default=None, help="Memory home directory; defaults to AGENT_MEMORY_HOME or ~/.agent-memory")
     parser.add_argument(
         "--token",
         default=None,
         help="Require this bearer token on all /api/ routes (also via AGENT_MEMORY_WEB_TOKEN)",
     )
+    parser.add_argument(
+        "--strict-port", action="store_true",
+        help="Fail if the chosen port is in use instead of advancing to a free one",
+    )
     args = parser.parse_args(argv)
 
     import uvicorn
+
+    from .settings import find_available_port, load_instance_settings, port_is_free
+
+    # Resolution order: CLI flag > <home>/instance.toml > built-in default.
+    settings = load_instance_settings(args.home)
+    host = args.host or settings.host
+    preferred = args.port if args.port is not None else settings.port
+    if args.strict_port:
+        if not port_is_free(host, preferred):
+            parser.error(f"port {preferred} on {host} is in use")
+        port = preferred
+    else:
+        # Multiple instances on one machine: skip past taken ports automatically.
+        port = find_available_port(host, preferred)
+        if port != preferred:
+            print(f"NOTE: port {preferred} was in use — bound to {port} instead.")
 
     if not (args.token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or load_token(args.home)):
         print("NOTE: no API token configured — the console runs in open admin mode.")
         print("      Protect it with:  agent-memory token create")
 
-    uvicorn.run(create_app(home=args.home, token=args.token), host=args.host, port=args.port)
+    print(f"Agent Memory OS '{settings.node_name}' → http://{host}:{port}")
+    uvicorn.run(create_app(home=args.home, token=args.token), host=host, port=port)
 
 
 if __name__ == "__main__":
