@@ -67,6 +67,8 @@ Global flag: `--home <dir>`.
 | `node [--set-name <n>] [--set-host <h>] [--set-port <p>]` | Show or set this instance's sync identity and Web UI host/port (`<home>/instance.toml`). |
 | `team list\|create\|delete\|add-member\|remove-member [id] [agent] [--name]` | Manage teams and their node members. |
 | `project list\|create\|delete\|add-member\|remove-member [id] [agent] [--team] [--name]` | Manage projects under a team (members ⊆ team). |
+| `maintenance scan\|orphans [--delete]\|reindex\|vacuum` | Ops: health scan, clean orphan memories (scoped to an empty group), rebuild the index, reclaim disk. |
+| `update [--check] [--yes]` | Detect host/Docker deployment, check PyPI, and upgrade (pip) or print the `docker pull` steps. |
 | `sync export <file> [--since --team]` | Write a bundle (optionally one project's memory). |
 | `sync import <file>` | Merge a bundle (last-writer-wins / strongest-wins). |
 | `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP. |

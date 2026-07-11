@@ -495,6 +495,17 @@ PAGE = r"""<!doctype html>
         <div class="toplist" id="archive-list"></div>
       </div>
       <div class="tool" style="grid-column: 1 / -1;">
+        <h3>Maintenance</h3>
+        <p class="hint">Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.</p>
+        <div class="row">
+          <button class="ghost" id="btn-maint-scan">Scan health</button>
+          <button class="ghost" id="btn-maint-orphans">Delete orphan memories</button>
+          <button class="ghost" id="btn-maint-reindex">Rebuild index</button>
+          <button class="ghost" id="btn-maint-vacuum">Vacuum</button>
+        </div>
+        <div id="maint-out" style="margin:6px 0;font-size:13px;color:var(--muted)"></div>
+      </div>
+      <div class="tool" style="grid-column: 1 / -1;">
         <h3>Federation</h3>
         <p class="hint">Move memories between hosts. Download this host's bundle, or import a bundle exported elsewhere — memories and profiles merge last-writer-wins, links keep their strongest form.</p>
         <div class="row">
@@ -551,7 +562,7 @@ const $ = (id) => document.getElementById(id);
 const LOCALES = { "en": "English", "zh-TW": "繁體中文", "zh-CN": "简体中文", "ja": "日本語", "ko": "한국어" };
 const I18N = {
 "zh-TW": {
-"Teams":"團隊","Create a team":"建立團隊","Create team":"建立團隊","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"團隊是一組節點成員;底下的每個專案從團隊成員中選取。團隊記憶所有團隊成員可見,專案記憶僅該專案成員可見。","team id (e.g. apollo)":"團隊 id(例:apollo)","display name (optional)":"顯示名稱(選填)","No teams yet. Create one above.":"尚無團隊,請在上方建立。","select node…":"選擇節點…","+ Add":"+ 加入","delete team":"刪除團隊","Delete team?":"刪除團隊?","Members":"成員","no members":"尚無成員","Projects (members chosen from the team)":"專案(成員從團隊中選取)","project id":"專案 id","name (optional)":"名稱(選填)","+ Project":"+ 專案",
+"Teams":"團隊","Maintenance":"維護","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"運維工具:健康掃描、清除孤兒記憶(隸屬無成員的群組、無人可見)、重建搜尋索引、回收磁碟。","memories are now orphaned — clean them in Tools → Maintenance.":"筆記憶已成孤兒——請到 工具 → 維護 清理。","Scan health":"健康掃描","Delete orphan memories":"刪除孤兒記憶","Rebuild index":"重建索引","Vacuum":"壓縮回收","Working…":"處理中…","Delete all orphan memories?":"刪除所有孤兒記憶?","Health":"健康","Orphans":"孤兒","Reindex":"重建索引","Create a team":"建立團隊","Create team":"建立團隊","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"團隊是一組節點成員;底下的每個專案從團隊成員中選取。團隊記憶所有團隊成員可見,專案記憶僅該專案成員可見。","team id (e.g. apollo)":"團隊 id(例:apollo)","display name (optional)":"顯示名稱(選填)","No teams yet. Create one above.":"尚無團隊,請在上方建立。","select node…":"選擇節點…","+ Add":"+ 加入","delete team":"刪除團隊","Delete team?":"刪除團隊?","Members":"成員","no members":"尚無成員","Projects (members chosen from the team)":"專案(成員從團隊中選取)","project id":"專案 id","name (optional)":"名稱(選填)","+ Project":"+ 專案",
 "Dashboard":"儀表板","Search":"搜尋","Browse":"瀏覽","Graph":"圖譜","Agents":"代理","Add memory":"新增記憶","Tools":"工具",
 "Acting as":"目前身分","admin (all)":"管理者(全部)","Total memories":"記憶總數","Links":"關聯",
 "Memories":"記憶","Pinned":"釘選","Expired":"已過期","Archived":"已歸檔",
@@ -578,7 +589,7 @@ const I18N = {
 "✎ Edit":"✎ 編輯","👍 Helpful":"👍 有幫助","👎 Misleading":"👎 誤導","🔗 Links":"🔗 關聯","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 複製 ID","🗑 Delete":"🗑 刪除","why?":"為什麼?","Save":"儲存","Cancel":"取消","No links yet.":"尚無關聯。","Loading…":"載入中……","Ready.":"就緒。","🔒 private":"🔒 私有"
 },
 "zh-CN": {
-"Teams":"团队","Create a team":"创建团队","Create team":"创建团队","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"团队是一组节点成员;下面的每个项目从团队成员中选取。团队记忆所有团队成员可见,项目记忆仅该项目成员可见。","team id (e.g. apollo)":"团队 id(如:apollo)","display name (optional)":"显示名称(可选)","No teams yet. Create one above.":"尚无团队,请在上方创建。","select node…":"选择节点…","+ Add":"+ 加入","delete team":"删除团队","Delete team?":"删除团队?","Members":"成员","no members":"尚无成员","Projects (members chosen from the team)":"项目(成员从团队中选取)","project id":"项目 id","name (optional)":"名称(可选)","+ Project":"+ 项目",
+"Teams":"团队","Maintenance":"维护","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"运维工具:健康扫描、清除孤儿记忆(隶属无成员的群组、无人可见)、重建搜索索引、回收磁盘。","memories are now orphaned — clean them in Tools → Maintenance.":"条记忆已成孤儿——请到 工具 → 维护 清理。","Scan health":"健康扫描","Delete orphan memories":"删除孤儿记忆","Rebuild index":"重建索引","Vacuum":"压缩回收","Working…":"处理中…","Delete all orphan memories?":"删除所有孤儿记忆?","Health":"健康","Orphans":"孤儿","Reindex":"重建索引","Create a team":"创建团队","Create team":"创建团队","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"团队是一组节点成员;下面的每个项目从团队成员中选取。团队记忆所有团队成员可见,项目记忆仅该项目成员可见。","team id (e.g. apollo)":"团队 id(如:apollo)","display name (optional)":"显示名称(可选)","No teams yet. Create one above.":"尚无团队,请在上方创建。","select node…":"选择节点…","+ Add":"+ 加入","delete team":"删除团队","Delete team?":"删除团队?","Members":"成员","no members":"尚无成员","Projects (members chosen from the team)":"项目(成员从团队中选取)","project id":"项目 id","name (optional)":"名称(可选)","+ Project":"+ 项目",
 "Dashboard":"仪表板","Search":"搜索","Browse":"浏览","Graph":"图谱","Agents":"代理","Add memory":"新增记忆","Tools":"工具",
 "Acting as":"当前身份","admin (all)":"管理员(全部)","Total memories":"记忆总数","Links":"关联",
 "Memories":"记忆","Pinned":"置顶","Expired":"已过期","Archived":"已归档",
@@ -605,7 +616,7 @@ const I18N = {
 "✎ Edit":"✎ 编辑","👍 Helpful":"👍 有帮助","👎 Misleading":"👎 误导","🔗 Links":"🔗 关联","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 复制 ID","🗑 Delete":"🗑 删除","why?":"为什么?","Save":"保存","Cancel":"取消","No links yet.":"暂无关联。","Loading…":"加载中……","Ready.":"就绪。","🔒 private":"🔒 私有"
 },
 "ja": {
-"Teams":"チーム","Create a team":"チームを作成","Create team":"チームを作成","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"チームはノードメンバーの集合です。配下の各プロジェクトはチームメンバーから選びます。チーム記憶は全メンバーに、プロジェクト記憶はそのプロジェクトのメンバーだけに見えます。","team id (e.g. apollo)":"チームID(例:apollo)","display name (optional)":"表示名(任意)","No teams yet. Create one above.":"チームがありません。上で作成してください。","select node…":"ノードを選択…","+ Add":"+ 追加","delete team":"チーム削除","Delete team?":"チームを削除?","Members":"メンバー","no members":"メンバーなし","Projects (members chosen from the team)":"プロジェクト(メンバーはチームから選択)","project id":"プロジェクトID","name (optional)":"名前(任意)","+ Project":"+ プロジェクト",
+"Teams":"チーム","Maintenance":"メンテナンス","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"運用ツール:ヘルス確認、孤立記憶(メンバー不在のグループ所属で誰にも見えない)の削除、検索インデックス再構築、ディスク回収。","memories are now orphaned — clean them in Tools → Maintenance.":"件の記憶が孤立しました。ツール → メンテナンス で整理してください。","Scan health":"ヘルス確認","Delete orphan memories":"孤立記憶を削除","Rebuild index":"インデックス再構築","Vacuum":"最適化","Working…":"処理中…","Delete all orphan memories?":"孤立記憶をすべて削除?","Health":"ヘルス","Orphans":"孤立","Reindex":"再構築","Create a team":"チームを作成","Create team":"チームを作成","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"チームはノードメンバーの集合です。配下の各プロジェクトはチームメンバーから選びます。チーム記憶は全メンバーに、プロジェクト記憶はそのプロジェクトのメンバーだけに見えます。","team id (e.g. apollo)":"チームID(例:apollo)","display name (optional)":"表示名(任意)","No teams yet. Create one above.":"チームがありません。上で作成してください。","select node…":"ノードを選択…","+ Add":"+ 追加","delete team":"チーム削除","Delete team?":"チームを削除?","Members":"メンバー","no members":"メンバーなし","Projects (members chosen from the team)":"プロジェクト(メンバーはチームから選択)","project id":"プロジェクトID","name (optional)":"名前(任意)","+ Project":"+ プロジェクト",
 "Dashboard":"ダッシュボード","Search":"検索","Browse":"一覧","Graph":"グラフ","Agents":"エージェント","Add memory":"記憶を追加","Tools":"ツール",
 "Acting as":"操作中の身元","admin (all)":"管理者(すべて)","Total memories":"記憶総数","Links":"リンク",
 "Memories":"記憶","Pinned":"ピン留め","Expired":"期限切れ","Archived":"アーカイブ済み",
@@ -632,7 +643,7 @@ const I18N = {
 "✎ Edit":"✎ 編集","👍 Helpful":"👍 役立った","👎 Misleading":"👎 誤解を招く","🔗 Links":"🔗 リンク","⇢ Share":"⇢ 共有","⧉ Copy id":"⧉ IDコピー","🗑 Delete":"🗑 削除","why?":"理由は?","Save":"保存","Cancel":"キャンセル","No links yet.":"リンクはまだありません。","Loading…":"読み込み中……","Ready.":"準備完了。","🔒 private":"🔒 プライベート"
 },
 "ko": {
-"Teams":"팀","Create a team":"팀 만들기","Create team":"팀 만들기","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"팀은 노드 멤버의 집합입니다. 하위 각 프로젝트는 팀 멤버 중에서 선택합니다. 팀 기억은 모든 팀 멤버에게, 프로젝트 기억은 해당 프로젝트 멤버에게만 보입니다.","team id (e.g. apollo)":"팀 id(예: apollo)","display name (optional)":"표시 이름(선택)","No teams yet. Create one above.":"팀이 없습니다. 위에서 만드세요.","select node…":"노드 선택…","+ Add":"+ 추가","delete team":"팀 삭제","Delete team?":"팀을 삭제할까요?","Members":"멤버","no members":"멤버 없음","Projects (members chosen from the team)":"프로젝트(멤버는 팀에서 선택)","project id":"프로젝트 id","name (optional)":"이름(선택)","+ Project":"+ 프로젝트",
+"Teams":"팀","Maintenance":"유지보수","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"운영 도구: 상태 점검, 고아 기억(멤버 없는 그룹 소속 · 아무도 못 봄) 정리, 검색 색인 재생성, 디스크 회수.","memories are now orphaned — clean them in Tools → Maintenance.":"개의 기억이 고아가 되었습니다 — 도구 → 유지보수 에서 정리하세요.","Scan health":"상태 점검","Delete orphan memories":"고아 기억 삭제","Rebuild index":"색인 재생성","Vacuum":"압축 정리","Working…":"처리 중…","Delete all orphan memories?":"모든 고아 기억을 삭제할까요?","Health":"상태","Orphans":"고아","Reindex":"재색인","Create a team":"팀 만들기","Create team":"팀 만들기","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"팀은 노드 멤버의 집합입니다. 하위 각 프로젝트는 팀 멤버 중에서 선택합니다. 팀 기억은 모든 팀 멤버에게, 프로젝트 기억은 해당 프로젝트 멤버에게만 보입니다.","team id (e.g. apollo)":"팀 id(예: apollo)","display name (optional)":"표시 이름(선택)","No teams yet. Create one above.":"팀이 없습니다. 위에서 만드세요.","select node…":"노드 선택…","+ Add":"+ 추가","delete team":"팀 삭제","Delete team?":"팀을 삭제할까요?","Members":"멤버","no members":"멤버 없음","Projects (members chosen from the team)":"프로젝트(멤버는 팀에서 선택)","project id":"프로젝트 id","name (optional)":"이름(선택)","+ Project":"+ 프로젝트",
 "Dashboard":"대시보드","Search":"검색","Browse":"둘러보기","Graph":"그래프","Agents":"에이전트","Add memory":"기억 추가","Tools":"도구",
 "Acting as":"현재 신원","admin (all)":"관리자(전체)","Total memories":"기억 총수","Links":"연결",
 "Memories":"기억","Pinned":"고정됨","Expired":"만료됨","Archived":"보관됨",
@@ -944,7 +955,7 @@ function renderTeam(team, allAgents) {
   panel.appendChild(el("div", "sm", t("Members")));
   const mchips = el("div", "tags");
   for (const m of team.members) mchips.appendChild(chipRemove(m, async () => {
-    await api("/api/teams/" + encodeURIComponent(team.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams();
+    await api("/api/teams/" + encodeURIComponent(team.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams(); warnOrphans();
   }));
   if (!team.members.length) mchips.appendChild(el("span", "sm", t("no members")));
   panel.appendChild(mchips);
@@ -983,7 +994,7 @@ async function loadProjects(team, projList) {
     ph.appendChild(pdel); pbox.appendChild(ph);
     const pchips = el("div", "tags");
     for (const m of proj.members) pchips.appendChild(chipRemove(m, async () => {
-      await api("/api/projects/" + encodeURIComponent(proj.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams();
+      await api("/api/projects/" + encodeURIComponent(proj.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams(); warnOrphans();
     }));
     if (!proj.members.length) pchips.appendChild(el("span", "sm", t("no members")));
     pbox.appendChild(pchips);
@@ -1050,6 +1061,23 @@ async function refreshAgents() {
     }
   } catch (e) { /* pre-auth */ }
 }
+async function warnOrphans() {
+  try {
+    const scan = await api("/api/maintenance/scan");
+    if (scan.orphan_memories > 0)
+      toast(scan.orphan_memories + " " + t("memories are now orphaned — clean them in Tools \u2192 Maintenance."), "err");
+  } catch (e) { /* ignore */ }
+}
+async function maint(path, method, label) {
+  const out = $("maint-out");
+  out.textContent = t("Working\u2026");
+  try { const r = await api(path, method ? { method: method } : undefined); out.textContent = label + ": " + JSON.stringify(r); }
+  catch (e) { out.textContent = e.message; }
+}
+$("btn-maint-scan").addEventListener("click", () => maint("/api/maintenance/scan", null, t("Health")));
+$("btn-maint-orphans").addEventListener("click", () => { if (confirm(t("Delete all orphan memories?"))) maint("/api/maintenance/orphans/delete", "POST", t("Orphans")); });
+$("btn-maint-reindex").addEventListener("click", () => maint("/api/maintenance/reindex", "POST", t("Reindex")));
+$("btn-maint-vacuum").addEventListener("click", () => maint("/api/maintenance/vacuum", "POST", t("Vacuum")));
 $("btn-team-create").addEventListener("click", async () => {
   const id = $("tm-id").value.trim(); if (!id) return;
   try { await api("/api/teams", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: id, name: $("tm-name").value.trim() }) }); $("tm-id").value = ""; $("tm-name").value = ""; refreshTeams(); }

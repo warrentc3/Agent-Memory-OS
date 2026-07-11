@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
+
 from .client import MemoryClient
 from .golden_recall import evaluate_golden_queries, load_golden_query_cases
 from .hermes_importer import import_hermes_memory_files
@@ -119,6 +121,14 @@ def build_parser() -> argparse.ArgumentParser:
     project.add_argument("agent_id", nargs="?", default=None)
     project.add_argument("--team", dest="team_id", default=None, help="Team id (create / list filter)")
     project.add_argument("--name", default="", help="Display name (create)")
+
+    maint = sub.add_parser("maintenance", help="Ops maintenance: health scan, orphan cleanup, reindex, vacuum")
+    maint.add_argument("action", choices=["scan", "orphans", "reindex", "vacuum"])
+    maint.add_argument("--delete", action="store_true", help="orphans: delete them (default lists)")
+
+    update = sub.add_parser("update", help="Check for and install a newer version (host or Docker)")
+    update.add_argument("--check", action="store_true", help="Only report the latest version; don't install")
+    update.add_argument("--yes", action="store_true", help="Install without prompting (host/pip only)")
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -299,8 +309,91 @@ def _cmd_restore(args) -> int:
     return 0
 
 
+def _report_orphans(client) -> None:
+    """After a member removal, warn if any memory is now reachable by nobody."""
+    n = client.orphan_count()
+    if n:
+        print(f"note: {n} memory(ies) are now orphaned (scoped to a group with no "
+              f"members — visible only to admin). Review: agent-memory maintenance "
+              f"orphans   |   clean: agent-memory maintenance orphans --delete")
+
+
+def _in_docker() -> bool:
+    if Path("/.dockerenv").exists():
+        return True
+    try:
+        return "docker" in Path("/proc/1/cgroup").read_text()
+    except OSError:
+        return False
+
+
+_PYPI_LAST_ERROR: str | None = None
+
+
+def _pypi_latest(pkg: str) -> str | None:
+    global _PYPI_LAST_ERROR
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=6) as resp:
+            _PYPI_LAST_ERROR = None
+            return json.load(resp)["info"]["version"]
+    except Exception as exc:  # noqa: BLE001 - offline / unreachable is a normal outcome
+        _PYPI_LAST_ERROR = f"{type(exc).__name__}: {exc}"
+        return None
+
+
+def _cmd_update(args) -> int:
+    import platform
+    import subprocess
+    import sys
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        current = version("agent-memory-os")
+    except PackageNotFoundError:
+        current = "unknown"
+    docker = _in_docker()
+    latest = _pypi_latest("agent-memory-os")
+    print(f"current:    {current}")
+    print(f"latest:     {latest or 'unknown (could not reach PyPI)'}")
+    print(f"platform:   {platform.system()} {platform.machine()}")
+    print(f"deployment: {'Docker container' if docker else 'host (pip)'}")
+    if not latest:
+        print(f"Could not reach PyPI ({_PYPI_LAST_ERROR or 'unknown error'}).")
+        if _PYPI_LAST_ERROR and "CERTIFICATE" in _PYPI_LAST_ERROR.upper():
+            print("Your Python is missing CA certificates. Fix with:  pip install -U certifi")
+            print("(on macOS you may also need to run the 'Install Certificates.command' for your Python).")
+        return 1
+    if latest == current:
+        print("Already on the latest version.")
+        return 0
+    print(f"\nA newer version is available: {current} -> {latest}")
+    if args.check:
+        return 0
+    if docker:
+        # A container can't pip-upgrade itself in place; guide the host update.
+        print("\nDocker deployment — update by pulling the new image and recreating:")
+        print(f"  docker pull yamantaka520/agent-memory-os:{latest}")
+        print("  docker compose up -d          # or re-run docker run with the new tag")
+        print("Data in the /data volume persists; migrations self-apply on start.")
+        return 0
+    if not args.yes:
+        try:
+            resp = input(f"Upgrade agent-memory-os {current} -> {latest} via pip now? [y/N] ").strip().lower()
+        except EOFError:
+            resp = ""
+        if resp not in ("y", "yes"):
+            print("Aborted. Run with --yes to skip this prompt.")
+            return 0
+    cmd = [sys.executable, "-m", "pip", "install", "-U", "agent-memory-os[full]"]
+    print("running:", " ".join(cmd))
+    return subprocess.call(cmd)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "update":
+        return _cmd_update(args)
     if args.command == "service":
         return _cmd_service(args)
     if args.command == "token":
@@ -361,6 +454,7 @@ def main(argv: list[str] | None = None) -> int:
                     s.add_team_member(args.team_id, args.agent_id)
                 else:
                     s.remove_team_member(args.team_id, args.agent_id)
+                    _report_orphans(client)
                 print(json.dumps(s.get_team(args.team_id), ensure_ascii=False))
             return 0
         if args.command == "project":
@@ -380,7 +474,26 @@ def main(argv: list[str] | None = None) -> int:
                     s.add_project_member(args.project_id, args.agent_id)
                 else:
                     s.remove_project_member(args.project_id, args.agent_id)
+                    _report_orphans(client)
                 print(json.dumps(s.get_project(args.project_id), ensure_ascii=False))
+            return 0
+        if args.command == "maintenance":
+            if args.action == "scan":
+                print(json.dumps(client.maintenance_scan(), ensure_ascii=False, indent=2))
+            elif args.action == "orphans":
+                orphans = client.find_orphan_memories()
+                if args.delete:
+                    print(json.dumps(client.delete_orphan_memories(), ensure_ascii=False))
+                else:
+                    print(f"{len(orphans)} orphan memories (scoped to an empty/deleted group):")
+                    for o in orphans[:50]:
+                        print(f"  {o['id']}  {o['visibility']}  {o['content']!r}")
+                    if orphans:
+                        print("delete them with: agent-memory maintenance orphans --delete")
+            elif args.action == "reindex":
+                print(json.dumps(client.rebuild_indexes(), ensure_ascii=False))
+            elif args.action == "vacuum":
+                print(json.dumps(client.vacuum(), ensure_ascii=False))
             return 0
         if args.command == "peers":
             if args.action == "list":

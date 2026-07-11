@@ -2,16 +2,23 @@
   <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/logo-header.png" alt="Agent Memory OS" width="560">
 </p>
 
-A **local-first memory engine for AI agents** — single or multi-agent, with shared and private memories, associative recall, and context-budgeted retrieval. One SQLite file, zero required dependencies, Apache-2.0.
+A **local-first memory system for AI-agent teams** — not just giving one agent a memory, but a shared memory fabric for a *fleet* of agents working together: private, team, and project-scoped memories behind a hard ACL, associative recall, and federated sync that keeps a mesh of nodes (and their org structure) in agreement. One SQLite file, zero required dependencies, Apache-2.0.
 
 ## Why
 
-Agents need durable facts, preferences, procedures, and lessons — but prompt-injected memory blocks are small and overflow fast, and cloud memory platforms add latency, cost, and privacy tradeoffs. AgentMemoryOS separates long-term memory from the context window: memories live in a local database, and each prompt receives only the relevant, budgeted slice.
+Real work happens in **teams of agents** — a project might mix Claude Code, Codex, OpenClaw, and several Hermes profiles, across multiple teams and projects, on one machine or many. They need to share the *right* knowledge with the *right* teammates and keep private what should stay private:
+
+- **Per-agent memory** is the floor, not the ceiling: durable facts, preferences, procedures, and lessons that survive across sessions.
+- **Team & project memory** is the point: a team sees `team:<id>` memory; a project (a subset of the team) sees `project:<id>` memory; nothing leaks across the boundary. Membership is first-class and manageable, and drives the ACL.
+- **Federation** keeps a mesh honest: memories *and* the org structure (teams/projects/memberships) converge across nodes, so `project:<id>` means the same thing everywhere.
+- **Local-first** avoids the latency, cost, and privacy tradeoffs of cloud memory platforms — memories live in a local SQLite file, and each prompt receives only the relevant, budgeted slice.
 
 ## Features
 
 - **Local-first, zero-dependency core** — one SQLite file (FTS5), no server required. `pip install` and go.
-- **Requester-aware ACL** — every agent profile has private, team, and global memories; visibility is a hard gate enforced before ranking, never a soft score.
+- **Teams & projects, first-class** — teams are sets of node members; a project's members are a subset of its team. `team:<id>` memory reaches the whole team, `project:<id>` memory only that project — a hard ACL, managed in the console/CLI/API. Removing a member re-scopes recall instantly; deleting a scope revokes its memory.
+- **Federated across nodes** — portable bundles + peer sync converge memories, links, profiles, **and the org structure** (teams/projects/memberships) with last-writer-wins + tombstones. Per-peer policy (`shared`/`full`/`team:`/`project:`) controls exactly what leaves each machine.
+- **Requester-aware ACL** — every agent has private, agent, team, project, and global memories; visibility is a hard gate enforced before ranking, never a soft score. Candidate indexes return IDs only; content is re-read through the gate.
 - **Dynamic context packs** — token-budgeted, auditable memory selection per prompt (`context_pack_report()` explains every include/exclude decision).
 - **Truth arbitration** — duplicate suppression, contradiction detection (`CONFLICT` markers), and reserved budget for core memories.
 - **Associative recall (resonance)** — an authoritative `memory_links` graph lets related memories surface even when they share no query terms; traversal is ACL-safe (invisible nodes are untraversable).

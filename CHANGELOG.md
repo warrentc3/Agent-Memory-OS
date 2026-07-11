@@ -21,6 +21,23 @@ consistent — the missing piece that makes "team operation" correct in a mesh.
   member add/remove is recorded with actor + timestamp; readable via
   `client.org_audit_log()` and `GET /api/org/audit`. API member routes accept
   an `actor`.
+
+**Ops & maintenance tooling.**
+
+- **Orphan memories**: a memory scoped to a team/project with no members is
+  visible to no one. `find_orphan_memories()` / `delete_orphan_memories()`,
+  the `agent-memory maintenance orphans [--delete]` command, and a console
+  **Maintenance** panel surface and clean them. Removing a team/project member
+  warns (CLI + console) when it just orphaned memory.
+- **`agent-memory maintenance`**: `scan` (health), `orphans`, `reindex`
+  (rebuild FTS/semantic from the truth store), `vacuum` (reclaim disk +
+  refresh planner stats) — plus `/api/maintenance/*` and console buttons.
+- **`agent-memory update`**: detects the deployment (host `pip` vs Docker
+  container) and OS, checks PyPI for a newer version, and either upgrades via
+  pip or prints the `docker pull`/recreate steps. `--check` reports only.
+
+**Docs.** README repositioned around **AI-agent team operation** (shared team &
+project memory, federation) rather than single-agent recall.
 - Review fixes from `docs/reviews/20260711-v0.13.0-review.md` (shipped in this
   release): `create_project` can't re-point a project to a different team;
   `register_agent(teams=None)` leaves membership untouched (metadata edits no

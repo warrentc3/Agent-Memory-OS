@@ -419,6 +419,33 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
         with lock:
             return {"audit": client.store.org_audit_log(limit=limit)}
 
+    # ---------- ops / maintenance ----------
+
+    @app.get("/api/maintenance/scan")
+    def maintenance_scan() -> dict[str, Any]:
+        with lock:
+            return client.maintenance_scan()
+
+    @app.get("/api/maintenance/orphans")
+    def maintenance_orphans() -> dict[str, Any]:
+        with lock:
+            return {"orphans": client.find_orphan_memories()}
+
+    @app.post("/api/maintenance/orphans/delete")
+    def maintenance_orphans_delete() -> dict[str, Any]:
+        with lock:
+            return client.delete_orphan_memories()
+
+    @app.post("/api/maintenance/reindex")
+    def maintenance_reindex() -> dict[str, Any]:
+        with lock:
+            return client.rebuild_indexes()
+
+    @app.post("/api/maintenance/vacuum")
+    def maintenance_vacuum() -> dict[str, Any]:
+        with lock:
+            return client.vacuum()
+
     @app.post("/api/teams/{team_id}/members")
     def team_add_member(team_id: str, request: MemberRequest) -> dict[str, Any]:
         with lock:

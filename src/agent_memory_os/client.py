@@ -126,6 +126,25 @@ class MemoryClient:
     def integrity_check(self) -> dict[str, object]:
         return self.store.integrity_check()
 
+    # ---------- ops / maintenance ----------
+
+    def find_orphan_memories(self, *, limit: int = 1000) -> list[dict[str, object]]:
+        return self.store.find_orphan_memories(limit=limit)
+
+    def orphan_count(self) -> int:
+        return self.store.orphan_count()
+
+    def delete_orphan_memories(self) -> dict[str, int]:
+        result = self.store.delete_orphan_memories()
+        self.cache.clear()
+        return result
+
+    def vacuum(self) -> dict[str, object]:
+        return self.store.vacuum()
+
+    def maintenance_scan(self) -> dict[str, object]:
+        return self.store.maintenance_scan()
+
     def register_agent(self, agent_id: str, **fields) -> dict[str, object]:
         result = self.store.register_agent(agent_id, **fields)
         self.cache.clear()  # team membership changes what this agent can see

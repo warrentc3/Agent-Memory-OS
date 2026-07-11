@@ -2019,6 +2019,88 @@ class MemoryStore:
         total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         return {"memories_indexed": int(indexed), "memories_total": int(total)}
 
+    # ---------- ops / maintenance ----------
+
+    def find_orphan_memories(self, *, limit: int = 1000) -> list[dict[str, object]]:
+        """Memories that are shared but reachable by no one.
+
+        A memory is an orphan when it has at least one `team:<id>`/`project:<id>`
+        grant, every such scope is empty (no members) or deleted, and it has no
+        other reachable grant (`global` or `agent:<id>`). Only admin (a
+        requester-less view) can see such a memory — it is dead data, produced
+        e.g. when the last member leaves a team/project.
+        """
+        live_teams = {r[0] for r in self.conn.execute("SELECT DISTINCT team_id FROM team_members")}
+        live_projects = {r[0] for r in self.conn.execute(
+            "SELECT DISTINCT project_id FROM project_members"
+        )}
+        orphans: list[dict[str, object]] = []
+        rows = self.conn.execute(
+            "SELECT id, content, visibility, owner FROM memories WHERE json_array_length(visibility) > 0"
+        ).fetchall()
+        for row in rows:
+            grants = json.loads(row["visibility"] or "[]")
+            has_scoped = False
+            reachable = False
+            for g in grants:
+                if g == "global" or g.startswith("agent:"):
+                    reachable = True
+                    break
+                if g.startswith("team:"):
+                    has_scoped = True
+                    if g[len("team:"):] in live_teams:
+                        reachable = True
+                        break
+                elif g.startswith("project:"):
+                    has_scoped = True
+                    if g[len("project:"):] in live_projects:
+                        reachable = True
+                        break
+            if has_scoped and not reachable:
+                orphans.append({"id": row["id"], "owner": row["owner"],
+                                "content": (row["content"] or "")[:100], "visibility": grants})
+                if len(orphans) >= limit:
+                    break
+        return orphans
+
+    def orphan_count(self) -> int:
+        return len(self.find_orphan_memories(limit=10 ** 9))
+
+    def delete_orphan_memories(self) -> dict[str, int]:
+        """Delete every orphan memory (tombstoned, so the deletion syncs)."""
+        ids = [o["id"] for o in self.find_orphan_memories(limit=10 ** 9)]
+        for mem_id in ids:
+            self.delete(mem_id)
+        return {"orphans_deleted": len(ids)}
+
+    def vacuum(self) -> dict[str, object]:
+        """Reclaim space and refresh planner stats (ops maintenance)."""
+        before = self.path.stat().st_size if self.path.exists() else 0
+        self.conn.execute("PRAGMA optimize")
+        self.conn.execute("ANALYZE")
+        # VACUUM cannot run inside a transaction.
+        self.conn.isolation_level = None
+        try:
+            self.conn.execute("VACUUM")
+        finally:
+            self.conn.isolation_level = ""
+        after = self.path.stat().st_size if self.path.exists() else 0
+        return {"bytes_before": int(before), "bytes_after": int(after),
+                "bytes_reclaimed": int(max(0, before - after))}
+
+    def maintenance_scan(self) -> dict[str, object]:
+        """A read-only health snapshot for the ops maintenance view."""
+        integrity = self.integrity_check() if hasattr(self, "integrity_check") else {"ok": True}
+        return {
+            "orphan_memories": self.orphan_count(),
+            "memories": self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0],
+            "indexed": self.conn.execute("SELECT COUNT(*) FROM memories_fts").fetchone()[0],
+            "archived": self.conn.execute("SELECT COUNT(*) FROM memories_archive").fetchone()[0],
+            "teams": self.conn.execute("SELECT COUNT(*) FROM teams").fetchone()[0],
+            "projects": self.conn.execute("SELECT COUNT(*) FROM projects").fetchone()[0],
+            "schema_ok": bool(integrity.get("ok", True)),
+        }
+
     def search(
         self,
         query: str,

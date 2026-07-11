@@ -253,6 +253,41 @@ def test_membership_changes_are_audited(tmp_path):
     assert add["actor"] == "admin" and "alice" in add["detail"]
 
 
+def test_orphan_memory_detection_and_cleanup(tmp_path):
+    """New-A/B: emptying a scope orphans its memory; maintenance finds+cleans it."""
+    c = MemoryClient(home=tmp_path)
+    c.store.register_agent("alice", kind="hermes")
+    c.store.create_team("apollo"); c.store.add_team_member("apollo", "alice")
+    m = c.add("apollo team knowledge", owner="alice", visibility=["team:apollo"])
+    g = c.add("global note", owner="alice", visibility=["global"])
+    p = c.add("private note", owner="alice", visibility=[])
+    assert c.orphan_count() == 0
+    c.store.remove_team_member("apollo", "alice")     # apollo now empty
+    orphans = c.find_orphan_memories()
+    assert [o["id"] for o in orphans] == [m.id]       # only the team-scoped one
+    assert c.delete_orphan_memories() == {"orphans_deleted": 1}
+    assert c.get(m.id) is None
+    assert c.get(g.id) is not None and c.get(p.id) is not None  # untouched
+
+
+def test_maintenance_scan_and_vacuum(tmp_path):
+    c = MemoryClient(home=tmp_path)
+    c.add("x", visibility=["global"])
+    scan = c.maintenance_scan()
+    assert set(scan) >= {"orphan_memories", "memories", "indexed", "teams", "projects"}
+    vac = c.vacuum()
+    assert "bytes_reclaimed" in vac
+
+
+def test_update_command_detects_deployment(monkeypatch, capsys):
+    from agent_memory_os import cli
+    monkeypatch.setattr(cli, "_pypi_latest", lambda pkg: "999.0.0")
+    rc = cli.main(["update", "--check"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "latest:" in out and "999.0.0" in out and "deployment:" in out
+
+
 def test_teams_projects_api(tmp_path):
     web = TestClient(create_app(home=tmp_path))
     for a in ("alice", "bob"):
