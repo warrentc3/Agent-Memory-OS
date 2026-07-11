@@ -1,6 +1,6 @@
 # Agent Memory OS SPEC
 
-Current through v0.9.x. Sections are additive by milestone.
+Current through v1.0.0. Sections are additive by milestone.
 
 ## Product thesis
 
@@ -468,6 +468,41 @@ The org structure federates so cross-node team/project ACL is consistent.
   team/project (and cascades), and is retained so an older live record can't
   resurrect it. Imported project members are filtered to current team members
   (subset invariant preserved even under partial sync).
-- **Known follow-ups**: revocation still doesn't retract already-synced
-  *memory* from a node; per-peer policy isn't auto-derived from local
-  membership.
+- **Follow-ups (resolved in v1.0)**: revocation now retracts already-synced
+  memory (the ACL clock, below), and `suggested_peer_policy()` derives a policy
+  from local membership. See the v1.0 section.
+
+## v1.0 Trust model, revocation, and operability
+
+The org/ACL merge paths are brought fully under the peer-trust model, revocation
+is made to propagate, and the system gains production observability.
+
+- **ACL clock (migration 15)**: `memories.acl_updated_at` is an ACL-only
+  last-writer clock, independent of the content `updated_at` (so a share/revoke
+  never restarts the decay/freshness clock). It is bumped at **microsecond**
+  resolution by every visibility change (`_set_visibility`, `update_memory`),
+  and backfilled from `updated_at` on upgrade. Sync merges **content by
+  `updated_at` and ACL by `acl_updated_at` independently**: a post-hoc revoke now
+  retracts already-synced access on peers, a re-share converges back, and an
+  older incoming ACL never clobbers a newer local one. This closes the v0.14
+  "revocation doesn't retract synced memory" follow-up for honest nodes.
+- **Trust gating of org & ACL merges**: org-structure and ACL merges are
+  authorized against the pushing peer's policy scope (`_org_scope_allows`). A
+  scoped peer may assert membership only within its own team/project; a `shared`
+  or anonymous push may assert none. An untrusted peer may only **shrink** a
+  memory's visibility (propagate a revoke), never widen it (no visibility
+  escalation). Future-dated org/ACL timestamps are rejected so a forged clock
+  cannot pin state. Equal-timestamp member sets converge via a deterministic
+  tie-break. The `/api/sync/import` push leg runs `trusted=False, org_scope=None`.
+- **Policy suggestion**: `suggested_peer_policy(agent)` derives the tightest
+  policy from local membership (advisory; the manually-set policy remains the
+  enforced upper bound). This addresses the v0.14 "policy not auto-derived"
+  follow-up without silently widening access.
+- **Orphan safety**: a memory is an orphan only when its owner is not a live
+  agent AND every team/project grant points at a scope that no longer *exists* —
+  so one-click cleanup can never delete recoverable or owner-readable data.
+- **Observability**: `GET /healthz` (integrity-aware readiness, 200/503),
+  `GET /metrics` (Prometheus aggregate gauges), and `doctor` stale-process
+  detection. Read-only web token tier (GET-only). `agent-memory update`
+  (self-update + pidfile-based console restart), `service restart`, and
+  `backup --keep N` (rotation that can never delete the live DB).

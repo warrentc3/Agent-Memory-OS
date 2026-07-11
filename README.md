@@ -17,7 +17,8 @@ Real work happens in **teams of agents** — a project might mix Claude Code, Co
 
 - **Local-first, zero-dependency core** — one SQLite file (FTS5), no server required. `pip install` and go.
 - **Teams & projects, first-class** — teams are sets of node members; a project's members are a subset of its team. `team:<id>` memory reaches the whole team, `project:<id>` memory only that project — a hard ACL, managed in the console/CLI/API. Removing a member re-scopes recall instantly; deleting a scope revokes its memory.
-- **Federated across nodes** — portable bundles + peer sync converge memories, links, profiles, **and the org structure** (teams/projects/memberships) with last-writer-wins + tombstones. Per-peer policy (`shared`/`full`/`team:`/`project:`) controls exactly what leaves each machine.
+- **Federated across nodes, with a real trust model** — portable bundles + peer sync converge memories, links, profiles, **and the org structure** (teams/projects/memberships) with last-writer-wins + tombstones. Per-peer policy (`shared`/`full`/`team:`/`project:`) is an **enforced authorization scope**: a peer can only assert membership within its own scope and can only *shrink* a memory's visibility, never widen it — no cross-scope escalation from a bundle.
+- **Revocation that propagates** — an independent ACL clock carries a post-hoc share/revoke across the mesh, so revoking access actually retracts it on peers that already synced the memory — without disturbing the decay clock.
 - **Requester-aware ACL** — every agent has private, agent, team, project, and global memories; visibility is a hard gate enforced before ranking, never a soft score. Candidate indexes return IDs only; content is re-read through the gate.
 - **Dynamic context packs** — token-budgeted, auditable memory selection per prompt (`context_pack_report()` explains every include/exclude decision).
 - **Truth arbitration** — duplicate suppression, contradiction detection (`CONFLICT` markers), and reserved budget for core memories.
@@ -149,12 +150,18 @@ reports the schema version).
 ## Backup & restore
 
 ```bash
-agent-memory backup ~/backups/memories-$(date +%F).db   # online, WAL-safe
+agent-memory backup ~/backups/memories-$(date +%F).db --keep 14   # rotate, keep 14
 agent-memory restore ~/backups/memories-2026-07-11.db --force
 ```
 
 Backups use SQLite's online backup API, so they are consistent even while
-agents are writing. Disposable indexes rebuild automatically after a restore.
+agents are writing. `--keep N` rotates out older backups in the same name
+series (and can never delete the live database). Disposable indexes rebuild
+automatically after a restore.
+
+**Upgrades & health.** `agent-memory update` checks PyPI, upgrades, and restarts
+the running console; `--check` reports only. Point health checks at `GET /healthz`
+(200/503) and a Prometheus scraper at `GET /metrics`.
 
 ## Multi-agent projects
 
@@ -248,7 +255,7 @@ Note: keep the `--home` database on a local disk. Network filesystems (NFS/SMB) 
 
 ```bash
 agent-memory service install [--host 127.0.0.1] [--port 8000]
-agent-memory service status | start | stop | uninstall
+agent-memory service status | start | stop | restart | uninstall
 ```
 
 `install` registers the console with the native service manager so it starts
@@ -269,15 +276,19 @@ pytest
 
 ## Status
 
-Alpha (`0.2.x`). The core contracts above are implemented and covered by the test suite; interfaces may still change before `1.0`. See [PROJECT_STATUS.md](PROJECT_STATUS.md) and [PROGRESS.md](PROGRESS.md) for the evidence-backed state of each feature.
+**Stable — `1.0.0`.** The contracts above are implemented, covered by the test
+suite (300+ tests across a 3-OS CI matrix, plus a migration upgrade-path job),
+and audited by repeated fan-out code + security reviews (reports under
+[`docs/reviews/`](docs/reviews/)). Performance is verified at 10k memories (add
+0.17 ms, search <1 ms, context-pack 7.8 ms). The database self-migrates forward;
+see the [CHANGELOG](CHANGELOG.md) for what each release added.
 
 ## Documentation
 
 - **[User Guide](docs/USER_GUIDE.md)** — concepts, full CLI / HTTP API / MCP references, multi-agent and federation walkthroughs, ops checklist
 - **[Docker guide](docs/DOCKER.md)** — `docker`/`docker compose` startup, config via env, two-node sync mesh
 - [SPEC](SPEC.md) — contracts and invariants, by milestone
-- **[Validation Plan](docs/VALIDATION_PLAN.md)** & **[latest validation report](docs/reports/20260711-v0.14.0-validation-report.md)** — gate matrix, reproducible harness (`scripts/validation_run.py`), measured results
-- **[Security & code review (v0.10.0)](docs/reviews/20260711-v0.10.0-review.md)** — six-angle audit, fixes applied, and the federation-hardening follow-ups
+- **[Reviews & reports](docs/reviews/)** — fan-out code + security reviews (through v1.0.0), the performance/security report, and the validation harness (`scripts/validation_run.py`)
 - [CHANGELOG](CHANGELOG.md) · [Roadmap](docs/ROADMAP.md) · [Integration guides](docs/integrations/claude-code.md)
 
 ## License

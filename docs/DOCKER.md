@@ -114,6 +114,6 @@ for the full trust model.
 
 ## Health
 
-The image has a `HEALTHCHECK` hitting `/health`; `docker ps` shows `healthy`
+The image has a `HEALTHCHECK` hitting `/healthz` (integrity-aware readiness; `/metrics` exposes Prometheus gauges for monitoring); `docker ps` shows `healthy`
 once it's serving. `/health` is open (no token) precisely so orchestrators can
 probe it.

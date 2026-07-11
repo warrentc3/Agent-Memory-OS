@@ -1,6 +1,6 @@
 # AgentMemoryOS Roadmap
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 Governance rules:
 
@@ -13,7 +13,7 @@ Governance rules:
    retrieval behavior) ships with matching Web UI support in the same
    milestone — the console must never lag the engine.
 
-## Shipped — v0.2.3 (current release)
+## Shipped — v1.0.0 (current release)
 
 - SQLite + FTS5 source of truth; requester-aware ACL and expiry hard gates
 - Truth arbitration, context budget packs with auditable decisions
@@ -26,8 +26,19 @@ Governance rules:
 - Web console: dashboard, search/browse/edit, association graph, tools,
   bearer-token auth; MCP server (9 tools); token/doctor/backup CLI
 - CI (3 Python versions) and Trusted-Publishing release workflow
+- First-class teams & projects with membership; federated org structure that
+  converges across nodes with an enforced per-peer trust scope
+- Revocation that propagates over sync (independent ACL clock); untrusted peers
+  cannot escalate visibility
+- Observability: `/healthz`, `/metrics` (Prometheus), doctor stale-process check
+- Operability: `agent-memory update` self-updater, `service restart`,
+  `backup --keep`, read-only web token, one-click ops maintenance
+- Web console parity: teams tab, token-usage cards, version badge, self-update
+  button, membership-audit viewer, graph filter; 5 UI locales
+- Multi-instance (instance.toml, auto-port, node names); Docker + Docker Hub image
+- MCP server (11 tools) with per-agent identity
 
-## v0.3 — Robust persistent memory (in progress)
+## v0.3 — Robust persistent memory (shipped)
 
 Goal: a memory you can trust with years of an agent's life.
 
@@ -46,7 +57,7 @@ Goal: a memory you can trust with years of an agent's life.
 5. **Hermes activation evidence** — shadow comparison logs, golden recall at
    target, importer idempotency; gates in `PROJECT_STATUS.md`.
 
-## v0.4 — Dynamic context orchestration (in progress)
+## v0.4 — Dynamic context orchestration (shipped)
 
 Goal: the memory system decides *what enters the context window, when* —
 not just what exists.
@@ -71,7 +82,7 @@ not just what exists.
    heuristic automatically, and `consolidate(link_extractor=fn)` is the
    documented plug point for LLM-backed triplet extraction.
 
-## v0.5 — Memory federation & adaptive forgetting (in progress)
+## v0.5 — Memory federation & adaptive forgetting (shipped)
 
 1. **Cross-agent memory negotiation** — SHIPPED (first form): owner-only
    `share_memory` / `revoke_share` grants (agent or team), de-identified
@@ -86,7 +97,7 @@ not just what exists.
    recomputes decay half-lives idempotently — proven-helpful memories forget
    slower (up to 4x base), misleading ones faster (down to 0.5x).
 
-## v0.6 — Mesh federation & extraction plumbing (in progress)
+## v0.6 — Mesh federation & extraction plumbing (shipped)
 
 1. **Peer registry & mesh sync** — SHIPPED: per-home `sync_peers` registry
    (migration 7), `agent-memory peers add|remove|list`, `sync auto`
@@ -97,7 +108,7 @@ not just what exists.
    wraps any completion callable into a consolidation link extractor with
    defensive JSON parsing (bad output degrades to zero links).
 
-## v0.7 — Multi-agent collaboration (in progress)
+## v0.7 — Multi-agent collaboration (shipped)
 
 1. **Agent registry** — SHIPPED (migration 8): agents are first-class
    entities (id, kind: claude-code/codex/openclaw/hermes/custom, teams,

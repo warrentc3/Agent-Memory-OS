@@ -4,25 +4,60 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [Unreleased]
+## [1.0.0] — 2026-07-12
 
-- **`update` finishes the job**: after upgrading, the tool now deals with the
-  processes still running the old code (a pip upgrade never touches live
-  processes). The web console is restarted automatically — through the
-  installed service (`service restart`, new action) or by relaunching the
-  process with its original command line (`--no-restart` opts out; the auth
-  token persists so no re-login). MCP servers are owned by their host app
-  (e.g. Claude Code) and are never killed — they're detected and reported
-  with a "restart the host app" notice. `update --check` additionally flags
-  stale processes: ones that started before the currently-installed version
-  landed on disk ("disk is new, memory is old" — exactly the state a routine
-  upgrade leaves behind).
-- Process detection is token-exact (interpreter + `-m agent_memory_os.…`, or
-  an `agent-memory-web` entrypoint), so host apps that merely mention the
-  module in a config argument, or a stray `grep`, are not misidentified as
-  restart targets.
-- `agent-memory service restart` — one-step restart of the installed console
-  service (launchd `kickstart -k` / `systemctl restart` / schtasks end+run).
+First stable release. Everything below lands on top of v0.14.0's federated org
+structure, and closes the trust-model, observability, and operability gaps that
+a "memory system for AI-agent teams" needs to be run in production.
+
+### Trust model — revocation & escalation (migration 15)
+- **Revocation now propagates.** An independent ACL clock (`acl_updated_at`)
+  carries share/revoke changes over sync WITHOUT restarting the decay/freshness
+  clock. A post-hoc revoke retracts already-synced access on peers; a re-share
+  converges back; an older incoming ACL never clobbers a newer local one.
+- **Untrusted peers cannot escalate visibility.** Org-structure and ACL merges
+  are authorized against the pushing peer's policy scope: a peer may only assert
+  team/project membership within its own scope, may only *shrink* a memory's
+  visibility (a revoke), never widen it, and cannot delete org structure it
+  doesn't own. Anonymous HTTP pushes get no org mutations at all. Future-dated
+  org/ACL timestamps are rejected so a forged clock can't pin state.
+- Deterministic tie-break on equal-timestamp membership so nodes converge;
+  member-removal cascades correctly to projects; deleting a team strips both
+  team-grant schemes so a reused id can't resurrect access.
+- `suggested_peer_policy(agent)` derives the tightest policy from local
+  membership (advisory; the manual policy stays the enforced upper bound).
+
+### Observability
+- `GET /healthz` — integrity-aware readiness (200 ok / 503 degraded); the Docker
+  HEALTHCHECK uses it.
+- `GET /metrics` — Prometheus text format (aggregate counts only: memories,
+  orphans, index drift, teams, projects, peers, peer errors, integrity).
+- `agent-memory doctor` reports processes that predate the installed version.
+
+### Updating & operations
+- **`agent-memory update`** finishes the job: after a pip upgrade it restarts the
+  running web console it owns via a self-written pidfile (never a `ps`-derived
+  command — closes a local code-exec vector), reports MCP servers to restart in
+  their host app, and (`update --check`) flags stale "disk-new/memory-old"
+  processes. Docker deployments get image-pull guidance instead.
+- `agent-memory service restart`; `agent-memory backup --keep N` (safe rotation
+  that can never delete the live database); `agent-memory token create --readonly`
+  (a GET-only web token tier).
+- Ops/maintenance: orphan detection (owner- and existence-aware, so cleanup never
+  deletes recoverable data), one-click orphan cleanup, manual reindex, vacuum.
+
+### Web console
+- Version badge (bottom-right), token-usage dashboard cards (total / top agent /
+  team / project), a self-update button with version check, a membership-audit
+  viewer, a graph scope filter, and a read-only-mode banner — all across 5 locales.
+
+### Hardening & resilience
+- Bundle import is fuzz-hardened (malformed lines roll back atomically; garbage
+  fields are coerced, not executed). A CI `upgrade-path` job proves a DB written
+  by the last published release migrates forward with data + integrity intact.
+- Full code + security review (fan-out, two rounds) with reports under
+  `docs/reviews/`; performance verified at 10k memories (add 0.17 ms, search
+  <1 ms, context-pack 7.8 ms).
 
 ## [0.14.0] — 2026-07-11
 
