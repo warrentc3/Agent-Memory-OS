@@ -15,9 +15,7 @@
 # 'shared' between nodes you don't fully trust.
 x-amos: &amos
   build:
-    context: .
-    args:
-      EXTRAS: api
+    context: .              # complete image (web + MCP + turbovec + CLI)
   image: agent-memory-os:local
   restart: unless-stopped
   environment: &amos-env

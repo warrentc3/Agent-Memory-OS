@@ -9,9 +9,8 @@ services:
     # Build locally, OR use the published image: comment out `build:` and set
     #   image: yamantaka520/agent-memory-os:latest
     build:
-      context: .
-      args:
-        EXTRAS: api           # "full" adds turbovec semantic recall + MCP
+      context: .              # complete image: web console + MCP server + turbovec + CLI
+      # For a lean web-only build:  args: { EXTRAS: api }
     image: agent-memory-os:local
     container_name: agent-memory-os
     ports:
