@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-memory-os"
-version = "0.14.0"
+version = "1.0.0"
 description = "Local-first, MCP-native memory engine for AI agents with RAM cache and context-budgeted recall."
 readme = "README.md"
 requires-python = ">=3.11"
