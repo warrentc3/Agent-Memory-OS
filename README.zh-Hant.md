@@ -21,8 +21,8 @@
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/console-dashboard.png" alt="AgentMemoryOS web 主控台 — 儀表板" width="820">
-  <br><sub>內建 web 主控台:統計、依 agent/team/project 的 token 用量、scope 與 type 分佈、14 天活動。</sub>
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/console-demo.gif" alt="AgentMemoryOS web 主控台 — 儀表板、瀏覽、關聯圖" width="820">
+  <br><sub>內建 web 主控台:依 agent/team/project 的 token 用量、記憶瀏覽、ACL 安全的關聯圖。</sub>
 </p>
 
 ## 為什麼

@@ -21,8 +21,8 @@ A **local-first memory system for AI-agent teams** — not just giving one agent
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/console-dashboard.png" alt="AgentMemoryOS web console — dashboard" width="820">
-  <br><sub>The built-in web console: stats, token-usage by agent/team/project, scope &amp; type breakdowns, and 14-day activity.</sub>
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/console-demo.gif" alt="AgentMemoryOS web console — dashboard, browse, association graph" width="820">
+  <br><sub>The built-in web console: token-usage by agent/team/project, memory browse, and the ACL-safe association graph.</sub>
 </p>
 
 ## Why
