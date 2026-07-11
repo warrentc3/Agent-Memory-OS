@@ -271,6 +271,13 @@ PAGE = r"""<!doctype html>
     form.addform, .toolgrid { grid-template-columns: 1fr; }
     .acting { margin-left: 0; width: 100%; }
   }
+  #version-badge { position: fixed; right: 10px; bottom: 8px; z-index: 50;
+    font-size: 11px; color: var(--muted); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 2px 8px;
+    opacity: .72; user-select: none; pointer-events: none; }
+  #ro-banner { display: none; margin: 8px 0; padding: 6px 10px; border-radius: 8px;
+    font-size: 13px; background: #7a5b00; color: #fff; }
+  .usagecard .sub { font-size: 11px; color: var(--muted); font-weight: 400; }
 </style>
 </head>
 <body>
@@ -300,6 +307,7 @@ PAGE = r"""<!doctype html>
 </header>
 
 <main>
+  <div id="ro-banner"></div>
   <section class="tab active" id="tab-dashboard">
     <div class="tiles">
       <div class="tile"><span class="tilelabel">Memories</span><span class="tileval" id="d-total">–</span></div>
@@ -307,6 +315,14 @@ PAGE = r"""<!doctype html>
       <div class="tile"><span class="tilelabel">Pinned</span><span class="tileval" id="d-pinned">–</span></div>
       <div class="tile"><span class="tilelabel">Expired</span><span class="tileval" id="d-expired">–</span></div>
       <div class="tile"><span class="tilelabel">Archived</span><span class="tileval" id="d-archived">–</span></div>
+    </div>
+    <div class="panel"><h3>Token usage</h3>
+      <div class="tiles" id="usage-cards">
+        <div class="tile usagecard"><span class="tilelabel">Total</span><span class="tileval" id="u-total">–</span><span class="sub" id="u-total-sub"></span></div>
+        <div class="tile usagecard"><span class="tilelabel">Top agent</span><span class="tileval" id="u-agent">–</span><span class="sub" id="u-agent-sub"></span></div>
+        <div class="tile usagecard"><span class="tilelabel">Top team</span><span class="tileval" id="u-team">–</span><span class="sub" id="u-team-sub"></span></div>
+        <div class="tile usagecard"><span class="tilelabel">Top project</span><span class="tileval" id="u-project">–</span><span class="sub" id="u-project-sub"></span></div>
+      </div>
     </div>
     <div class="panelgrid">
       <div class="panel"><h3>By scope</h3><div class="hbars" id="d-scope"></div></div>
@@ -354,6 +370,10 @@ PAGE = r"""<!doctype html>
   </section>
 
   <section class="tab" id="tab-graph">
+    <div class="row" style="margin-bottom:8px">
+      <label style="font-size:13px;color:var(--muted)">Filter</label>
+      <select id="graph-filter" style="max-width:260px"><option value="">All</option></select>
+    </div>
     <div class="graphwrap">
       <canvas id="graph-canvas"></canvas>
       <div class="graphlegend" id="graph-legend"></div>
@@ -502,8 +522,15 @@ PAGE = r"""<!doctype html>
           <button class="ghost" id="btn-maint-orphans">Delete orphan memories</button>
           <button class="ghost" id="btn-maint-reindex">Rebuild index</button>
           <button class="ghost" id="btn-maint-vacuum">Vacuum</button>
+          <button class="ghost" id="btn-maint-update">Check for updates</button>
         </div>
         <div id="maint-out" style="margin:6px 0;font-size:13px;color:var(--muted)"></div>
+      </div>
+      <div class="tool" style="grid-column: 1 / -1;">
+        <h3>Membership audit</h3>
+        <p class="hint">Recent team/project membership changes (create, delete, add/remove member). Actor "web" = a change made through this console.</p>
+        <div class="row"><button class="ghost" id="btn-audit-refresh">Refresh</button></div>
+        <div class="toplist" id="audit-list" style="margin-top:8px"></div>
       </div>
       <div class="tool" style="grid-column: 1 / -1;">
         <h3>Federation</h3>
@@ -670,6 +697,12 @@ const I18N = {
 "✎ Edit":"✎ 편집","👍 Helpful":"👍 도움됨","👎 Misleading":"👎 오해 유발","🔗 Links":"🔗 연결","⇢ Share":"⇢ 공유","⧉ Copy id":"⧉ ID 복사","🗑 Delete":"🗑 삭제","why?":"이유는?","Save":"저장","Cancel":"취소","No links yet.":"아직 연결이 없습니다.","Loading…":"불러오는 중……","Ready.":"준비 완료.","🔒 private":"🔒 비공개"
 }
 };
+
+Object.assign(I18N["zh-TW"], {"Token usage":"Token 用量","Total":"總計","Top agent":"最高 Agent","Top team":"最高團隊","Top project":"最高專案","none":"無","Check for updates":"檢查更新","Update now":"立即更新","Up to date":"已是最新版本","A new version is available":"有新版本可用","Updating… the console will restart shortly.":"更新中…主控台即將重新啟動。","Pull the new image tag and recreate the container.":"請拉取新映像標籤並重建容器。","Membership audit":"成員稽核","Refresh":"重新整理","No membership changes yet.":"尚無成員異動。","Filter":"篩選","All":"全部","memories":"筆記憶","read-only mode — changes are disabled":"唯讀模式——已停用修改"});
+Object.assign(I18N["zh-CN"], {"Token usage":"Token 用量","Total":"总计","Top agent":"最高 Agent","Top team":"最高团队","Top project":"最高项目","none":"无","Check for updates":"检查更新","Update now":"立即更新","Up to date":"已是最新版本","A new version is available":"有新版本可用","Updating… the console will restart shortly.":"更新中…控制台即将重新启动。","Pull the new image tag and recreate the container.":"请拉取新镜像标签并重建容器。","Membership audit":"成员审计","Refresh":"刷新","No membership changes yet.":"暂无成员变动。","Filter":"筛选","All":"全部","memories":"条记忆","read-only mode — changes are disabled":"只读模式——已禁用修改"});
+Object.assign(I18N["ja"], {"Token usage":"トークン使用量","Total":"合計","Top agent":"トップエージェント","Top team":"トップチーム","Top project":"トッププロジェクト","none":"なし","Check for updates":"更新を確認","Update now":"今すぐ更新","Up to date":"最新です","A new version is available":"新しいバージョンがあります","Updating… the console will restart shortly.":"更新中…まもなくコンソールが再起動します。","Pull the new image tag and recreate the container.":"新しいイメージタグを取得してコンテナを再作成してください。","Membership audit":"メンバー監査","Refresh":"更新","No membership changes yet.":"メンバー変更はまだありません。","Filter":"フィルター","All":"すべて","memories":"件の記憶","read-only mode — changes are disabled":"読み取り専用モード — 変更は無効です"});
+Object.assign(I18N["ko"], {"Token usage":"토큰 사용량","Total":"합계","Top agent":"최상위 에이전트","Top team":"최상위 팀","Top project":"최상위 프로젝트","none":"없음","Check for updates":"업데이트 확인","Update now":"지금 업데이트","Up to date":"최신 상태입니다","A new version is available":"새 버전이 있습니다","Updating… the console will restart shortly.":"업데이트 중… 콘솔이 곧 다시 시작됩니다.","Pull the new image tag and recreate the container.":"새 이미지 태그를 받아 컨테이너를 다시 만드세요.","Membership audit":"멤버 감사","Refresh":"새로고침","No membership changes yet.":"아직 멤버 변경이 없습니다.","Filter":"필터","All":"전체","memories":"개의 기억","read-only mode — changes are disabled":"읽기 전용 모드 — 변경이 비활성화됨"});
+
 let locale = localStorage.getItem("amos.locale") || (() => {
   const nav = (navigator.language || "en");
   if (/^zh-(TW|HK|Hant)/i.test(nav)) return "zh-TW";
@@ -832,7 +865,87 @@ function fillBars(containerId, entries, colorFor) {
   }
 }
 
+
+async function loadVersionBadge() {
+  try {
+    const n = await api("/api/node");
+    if (n && n.version) $("version-badge").textContent = "v" + n.version;
+  } catch (e) { /* pre-auth */ }
+}
+function fmtTokens(x) {
+  if (x >= 1e6) return (x / 1e6).toFixed(1) + "M";
+  if (x >= 1e3) return (x / 1e3).toFixed(1) + "k";
+  return String(x || 0);
+}
+async function loadUsage() {
+  let u;
+  try { u = await api("/api/usage"); } catch (e) { return; }
+  const tot = u.total || {};
+  $("u-total").textContent = fmtTokens(tot.tokens);
+  $("u-total-sub").textContent = (tot.memories || 0) + " " + t("memories");
+  const top = (arr) => (arr && arr[0]) ? arr[0] : null;
+  const a = top(u.by_agent), tm = top(u.by_team), pr = top(u.by_project);
+  $("u-agent").textContent = a ? fmtTokens(a.tokens) : "–";
+  $("u-agent-sub").textContent = a ? a.id : t("none");
+  $("u-team").textContent = tm ? fmtTokens(tm.tokens) : "–";
+  $("u-team-sub").textContent = tm ? tm.id : t("none");
+  $("u-project").textContent = pr ? fmtTokens(pr.tokens) : "–";
+  $("u-project-sub").textContent = pr ? pr.id : t("none");
+}
+async function checkForUpdates() {
+  const out = $("maint-out");
+  out.textContent = t("Working…");
+  let r;
+  try { r = await api("/api/maintenance/update-check"); }
+  catch (e) { out.textContent = String(e.message || e); return; }
+  if (r.deployment === "docker") {
+    out.textContent = "Docker: " + r.current + " → " + (r.latest || "?") + " · " + t("Pull the new image tag and recreate the container.");
+    return;
+  }
+  if (r.update_available) {
+    out.innerHTML = "";
+    const msg = document.createElement("span");
+    msg.textContent = t("A new version is available") + ": " + r.current + " → " + r.latest + "  ";
+    out.appendChild(msg);
+    const btn = document.createElement("button");
+    btn.className = "primary"; btn.textContent = t("Update now");
+    btn.addEventListener("click", async () => {
+      if (!confirm(t("Update now") + "?")) return;
+      btn.disabled = true;
+      try {
+        const res = await api("/api/maintenance/update-run?confirm=update", { method: "POST" });
+        out.textContent = res.detail || t("Updating… the console will restart shortly.");
+      } catch (e) { out.textContent = String(e.message || e); }
+    });
+    out.appendChild(btn);
+  } else {
+    out.textContent = t("Up to date") + " (v" + r.current + ")";
+  }
+}
+async function loadAudit() {
+  const box = $("audit-list");
+  box.textContent = t("Working…");
+  let rows;
+  try { rows = await api("/api/org/audit"); }
+  catch (e) { box.textContent = String(e.message || e); return; }
+  const items = (rows && rows.audit) || rows || [];
+  box.innerHTML = "";
+  if (!items.length) { box.textContent = t("No membership changes yet."); return; }
+  for (const it of items) {
+    const row = document.createElement("div");
+    row.className = "topitem";
+    const left = document.createElement("span");
+    left.textContent = it.action + " · " + it.detail;
+    const right = document.createElement("span");
+    right.className = "muted"; right.style.fontSize = "11px";
+    right.textContent = (it.actor || "?") + " · " + (it.at || "").replace("T", " ").slice(0, 19);
+    row.appendChild(left); row.appendChild(right);
+    box.appendChild(row);
+  }
+}
+
 async function loadDashboard() {
+  loadUsage();
   let data;
   try { data = await api("/api/dashboard"); }
   catch (e) { toast(e.message, "err"); return; }
@@ -1078,6 +1191,9 @@ $("btn-maint-scan").addEventListener("click", () => maint("/api/maintenance/scan
 $("btn-maint-orphans").addEventListener("click", () => { if (confirm(t("Delete all orphan memories?"))) maint("/api/maintenance/orphans/delete?confirm=orphans", "POST", t("Orphans")); });
 $("btn-maint-reindex").addEventListener("click", () => maint("/api/maintenance/reindex", "POST", t("Reindex")));
 $("btn-maint-vacuum").addEventListener("click", () => maint("/api/maintenance/vacuum", "POST", t("Vacuum")));
+$("btn-maint-update").addEventListener("click", checkForUpdates);
+$("btn-audit-refresh").addEventListener("click", loadAudit);
+$("graph-filter").addEventListener("change", (e) => { graphFilter = e.target.value; loadGraph(); });
 $("btn-team-create").addEventListener("click", async () => {
   const id = $("tm-id").value.trim(); if (!id) return;
   try { await api("/api/teams", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: id, name: $("tm-name").value.trim() }) }); $("tm-id").value = ""; $("tm-name").value = ""; refreshTeams(); }
@@ -1380,6 +1496,7 @@ $("btn-filter").addEventListener("click", () => refreshBrowse(false));
 const SCOPE_COLORS = {
   user: "#4d7fe8", agent: "#22a58c", project: "#c07f1f", team: "#d9558f", global: "#3aa653",
 };
+let graphFilter = "";
 let graphState = null;
 
 async function loadGraph() {
@@ -1405,6 +1522,15 @@ async function loadGraph() {
     legend.appendChild(key);
   }
 
+  if (data && Array.isArray(data.nodes)) {
+    const sel = $("graph-filter");
+    const scopes = Array.from(new Set(data.nodes.map(n => n.scope).filter(Boolean))).sort();
+    const cur = sel.value;
+    sel.innerHTML = '<option value="">' + t("All") + '</option>';
+    for (const sc of scopes) { const o = document.createElement("option"); o.value = sc; o.textContent = sc; sel.appendChild(o); }
+    sel.value = graphFilter && scopes.includes(graphFilter) ? graphFilter : "";
+    if (graphFilter) data = Object.assign({}, data, { nodes: data.nodes.filter(n => n.scope === graphFilter) });
+  }
   if (!data || !Array.isArray(data.nodes)) { toast(t("Graph unavailable."), "err"); return; }
   if (!data.nodes.length) {
     context.clearRect(0, 0, width, height);
@@ -1787,6 +1913,8 @@ $("btn-consolidate").addEventListener("click", async () => {
 applyLocale();
 loadStats();
 loadDashboard();
+loadVersionBadge();
 </script>
+<div id="version-badge"></div>
 </body>
 </html>"""

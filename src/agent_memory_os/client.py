@@ -145,6 +145,9 @@ class MemoryClient:
     def maintenance_scan(self) -> dict[str, object]:
         return self.store.maintenance_scan()
 
+    def usage_summary(self, *, top: int = 20) -> dict[str, object]:
+        return self.store.usage_summary(top=top)
+
     def register_agent(self, agent_id: str, **fields) -> dict[str, object]:
         result = self.store.register_agent(agent_id, **fields)
         self.cache.clear()  # team membership changes what this agent can see

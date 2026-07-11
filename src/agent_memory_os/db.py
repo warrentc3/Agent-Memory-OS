@@ -2169,6 +2169,70 @@ class MemoryStore:
         return {"bytes_before": int(before), "bytes_after": int(after),
                 "bytes_reclaimed": int(max(0, before - after))}
 
+    def usage_summary(self, *, top: int = 20) -> dict[str, object]:
+        """Approximate token footprint of stored memory, grouped for the
+        dashboard's four cards: total, per agent (owner), per team, per project.
+
+        Tokens are the dependency-free approx_tokens() estimate of each memory's
+        content. A memory counts toward a team/project if its visibility grants
+        that scope (either `team:<id>`/`project:<id>` or the bare `team` scheme
+        keyed by source.team_id). One memory can count toward several scopes.
+        """
+        from collections import defaultdict
+
+        from .context_pack import approx_tokens
+
+        rows = self.conn.execute(
+            "SELECT owner, content, visibility, source FROM memories"
+        ).fetchall()
+        total_tokens = 0
+        total_mem = 0
+        by_agent: dict[str, list[int]] = defaultdict(lambda: [0, 0])   # tokens, memories
+        by_team: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        by_project: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        for row in rows:
+            tok = approx_tokens(row["content"] or "")
+            total_tokens += tok
+            total_mem += 1
+            if row["owner"]:
+                by_agent[row["owner"]][0] += tok
+                by_agent[row["owner"]][1] += 1
+            try:
+                grants = json.loads(row["visibility"] or "[]")
+            except (ValueError, TypeError):
+                grants = []
+            teams, projects = set(), set()
+            for g in grants:
+                if isinstance(g, str) and g.startswith("team:"):
+                    teams.add(g[len("team:"):])
+                elif isinstance(g, str) and g.startswith("project:"):
+                    projects.add(g[len("project:"):])
+            if "team" in grants:  # bare scheme keyed by source.team_id
+                try:
+                    tid = (json.loads(row["source"]) or {}).get("team_id")
+                    if tid:
+                        teams.add(str(tid))
+                except (ValueError, TypeError):
+                    pass
+            for t in teams:
+                by_team[t][0] += tok; by_team[t][1] += 1
+            for p in projects:
+                by_project[p][0] += tok; by_project[p][1] += 1
+
+        def _rank(d):
+            items = [{"id": k, "tokens": v[0], "memories": v[1]} for k, v in d.items()]
+            items.sort(key=lambda x: x["tokens"], reverse=True)
+            return items[:top]
+
+        return {
+            "total": {"tokens": total_tokens, "memories": total_mem,
+                      "agents": len(by_agent), "teams": len(by_team),
+                      "projects": len(by_project)},
+            "by_agent": _rank(by_agent),
+            "by_team": _rank(by_team),
+            "by_project": _rank(by_project),
+        }
+
     def maintenance_scan(self) -> dict[str, object]:
         """A read-only health snapshot for the ops maintenance view."""
         integrity = self.integrity_check() if hasattr(self, "integrity_check") else {"ok": True}

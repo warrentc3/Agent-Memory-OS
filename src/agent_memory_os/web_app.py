@@ -211,7 +211,8 @@ def _search_result_payload(result: SearchResult) -> dict[str, Any]:
     }
 
 
-def create_app(home: str | Path | None = None, *, token: str | None = None) -> FastAPI:
+def create_app(home: str | Path | None = None, *, token: str | None = None,
+               readonly_token: str | None = None) -> FastAPI:
     # One shared client per app: the schema/migration cost is paid once and
     # the LRU cache actually works. SQLite access is serialized by `lock`
     # because sync endpoints run in a threadpool.
@@ -220,6 +221,8 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     # Resolution order: explicit --token > env > <home>/web_token created by
     # `agent-memory token create`.
     api_token = token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or load_token(home)
+    ro_token = (readonly_token or os.getenv("AGENT_MEMORY_WEB_READONLY_TOKEN")
+                or load_token(home, readonly=True))
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -231,13 +234,24 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     if api_token:
         # Opt-in bearer-token gate for every API route. The page shell and
         # /health stay open so the UI can load and ask for the token.
+        # A read-only token (if configured) authorizes SAFE methods only; any
+        # mutation (POST/PUT/PATCH/DELETE) still requires the full token.
+        safe_methods = {"GET", "HEAD", "OPTIONS"}
+
+        def _authorizes(supplied: str, secret: str) -> bool:
+            return bool(secret) and hmac.compare_digest(
+                supplied.encode(), f"Bearer {secret}".encode())
+
         @app.middleware("http")
         async def require_token(request, call_next):
             if request.url.path.startswith("/api/"):
                 supplied = request.headers.get("authorization", "")
-                expected = f"Bearer {api_token}"
-                if not hmac.compare_digest(supplied.encode(), expected.encode()):
-                    return JSONResponse({"detail": "unauthorized"}, status_code=401)
+                full = _authorizes(supplied, api_token)
+                ro = _authorizes(supplied, ro_token) if ro_token else False
+                if not full and not (ro and request.method in safe_methods):
+                    detail = ("read-only token cannot perform this action"
+                              if ro else "unauthorized")
+                    return JSONResponse({"detail": detail}, status_code=401 if not ro else 403)
             return await call_next(request)
 
     @app.get("/health")
@@ -514,6 +528,63 @@ def create_app(home: str | Path | None = None, *, token: str | None = None) -> F
     def maintenance_vacuum() -> dict[str, Any]:
         with lock:
             return client.vacuum()
+
+    @app.get("/api/usage")
+    def usage() -> dict[str, Any]:
+        """Token footprint for the dashboard cards (agent / team / project / total)."""
+        with lock:
+            return client.usage_summary()
+
+    @app.get("/api/maintenance/update-check")
+    def update_check() -> dict[str, Any]:
+        """Current vs PyPI-latest version + deployment, for the update button."""
+        from importlib.metadata import PackageNotFoundError, version
+
+        from .cli import _in_docker, _pypi_latest
+
+        try:
+            current = version("agent-memory-os")
+        except PackageNotFoundError:
+            current = "unknown"
+        latest = _pypi_latest("agent-memory-os")
+        return {
+            "current": current,
+            "latest": latest,
+            "update_available": bool(latest and latest != current),
+            "deployment": "docker" if _in_docker() else "host",
+        }
+
+    @app.post("/api/maintenance/update-run")
+    def update_run(confirm: str = Query(default="")) -> dict[str, Any]:
+        """Trigger a self-update: upgrade the package, then restart the console.
+
+        Delegated to the `agent-memory update --yes` CLI as a detached process —
+        it pip-upgrades and restarts THIS console via its pidfile, so the button
+        can't take the web process down mid-request. Docker deployments can't
+        pip-upgrade in place, so it returns guidance instead.
+        """
+        import subprocess
+        import sys
+
+        from .cli import _in_docker
+
+        if confirm != "update":
+            raise HTTPException(status_code=400,
+                                detail="confirmation required: pass ?confirm=update")
+        if _in_docker():
+            return {"started": False,
+                    "detail": "Docker deployment: pull the new image tag and recreate the "
+                              "container (a container cannot pip-upgrade itself)."}
+        try:
+            subprocess.Popen(
+                [sys.executable, "-m", "agent_memory_os.cli", "update", "--yes"],
+                start_new_session=True,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=500, detail=f"could not start updater: {exc}") from exc
+        return {"started": True,
+                "detail": "Updating in the background — the console will restart on the new "
+                          "version shortly. Reload the page in ~30s."}
 
     @app.post("/api/teams/{team_id}/members")
     def team_add_member(team_id: str, request: MemberRequest) -> dict[str, Any]:

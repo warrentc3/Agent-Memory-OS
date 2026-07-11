@@ -59,6 +59,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     token = sub.add_parser("token", help="Manage the Web UI API token")
     token.add_argument("action", choices=["create", "show", "rotate", "disable"])
+    token.add_argument(
+        "--readonly", action="store_true",
+        help="Operate on the read-only token (GET-only access) instead of the full token",
+    )
 
     doctor = sub.add_parser("doctor", help="Check optional dependencies and setup health")
     doctor.add_argument("--install", action="store_true", help="pip-install any missing optional extras")
@@ -175,25 +179,29 @@ def _cmd_service(args) -> int:
 def _cmd_token(args) -> int:
     from . import tokens
 
-    existing = tokens.load_token(args.home)
+    ro = getattr(args, "readonly", False)
+    label = "read-only Web UI token" if ro else "Web UI token"
+    existing = tokens.load_token(args.home, readonly=ro)
     if args.action == "show":
         if existing is None:
-            print("no token set — run: agent-memory token create")
+            print(f"no {label} set — run: agent-memory token create"
+                  + (" --readonly" if ro else ""))
             return 1
         print(existing)
         return 0
     if args.action == "disable":
-        if tokens.delete_token(args.home):
-            print("token removed — the Web UI API is now open (localhost-only recommended)")
+        if tokens.delete_token(args.home, readonly=ro):
+            print(f"{label} removed")
         else:
-            print("no token was set")
+            print(f"no {label} was set")
         return 0
     if args.action == "create" and existing is not None:
-        print("a token already exists — use `agent-memory token rotate` to replace it,")
+        print(f"a {label} already exists — use `... token rotate"
+              + (" --readonly" if ro else "") + "` to replace it,")
         print("or `agent-memory token show` to display it")
         return 1
-    token = tokens.create_token(args.home)
-    print(f"Web UI token saved to {tokens.token_path(args.home)} (mode 600):")
+    token = tokens.create_token(args.home, readonly=ro)
+    print(f"{label} saved to {tokens.token_path(args.home, readonly=ro)} (mode 600):")
     print()
     print(f"  {token}")
     print()

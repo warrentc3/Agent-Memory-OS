@@ -12,18 +12,19 @@ import secrets
 from pathlib import Path
 
 TOKEN_FILENAME = "web_token"
+READONLY_TOKEN_FILENAME = "web_readonly_token"
 
 
 def resolve_home(home: str | Path | None) -> Path:
     return Path(home or os.getenv("AGENT_MEMORY_HOME", "~/.agent-memory")).expanduser()
 
 
-def token_path(home: str | Path | None) -> Path:
-    return resolve_home(home) / TOKEN_FILENAME
+def token_path(home: str | Path | None, *, readonly: bool = False) -> Path:
+    return resolve_home(home) / (READONLY_TOKEN_FILENAME if readonly else TOKEN_FILENAME)
 
 
-def load_token(home: str | Path | None) -> str | None:
-    path = token_path(home)
+def load_token(home: str | Path | None, *, readonly: bool = False) -> str | None:
+    path = token_path(home, readonly=readonly)
     try:
         token = path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -31,8 +32,8 @@ def load_token(home: str | Path | None) -> str | None:
     return token or None
 
 
-def save_token(home: str | Path | None, token: str) -> Path:
-    path = token_path(home)
+def save_token(home: str | Path | None, token: str, *, readonly: bool = False) -> Path:
+    path = token_path(home, readonly=readonly)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Write to a private temp file created 0600 from the start (no
     # world-readable window between write and chmod), then atomically replace
@@ -52,14 +53,14 @@ def save_token(home: str | Path | None, token: str) -> Path:
     return path
 
 
-def create_token(home: str | Path | None) -> str:
-    token = "amos_" + secrets.token_urlsafe(32)
-    save_token(home, token)
+def create_token(home: str | Path | None, *, readonly: bool = False) -> str:
+    token = ("amos_ro_" if readonly else "amos_") + secrets.token_urlsafe(32)
+    save_token(home, token, readonly=readonly)
     return token
 
 
-def delete_token(home: str | Path | None) -> bool:
-    path = token_path(home)
+def delete_token(home: str | Path | None, *, readonly: bool = False) -> bool:
+    path = token_path(home, readonly=readonly)
     if not path.exists():
         return False
     path.unlink()
