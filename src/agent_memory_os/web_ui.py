@@ -383,7 +383,7 @@ PAGE = r"""<!doctype html>
   <section class="tab" id="tab-teams">
     <div class="panel">
       <h3>Create a team</h3>
-      <p class="hint" style="font-size:12.5px;color:var(--muted);margin:0 0 12px">A team is a set of node members. A team can hold multiple projects; each project's members are chosen from the team's members. Team memory (<code>team:&lt;id&gt;</code>) reaches all team members; project memory (<code>project:&lt;id&gt;</code>) reaches only that project's members.</p>
+      <p class="hint" style="font-size:12.5px;color:var(--muted);margin:0 0 12px">A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.</p>
       <div class="filterrow">
         <input id="tm-id" type="text" placeholder="team id (e.g. apollo)">
         <input id="tm-name" type="text" placeholder="display name (optional)">
@@ -551,6 +551,7 @@ const $ = (id) => document.getElementById(id);
 const LOCALES = { "en": "English", "zh-TW": "繁體中文", "zh-CN": "简体中文", "ja": "日本語", "ko": "한국어" };
 const I18N = {
 "zh-TW": {
+"Teams":"團隊","Create a team":"建立團隊","Create team":"建立團隊","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"團隊是一組節點成員;底下的每個專案從團隊成員中選取。團隊記憶所有團隊成員可見,專案記憶僅該專案成員可見。","team id (e.g. apollo)":"團隊 id(例:apollo)","display name (optional)":"顯示名稱(選填)","No teams yet. Create one above.":"尚無團隊,請在上方建立。","select node…":"選擇節點…","+ Add":"+ 加入","delete team":"刪除團隊","Delete team?":"刪除團隊?","Members":"成員","no members":"尚無成員","Projects (members chosen from the team)":"專案(成員從團隊中選取)","project id":"專案 id","name (optional)":"名稱(選填)","+ Project":"+ 專案",
 "Dashboard":"儀表板","Search":"搜尋","Browse":"瀏覽","Graph":"圖譜","Agents":"代理","Add memory":"新增記憶","Tools":"工具",
 "Acting as":"目前身分","admin (all)":"管理者(全部)","Total memories":"記憶總數","Links":"關聯",
 "Memories":"記憶","Pinned":"釘選","Expired":"已過期","Archived":"已歸檔",
@@ -577,6 +578,7 @@ const I18N = {
 "✎ Edit":"✎ 編輯","👍 Helpful":"👍 有幫助","👎 Misleading":"👎 誤導","🔗 Links":"🔗 關聯","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 複製 ID","🗑 Delete":"🗑 刪除","why?":"為什麼?","Save":"儲存","Cancel":"取消","No links yet.":"尚無關聯。","Loading…":"載入中……","Ready.":"就緒。","🔒 private":"🔒 私有"
 },
 "zh-CN": {
+"Teams":"团队","Create a team":"创建团队","Create team":"创建团队","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"团队是一组节点成员;下面的每个项目从团队成员中选取。团队记忆所有团队成员可见,项目记忆仅该项目成员可见。","team id (e.g. apollo)":"团队 id(如:apollo)","display name (optional)":"显示名称(可选)","No teams yet. Create one above.":"尚无团队,请在上方创建。","select node…":"选择节点…","+ Add":"+ 加入","delete team":"删除团队","Delete team?":"删除团队?","Members":"成员","no members":"尚无成员","Projects (members chosen from the team)":"项目(成员从团队中选取)","project id":"项目 id","name (optional)":"名称(可选)","+ Project":"+ 项目",
 "Dashboard":"仪表板","Search":"搜索","Browse":"浏览","Graph":"图谱","Agents":"代理","Add memory":"新增记忆","Tools":"工具",
 "Acting as":"当前身份","admin (all)":"管理员(全部)","Total memories":"记忆总数","Links":"关联",
 "Memories":"记忆","Pinned":"置顶","Expired":"已过期","Archived":"已归档",
@@ -603,6 +605,7 @@ const I18N = {
 "✎ Edit":"✎ 编辑","👍 Helpful":"👍 有帮助","👎 Misleading":"👎 误导","🔗 Links":"🔗 关联","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 复制 ID","🗑 Delete":"🗑 删除","why?":"为什么?","Save":"保存","Cancel":"取消","No links yet.":"暂无关联。","Loading…":"加载中……","Ready.":"就绪。","🔒 private":"🔒 私有"
 },
 "ja": {
+"Teams":"チーム","Create a team":"チームを作成","Create team":"チームを作成","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"チームはノードメンバーの集合です。配下の各プロジェクトはチームメンバーから選びます。チーム記憶は全メンバーに、プロジェクト記憶はそのプロジェクトのメンバーだけに見えます。","team id (e.g. apollo)":"チームID(例:apollo)","display name (optional)":"表示名(任意)","No teams yet. Create one above.":"チームがありません。上で作成してください。","select node…":"ノードを選択…","+ Add":"+ 追加","delete team":"チーム削除","Delete team?":"チームを削除?","Members":"メンバー","no members":"メンバーなし","Projects (members chosen from the team)":"プロジェクト(メンバーはチームから選択)","project id":"プロジェクトID","name (optional)":"名前(任意)","+ Project":"+ プロジェクト",
 "Dashboard":"ダッシュボード","Search":"検索","Browse":"一覧","Graph":"グラフ","Agents":"エージェント","Add memory":"記憶を追加","Tools":"ツール",
 "Acting as":"操作中の身元","admin (all)":"管理者(すべて)","Total memories":"記憶総数","Links":"リンク",
 "Memories":"記憶","Pinned":"ピン留め","Expired":"期限切れ","Archived":"アーカイブ済み",
@@ -629,6 +632,7 @@ const I18N = {
 "✎ Edit":"✎ 編集","👍 Helpful":"👍 役立った","👎 Misleading":"👎 誤解を招く","🔗 Links":"🔗 リンク","⇢ Share":"⇢ 共有","⧉ Copy id":"⧉ IDコピー","🗑 Delete":"🗑 削除","why?":"理由は?","Save":"保存","Cancel":"キャンセル","No links yet.":"リンクはまだありません。","Loading…":"読み込み中……","Ready.":"準備完了。","🔒 private":"🔒 プライベート"
 },
 "ko": {
+"Teams":"팀","Create a team":"팀 만들기","Create team":"팀 만들기","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"팀은 노드 멤버의 집합입니다. 하위 각 프로젝트는 팀 멤버 중에서 선택합니다. 팀 기억은 모든 팀 멤버에게, 프로젝트 기억은 해당 프로젝트 멤버에게만 보입니다.","team id (e.g. apollo)":"팀 id(예: apollo)","display name (optional)":"표시 이름(선택)","No teams yet. Create one above.":"팀이 없습니다. 위에서 만드세요.","select node…":"노드 선택…","+ Add":"+ 추가","delete team":"팀 삭제","Delete team?":"팀을 삭제할까요?","Members":"멤버","no members":"멤버 없음","Projects (members chosen from the team)":"프로젝트(멤버는 팀에서 선택)","project id":"프로젝트 id","name (optional)":"이름(선택)","+ Project":"+ 프로젝트",
 "Dashboard":"대시보드","Search":"검색","Browse":"둘러보기","Graph":"그래프","Agents":"에이전트","Add memory":"기억 추가","Tools":"도구",
 "Acting as":"현재 신원","admin (all)":"관리자(전체)","Total memories":"기억 총수","Links":"연결",
 "Memories":"기억","Pinned":"고정됨","Expired":"만료됨","Archived":"보관됨",
