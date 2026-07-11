@@ -1,6 +1,6 @@
 # Installation & Deployment
 
-Current for v1.0.0. Requirements: Python 3.11+ with SQLite FTS5 (standard
+Current for the v1.x line. Requirements: Python 3.11+ with SQLite FTS5 (standard
 CPython builds include it); Linux, macOS, or Windows.
 
 ## Install

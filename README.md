@@ -337,7 +337,7 @@ pytest
 
 ## Status
 
-**Stable — `1.0.0`.** The contracts above are implemented, covered by the test
+**Stable — `1.x`.** The contracts above are implemented, covered by the test
 suite (300+ tests across a 3-OS CI matrix, plus a migration upgrade-path job),
 and audited by repeated fan-out code + security reviews (reports under
 [`docs/reviews/`](docs/reviews/)). Performance is verified at 10k memories (add
@@ -352,7 +352,7 @@ see the [CHANGELOG](CHANGELOG.md) for what each release added.
 - **[Security](SECURITY.md)** & **[Threat model](docs/THREAT_MODEL.md)** — disclosure policy, trust boundaries, and honest known limitations
 - **[Embeddings & scale](docs/EMBEDDINGS.md)** — plug in a real embedding model; behaviour from 10k to 1M memories
 - **[Importers](docs/IMPORTERS.md)** — migrate from Mem0 / Zep / ChatGPT · **[Compatibility](COMPATIBILITY.md)** — the 1.x semver promise
-- **[Reviews & reports](docs/reviews/)** — fan-out code + security reviews (through v1.0.0), the performance/security report, and the validation harness (`scripts/validation_run.py`)
+- **[Reviews & reports](docs/reviews/)** — fan-out code + security reviews (through the 1.x line), the performance/security report, and the validation harness (`scripts/validation_run.py`)
 - [CHANGELOG](CHANGELOG.md) · [Roadmap](docs/ROADMAP.md) · [Integration guides](docs/integrations/claude-code.md)
 
 ## License

@@ -1,6 +1,6 @@
 # Agent Memory OS — User Guide
 
-Complete reference for v1.0.0. For a five-minute start, see the
+Complete reference for the v1.x line. For a five-minute start, see the
 [README](../README.md); for integration recipes, see
 [docs/integrations/](integrations/claude-code.md).
 

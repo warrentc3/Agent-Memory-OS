@@ -1,6 +1,6 @@
 # Agent Memory OS SPEC
 
-Current through v1.0.0. Sections are additive by milestone.
+Current through the v1.x line. Sections are additive by milestone.
 
 ## Product thesis
 
