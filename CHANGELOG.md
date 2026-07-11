@@ -4,9 +4,11 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [Unreleased]
+## [1.0.2] — 2026-07-12
 
 Maturity pass for the 1.x line — docs, one opt-in feature, guards, and one fix.
+Also the first release listed on the MCP Registry (the PyPI description now
+carries the ownership marker, so the registry workflow can publish).
 
 - **Fix (revocation staleness)**: the client's per-query recall cache was not
   invalidated by team/project membership changes, so a removed member could keep
