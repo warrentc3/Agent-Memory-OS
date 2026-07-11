@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/logo-header.png" alt="Agent Memory OS" width="560">
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/agent-memory-os-logo-integrated-v2.png" alt="Agent Memory OS" width="560">
 </p>
 
 A **local-first memory system for AI-agent teams** — not just giving one agent a memory, but a shared memory fabric for a *fleet* of agents working together: private, team, and project-scoped memories behind a hard ACL, associative recall, and federated sync that keeps a mesh of nodes (and their org structure) in agreement. One SQLite file, zero required dependencies, Apache-2.0.

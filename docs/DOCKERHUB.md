@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/logo-header.png" alt="Agent Memory OS" width="520">
+  <img src="https://raw.githubusercontent.com/yamantaka520/Agent-Memory-OS/main/assets/agent-memory-os-logo-integrated-v2.png" alt="Agent Memory OS" width="560">
 </p>
 
 <p align="center">A local-first, open-source memory engine for AI-agent <b>teams</b>.</p>
