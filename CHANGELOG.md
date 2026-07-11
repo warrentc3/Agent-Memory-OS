@@ -4,7 +4,7 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [0.14.0] — unreleased
+## [0.14.0] — 2026-07-11
 
 **Federated org structure** (migration 14). Teams, projects, and their
 membership now converge across nodes, so cross-node team/project ACL is
