@@ -75,7 +75,7 @@ def build_parser() -> argparse.ArgumentParser:
     service = sub.add_parser(
         "service", help="Install the Web console as a login service (launchd/systemd/Task Scheduler)"
     )
-    service.add_argument("action", choices=["install", "uninstall", "start", "stop", "status"])
+    service.add_argument("action", choices=["install", "uninstall", "start", "stop", "restart", "status"])
     service.add_argument("--host", default=None, help="Bind host (default: instance.toml or 127.0.0.1)")
     service.add_argument("--port", type=int, default=None, help="Bind port (default: instance.toml or 8000)")
     service.add_argument("--dry-run", action="store_true", help="Print actions without executing")
@@ -129,6 +129,8 @@ def build_parser() -> argparse.ArgumentParser:
     update = sub.add_parser("update", help="Check for and install a newer version (host or Docker)")
     update.add_argument("--check", action="store_true", help="Only report the latest version; don't install")
     update.add_argument("--yes", action="store_true", help="Install without prompting (host/pip only)")
+    update.add_argument("--no-restart", action="store_true",
+                        help="After upgrading, do not restart the running web console")
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -342,6 +344,232 @@ def _pypi_latest(pkg: str) -> str | None:
         return None
 
 
+def _running_amos_processes() -> list[tuple[int, str, str]]:
+    """Find running AgentMemoryOS processes: (pid, kind, cmdline).
+
+    kind is "web" (console, restartable by us) or "mcp" (stdio child owned by a
+    host app such as Claude Code — never killed here, only reported).
+    """
+    import os
+    import subprocess
+    import sys
+
+    try:
+        if sys.platform == "win32":
+            out = subprocess.check_output(
+                ["powershell", "-NoProfile", "-Command",
+                 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'],
+                text=True, timeout=10)
+            rows = [line.split("\t", 1) for line in out.splitlines() if "\t" in line]
+        else:
+            out = subprocess.check_output(["ps", "-axo", "pid=,command="], text=True, timeout=10)
+            rows = [line.strip().split(None, 1) for line in out.splitlines() if line.strip()]
+    except Exception:  # noqa: BLE001 - process listing is best-effort
+        return []
+    me = os.getpid()
+    procs: list[tuple[int, str, str]] = []
+    for row in rows:
+        if len(row) != 2:
+            continue
+        pid_s, cmd = row
+        try:
+            pid = int(pid_s)
+        except ValueError:
+            continue
+        if pid == me:
+            continue
+        kind = _classify_amos_cmdline(cmd)
+        if kind:
+            procs.append((pid, kind, cmd.strip()))
+    return procs
+
+
+def _classify_amos_cmdline(cmd: str) -> str | None:
+    """"web" / "mcp" / None for a raw process command line.
+
+    Token-exact matching: host apps (e.g. Claude Code) can carry the module
+    name inside a config argument without BEING the server — substring
+    matching would misreport them as restart targets.
+    """
+    tokens = cmd.split()
+    if not tokens:
+        return None
+
+    def _basename(token: str) -> str:
+        return token.replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".exe")
+
+    interp = _basename(tokens[0]).lower()
+    if interp in ("grep", "egrep", "fgrep", "rg", "less", "more", "tail", "vim", "nano"):
+        return None
+    is_python = "python" in interp
+    basenames = [_basename(t) for t in tokens]
+    module_pairs = {
+        (tokens[i], tokens[i + 1]) for i in range(len(tokens) - 1)
+    }
+    if "agent-memory-web" in basenames or (
+        is_python and ("-m", "agent_memory_os.web_app") in module_pairs
+    ):
+        return "web"
+    if is_python and ("-m", "agent_memory_os.mcp_server") in module_pairs:
+        return "mcp"
+    return None
+
+
+def _parse_etime(etime: str) -> int | None:
+    """ps etime ([[dd-]hh:]mm:ss) -> elapsed seconds."""
+    import re
+
+    m = re.match(r"^(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)$", etime.strip())
+    if not m:
+        return None
+    d, h, mn, s = (int(x) if x else 0 for x in m.groups())
+    return ((d * 24 + h) * 60 + mn) * 60 + s
+
+
+def _proc_start_ts(pid: int) -> float | None:
+    import subprocess
+    import sys
+    import time
+
+    if sys.platform == "win32":
+        return None  # unknown -> caller treats as not-provably-stale
+    try:
+        out = subprocess.check_output(["ps", "-p", str(pid), "-o", "etime="], text=True, timeout=5)
+    except Exception:  # noqa: BLE001
+        return None
+    elapsed = _parse_etime(out)
+    return None if elapsed is None else time.time() - elapsed
+
+
+def _install_mtime() -> float | None:
+    """When the installed package files were last written (== install/upgrade time)."""
+    try:
+        import agent_memory_os
+
+        return Path(agent_memory_os.__file__).stat().st_mtime
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _stale_amos_processes() -> list[tuple[int, str, str]]:
+    """Running processes that started before the current install landed on disk."""
+    installed = _install_mtime()
+    if installed is None:
+        return []
+    stale = []
+    for pid, kind, cmd in _running_amos_processes():
+        started = _proc_start_ts(pid)
+        # 90s slack absorbs ps's minute-resolution etime.
+        if started is not None and started < installed - 90:
+            stale.append((pid, kind, cmd))
+    return stale
+
+
+def _restart_web_process(pid: int, cmdline: str) -> bool:
+    """SIGTERM the old console and relaunch it with its original command line."""
+    import os
+    import shlex
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    if sys.platform == "win32":
+        return False  # no SIGTERM/start_new_session; user restarts manually
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except OSError:
+        return False
+    for _ in range(20):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            break
+        time.sleep(0.25)
+    argv = shlex.split(cmdline)
+    stdout = subprocess.DEVNULL
+    stderr = subprocess.DEVNULL
+    if "--home" in argv[:-1]:
+        try:
+            home = Path(argv[argv.index("--home") + 1]).expanduser()
+            stdout = open(home / "web.log", "ab")  # noqa: SIM115 - handed to child
+            stderr = subprocess.STDOUT
+        except OSError:
+            pass
+    try:
+        subprocess.Popen(argv, stdout=stdout, stderr=stderr, start_new_session=True)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _web_service_installed() -> bool:
+    import sys
+
+    from . import service as svc
+
+    try:
+        return svc._unit_path(sys.platform).exists()
+    except Exception:  # noqa: BLE001 - e.g. win32 has no unit file
+        return False
+
+
+def _handle_running_processes(*, assume_yes: bool, no_restart: bool) -> None:
+    """Post-upgrade cleanup: everything still running loads the OLD code."""
+    import sys
+
+    procs = _running_amos_processes()
+    web = [p for p in procs if p[1] == "web"]
+    mcp = [p for p in procs if p[1] == "mcp"]
+    if not web and not mcp:
+        return
+    print("\nRunning processes still loaded with the previous version:")
+    for pid, kind, cmd in web + mcp:
+        print(f"  [{kind}] pid {pid}: {cmd[:100]}")
+    if web:
+        if no_restart:
+            print("Web console NOT restarted (--no-restart). Restart it to load the new version.")
+        elif _web_service_installed():
+            from . import service as svc
+
+            result = svc.control("restart")
+            print(f"web console service restart: {'ok' if result.returncode == 0 else 'failed'}")
+        else:
+            do_restart = assume_yes
+            if not do_restart:
+                try:
+                    resp = input("Restart the web console now to load the new version? [Y/n] ").strip().lower()
+                except EOFError:
+                    resp = "n"
+                do_restart = resp in ("", "y", "yes")
+            if do_restart:
+                for pid, _, cmd in web:
+                    ok = _restart_web_process(pid, cmd)
+                    print(f"web console pid {pid}: {'restarted' if ok else 'restart failed — restart manually'}")
+                if sys.platform == "win32":
+                    print("(Windows: automatic restart unsupported — restart the console manually.)")
+            else:
+                print("Skipped. Restart the web console manually to load the new version.")
+    if mcp:
+        print("MCP server(s) are owned by their host app and were not touched.")
+        print("Restart the host app (e.g. Claude Code) to load the new version.")
+
+
+def _warn_stale_processes() -> None:
+    """`update --check` / already-latest path: disk is current, memory may not be."""
+    stale = _stale_amos_processes()
+    if not stale:
+        return
+    print("\nNote: these processes started BEFORE the installed version landed and are")
+    print("likely still running older code (a pip upgrade never touches live processes):")
+    for pid, kind, cmd in stale:
+        print(f"  [{kind}] pid {pid}: {cmd[:100]}")
+    if any(k == "web" for _, k, _ in stale):
+        print("Web console: restart it (agent-memory service restart, or kill + relaunch).")
+    if any(k == "mcp" for _, k, _ in stale):
+        print("MCP server: restart the host app (e.g. Claude Code).")
+
+
 def _cmd_update(args) -> int:
     import platform
     import subprocess
@@ -366,9 +594,11 @@ def _cmd_update(args) -> int:
         return 1
     if latest == current:
         print("Already on the latest version.")
+        _warn_stale_processes()
         return 0
     print(f"\nA newer version is available: {current} -> {latest}")
     if args.check:
+        _warn_stale_processes()
         return 0
     if docker:
         # A container can't pip-upgrade itself in place; guide the host update.
@@ -387,7 +617,10 @@ def _cmd_update(args) -> int:
             return 0
     cmd = [sys.executable, "-m", "pip", "install", "-U", "agent-memory-os[full]"]
     print("running:", " ".join(cmd))
-    return subprocess.call(cmd)
+    rc = subprocess.call(cmd)
+    if rc == 0:
+        _handle_running_processes(assume_yes=args.yes, no_restart=args.no_restart)
+    return rc
 
 
 def main(argv: list[str] | None = None) -> int:

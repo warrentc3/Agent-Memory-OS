@@ -277,6 +277,20 @@ For LLM-backed link extraction:
   and `agent-memory backup ~/backups/memories-$(date +%F).db`.
 - **When suspicious**: `agent-memory check`; repair FTS drift with the SDK's
   `rebuild_indexes()` (indexes are disposable, the database is the truth).
-- **Upgrades**: `pip install -U 'agent-memory-os[full]'` — the database
-  self-migrates forward (schema version shown by `check`); take a backup
-  first if you may need to roll back the package.
+- **Upgrades**: `agent-memory update` (since v0.14.0) — reports current vs
+  PyPI latest, detects host-vs-Docker deployment, upgrades via pip after
+  confirmation (`--yes` to skip, `--check` to only report), then handles the
+  part a pip upgrade can never do: **processes that are already running keep
+  the OLD code**. The tool restarts the web console for you (via the installed
+  service, or by relaunching the process — the auth token persists, no
+  re-login; `--no-restart` opts out) and lists MCP servers that need their
+  host app (e.g. Claude Code) restarted — it never kills those itself.
+  `update --check` also flags processes that started before the current
+  install landed, i.e. "disk is new, memory is stale".
+  - The database self-migrates forward on next open (schema version shown by
+    `check`); take a backup first if you may need to roll back the package.
+  - Installs older than v0.14.0 predate this command — the first hop is a
+    manual `pip install -U 'agent-memory-os[full]'`.
+  - In Docker, `update` prints the image-pull path instead (a container can't
+    pip-upgrade itself): `docker pull` the new tag and recreate; `/data`
+    persists.

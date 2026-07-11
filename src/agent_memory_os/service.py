@@ -165,17 +165,19 @@ def uninstall(*, platform: str = sys.platform, dry_run: bool = False) -> list[st
 
 
 def control(action: str, *, platform: str = sys.platform) -> subprocess.CompletedProcess:
-    """start / stop / status for the installed service."""
+    """start / stop / restart / status for the installed service."""
     if platform == "darwin":
         commands = {
             "start": ["launchctl", "kickstart", f"gui/{_uid()}/{SERVICE_LABEL}"],
             "stop": ["launchctl", "bootout", f"gui/{_uid()}/{SERVICE_LABEL}"],
+            "restart": ["launchctl", "kickstart", "-k", f"gui/{_uid()}/{SERVICE_LABEL}"],
             "status": ["launchctl", "print", f"gui/{_uid()}/{SERVICE_LABEL}"],
         }
     elif platform.startswith("linux"):
         commands = {
             "start": ["systemctl", "--user", "start", f"{SERVICE_NAME}.service"],
             "stop": ["systemctl", "--user", "stop", f"{SERVICE_NAME}.service"],
+            "restart": ["systemctl", "--user", "restart", f"{SERVICE_NAME}.service"],
             "status": ["systemctl", "--user", "is-active", f"{SERVICE_NAME}.service"],
         }
     elif platform == "win32":
@@ -184,6 +186,9 @@ def control(action: str, *, platform: str = sys.platform) -> subprocess.Complete
             "stop": ["schtasks", "/End", "/TN", SERVICE_NAME],
             "status": ["schtasks", "/Query", "/TN", SERVICE_NAME],
         }
+        if action == "restart":
+            _run(commands["stop"])
+            return _run(commands["start"])
     else:
         raise RuntimeError(f"unsupported platform: {platform}")
     return _run(commands[action])

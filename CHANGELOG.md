@@ -4,6 +4,26 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [Unreleased]
+
+- **`update` finishes the job**: after upgrading, the tool now deals with the
+  processes still running the old code (a pip upgrade never touches live
+  processes). The web console is restarted automatically — through the
+  installed service (`service restart`, new action) or by relaunching the
+  process with its original command line (`--no-restart` opts out; the auth
+  token persists so no re-login). MCP servers are owned by their host app
+  (e.g. Claude Code) and are never killed — they're detected and reported
+  with a "restart the host app" notice. `update --check` additionally flags
+  stale processes: ones that started before the currently-installed version
+  landed on disk ("disk is new, memory is old" — exactly the state a routine
+  upgrade leaves behind).
+- Process detection is token-exact (interpreter + `-m agent_memory_os.…`, or
+  an `agent-memory-web` entrypoint), so host apps that merely mention the
+  module in a config argument, or a stray `grep`, are not misidentified as
+  restart targets.
+- `agent-memory service restart` — one-step restart of the installed console
+  service (launchd `kickstart -k` / `systemctl restart` / schtasks end+run).
+
 ## [0.14.0] — 2026-07-11
 
 **Federated org structure** (migration 14). Teams, projects, and their
