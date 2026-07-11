@@ -517,6 +517,18 @@ PAGE = r"""<!doctype html>
 
 <div id="toasts"></div>
 
+<div id="login-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:var(--card,#1b1e2e);border:1px solid var(--border,#2a2f45);padding:22px 24px;border-radius:14px;width:min(420px,90vw);box-shadow:0 12px 40px rgba(0,0,0,.5)">
+    <div style="font-weight:700;font-size:16px;margin-bottom:6px">API token required</div>
+    <div style="color:var(--muted,#8b93b0);font-size:13px;margin-bottom:14px">Paste the token shown by <code>agent-memory token show</code>.</div>
+    <input id="login-token" type="password" placeholder="amos_\u2026" autocomplete="off" style="width:100%;box-sizing:border-box;margin-bottom:12px">
+    <div style="display:flex;align-items:center;gap:10px">
+      <button class="ghost" id="login-connect">Connect</button>
+      <span id="login-err" style="color:#e0555f;font-size:13px"></span>
+    </div>
+  </div>
+</div>
+
 <script>
 "use strict";
 const $ = (id) => document.getElementById(id);
@@ -705,12 +717,10 @@ async function api(path, options, isRetry) {
   const token = localStorage.getItem("amos.token");
   if (token) request.headers["Authorization"] = "Bearer " + token;
   const response = await fetch(path, request);
-  if (response.status === 401 && !isRetry) {
-    const supplied = prompt("This server requires an API token:");
-    if (supplied) {
-      localStorage.setItem("amos.token", supplied.trim());
-      return api(path, options, true);
-    }
+  if (response.status === 401) {
+    localStorage.removeItem("amos.token");
+    showLogin(token ? t("Invalid token \u2014 please re-enter.") : "");
+    throw new Error("unauthorized");
   }
   let body = null;
   try { body = await response.json(); } catch (e) { /* empty body */ }
@@ -720,6 +730,23 @@ async function api(path, options, isRetry) {
   }
   return body;
 }
+
+function showLogin(err) {
+  const o = $("login-overlay");
+  if (!o) return;
+  o.style.display = "flex";
+  $("login-err").textContent = err || "";
+  $("login-token").focus();
+}
+$("login-connect").addEventListener("click", () => {
+  const v = $("login-token").value.trim();
+  if (!v) { $("login-err").textContent = ""; return; }
+  localStorage.setItem("amos.token", v);
+  location.reload();
+});
+$("login-token").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("login-connect").click();
+});
 
 function el(tag, className, text) {
   const node = document.createElement(tag);

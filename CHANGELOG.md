@@ -4,6 +4,14 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [0.12.1] — 2026-07-11
+
+- **Web console login fix**: the console now shows a proper in-page token
+  login form instead of relying on a `prompt()` dialog (which browsers could
+  suppress and which stacked up under the page's parallel API calls, leaving
+  users unable to log in). A 401 clears the stored token and reveals the login
+  form; entering the token stores it and reloads.
+
 ## [0.12.0] — 2026-07-11
 
 **Multiple instances on one machine.** Run several Agent Memory OS instances
