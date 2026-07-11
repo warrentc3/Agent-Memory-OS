@@ -428,6 +428,17 @@ def _apply_tombstone(store, entry: dict, stats: dict) -> None:
     )
 
 
+def _clean_members(value) -> list[str]:
+    """Coerce a bundle's `members` field to a clean list of id strings.
+
+    Defends against a malformed bundle where members is a bare string (which
+    would iterate into per-character garbage members) or contains non-strings.
+    """
+    if not isinstance(value, list):
+        return []
+    return [str(m) for m in value if isinstance(m, (str, int)) and str(m)]
+
+
 def _org_tomb_at(store, kind: str, id_: str) -> str | None:
     row = store.conn.execute(
         "SELECT deleted_at FROM org_tombstones WHERE kind = ? AND id = ?", (kind, id_)
@@ -453,7 +464,7 @@ def _merge_team(store, entry: dict, stats: dict, *, org_scope: str | None) -> No
     tomb = _org_tomb_at(store, "team", tid)
     if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
         return  # deleted at/after this version — don't resurrect
-    members = entry.get("members") or []
+    members = _clean_members(entry.get("members"))
     existing = store.conn.execute("SELECT updated_at FROM teams WHERE id = ?", (tid,)).fetchone()
     if existing is not None:
         inc, ex = _norm_ts(upd), _norm_ts(existing["updated_at"])
@@ -505,7 +516,7 @@ def _merge_project(store, entry: dict, stats: dict, *, org_scope: str | None) ->
     tomb = _org_tomb_at(store, "project", pid)
     if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
         return
-    members = entry.get("members") or []
+    members = _clean_members(entry.get("members"))
     existing = store.conn.execute("SELECT updated_at FROM projects WHERE id = ?", (pid,)).fetchone()
     if existing is not None:
         inc, ex = _norm_ts(upd), _norm_ts(existing["updated_at"])

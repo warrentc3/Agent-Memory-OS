@@ -65,6 +65,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     backup = sub.add_parser("backup", help="Back up the memory database to a file")
     backup.add_argument("dest", help="Destination .db file path")
+    backup.add_argument(
+        "--keep", type=int, default=0, metavar="N",
+        help="After backing up, keep only the N newest backups sharing dest's "
+             "name prefix in its directory (rotate older ones out). 0 = keep all.",
+    )
 
     restore = sub.add_parser("restore", help="Restore the memory database from a backup file")
     restore.add_argument("src", help="Backup .db file to restore from")
@@ -293,7 +298,38 @@ def _cmd_backup(args) -> int:
         target.close()
         source.close()
     print(f"backed up {db_path} -> {dest}")
+    if getattr(args, "keep", 0) and args.keep > 0:
+        removed = _rotate_backups(dest, keep=args.keep)
+        for path in removed:
+            print(f"rotated out old backup: {path}")
     return 0
+
+
+def _rotate_backups(latest, *, keep: int) -> list:
+    """Keep only the `keep` newest backups that share `latest`'s name prefix in
+    its directory; delete the rest. The prefix is the destination stem up to its
+    first dot (so 'mem-2026-07-12.db' and 'mem-2026-07-11.db' rotate together but
+    an unrelated 'other.db' is never touched). Returns the paths removed."""
+    from pathlib import Path
+
+    latest = Path(latest)
+    prefix = latest.name.split(".", 1)[0].rstrip("0123456789-_")
+    if not prefix:
+        return []
+    siblings = [
+        p for p in latest.parent.glob(f"{prefix}*")
+        if p.is_file() and p.suffix == latest.suffix
+    ]
+    # Newest first by mtime; keep the first `keep`, remove the rest.
+    siblings.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    removed = []
+    for path in siblings[keep:]:
+        try:
+            path.unlink()
+            removed.append(str(path))
+        except OSError:
+            pass
+    return removed
 
 
 def _cmd_restore(args) -> int:

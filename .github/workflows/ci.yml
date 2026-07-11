@@ -30,3 +30,33 @@ jobs:
       - name: Validation harness (quick)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: python scripts/validation_run.py --quick
+
+  upgrade-path:
+    # Prove a DB written by the last PUBLISHED release migrates forward under the
+    # working tree with data + integrity intact — the real user upgrade path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Seed a DB with the latest published release
+        run: |
+          python -m venv /tmp/old
+          /tmp/old/bin/pip install --quiet --upgrade pip
+          if /tmp/old/bin/pip install --quiet "agent-memory-os[api]"; then
+            AGENT_MEMORY_HOME=/tmp/amos /tmp/old/bin/python scripts/upgrade_smoke.py --seed /tmp/amos
+          else
+            echo "no published release to seed from — skipping (first release)"
+          fi
+      - name: Install the working tree and verify forward migration
+        run: |
+          pip install --quiet --upgrade pip
+          pip install --quiet -e ".[api]"
+          if [ -d /tmp/amos ]; then
+            AGENT_MEMORY_HOME=/tmp/amos python scripts/upgrade_smoke.py --verify /tmp/amos
+          else
+            echo "no seeded DB (first release) — running seed+verify on the working tree only"
+            AGENT_MEMORY_HOME=/tmp/amos python scripts/upgrade_smoke.py --seed /tmp/amos
+            AGENT_MEMORY_HOME=/tmp/amos python scripts/upgrade_smoke.py --verify /tmp/amos
+          fi
