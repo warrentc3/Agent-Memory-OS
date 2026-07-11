@@ -4,6 +4,28 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [Unreleased]
+
+Maturity pass for the 1.x line — docs, one opt-in feature, one guard. No changes
+to the core engine, so nothing above needs a release to keep working.
+
+- **Importers** (`agent-memory import --from mem0|zep|chatgpt <export.json>`, and
+  `agent_memory_os.importers.import_export`): best-effort migration from other
+  memory systems. Deterministic ids (idempotent, no duplicates), private by
+  default (`--visibility` to widen), source provenance. See `docs/IMPORTERS.md`.
+- **Unencrypted-peer guard**: `add_peer` now warns when a peer URL is plain HTTP
+  over the network (token + content would cross the wire in the clear); use
+  https:// (TLS proxy/tunnel) for any non-localhost peer.
+- **Security & governance docs**: `SECURITY.md` (private disclosure policy +
+  honest known limitations) and `docs/THREAT_MODEL.md` (trust boundaries, the
+  precise eventual/cooperative revocation guarantee, hardening checklist).
+- **`COMPATIBILITY.md`**: the 1.x semver promise across the SDK API, CLI, HTTP
+  API, forward-only schema migration, and the sync bundle format (v3, reads 1–3).
+- **`docs/EMBEDDINGS.md`**: plug in fastembed/sentence-transformers via
+  `TurbovecSemanticCandidateProvider.from_vectors()`, plus 10k→1M scale guidance.
+- **README**: a one-line `claude mcp add` snippet and an animated console demo
+  GIF; `docs/PROMOTION.md` holds ready-to-submit listing copy for MCP directories.
+
 ## [1.0.1] — 2026-07-12
 
 Docs-only release to refresh the PyPI project page (the description is frozen
