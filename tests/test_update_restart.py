@@ -9,8 +9,16 @@ update tool must restart the console (it owns it) and report MCP servers
 from __future__ import annotations
 
 import argparse
+import sys
+
+import pytest
 
 from agent_memory_os import cli
+
+# These two exercise the POSIX `ps` code path / SIGTERM restart; on Windows the
+# function takes the PowerShell branch and pidfile restart early-returns
+# "unsupported", so the Unix-shaped mocks/assertions don't apply there.
+_posix_only = pytest.mark.skipif(sys.platform == "win32", reason="POSIX ps/kill path")
 
 
 def _args(**over):
@@ -50,6 +58,7 @@ PS_OUTPUT = """\
 """
 
 
+@_posix_only
 def test_running_amos_processes_parses_web_and_mcp(monkeypatch):
     import subprocess as sp
 
@@ -163,6 +172,7 @@ def test_restart_from_pidfile_missing_returns_manual(tmp_path):
     assert "manually" in cli._restart_web_from_pidfile(str(tmp_path))
 
 
+@_posix_only
 def test_restart_from_pidfile_dead_pid_not_relaunched(tmp_path, monkeypatch):
     from agent_memory_os.pidfile import write_web_pidfile
 
