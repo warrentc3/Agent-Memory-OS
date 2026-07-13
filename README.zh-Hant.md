@@ -244,7 +244,7 @@ pip install 'agent-memory-os[mcp]'
 python -m agent_memory_os.mcp_server
 ```
 
-工具(11 個):`memory_add`、`memory_search`、`memory_context_pack`、`memory_orchestrate_context`、`memory_link`、`memory_update`、`memory_recall_feedback`、`memory_consolidate`、`memory_offload_context`、`memory_reload_context`、`memory_snapshot_diff`。設定 `AGENT_MEMORY_AGENT_ID`,讓每個 agent 以自己的身分行動。
+工具(12 個):`memory_add`(含 `share` 參數,可存 team/project/global)、`memory_search`、`memory_context_pack`、`memory_orchestrate_context`、`memory_link`、`memory_update`、`memory_share`、`memory_recall_feedback`、`memory_consolidate`、`memory_offload_context`、`memory_reload_context`、`memory_snapshot_diff`。設定 `AGENT_MEMORY_AGENT_ID`,讓每個 agent 以自己的身分行動——兩個 agent 指向同一個 home 就能即時共享 `team:`/`project:` 記憶。
 
 ## Web 主控台
 

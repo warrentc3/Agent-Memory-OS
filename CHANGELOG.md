@@ -4,6 +4,19 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.0.5] — 2026-07-13
+
+- **MCP can now create SHARED memories.** `memory_add` gains a `share` argument
+  — `private` (default), `global`, `team`/`team:<id>`, `project`/`project:<id>`,
+  or `agent:<id>` — so an agent can store team/project memory straight from the
+  MCP tool instead of only private notes. Bare `team`/`project` resolve to the
+  caller's own membership when unambiguous. A new **`memory_share`** tool changes
+  an existing memory's visibility (owner-only; the change propagates over sync).
+  This closes a real gap: previously everything added via MCP was private to its
+  owner, so the "team memory" value prop was unreachable through the primary
+  interface. Two agents pointed at the same home now share `team:`/`project:`
+  memory the moment it's written.
+
 ## [1.0.4] — 2026-07-12
 
 - **Richer MCP tool descriptions.** All 11 `memory_*` tools now carry a full

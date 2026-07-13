@@ -298,7 +298,7 @@ Wire it into Claude Code in one line (set the agent identity so memories are own
 claude mcp add agent-memory --env AGENT_MEMORY_AGENT_ID=cc-main -- python -m agent_memory_os.mcp_server
 ```
 
-Tools (11): `memory_add`, `memory_search`, `memory_context_pack`, `memory_orchestrate_context`, `memory_link`, `memory_update`, `memory_recall_feedback`, `memory_consolidate`, `memory_offload_context`, `memory_reload_context`, `memory_snapshot_diff`. Set `AGENT_MEMORY_AGENT_ID` so each agent acts under its own identity.
+Tools (12): `memory_add` (with a `share` arg for team/project/global), `memory_search`, `memory_context_pack`, `memory_orchestrate_context`, `memory_link`, `memory_update`, `memory_share`, `memory_recall_feedback`, `memory_consolidate`, `memory_offload_context`, `memory_reload_context`, `memory_snapshot_diff`. Set `AGENT_MEMORY_AGENT_ID` so each agent acts under its own identity — and two agents pointed at the same home instantly share `team:`/`project:` memories.
 
 ## Web UI
 

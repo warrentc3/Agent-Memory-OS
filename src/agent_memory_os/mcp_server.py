@@ -16,6 +16,39 @@ from typing import Annotated
 from .client import MemoryClient
 
 
+def _share_to_visibility(share: str | None, *, teams: list[str], projects: list[str]) -> list[str]:
+    """Map a friendly `share` string to a visibility (ACL) grant list.
+
+    'private'/'' -> [] (owner only); 'global' -> everyone; 'team'/'project' ->
+    the caller's own team/project when unambiguous (given `teams`/`projects`);
+    'team:<id>', 'project:<id>', 'agent:<id>' -> that exact grant. Raises
+    ValueError with a helpful message for ambiguous/invalid input.
+    """
+    s = (share or "private").strip()
+    if s in ("", "private"):
+        return []
+    if s == "global":
+        return ["global"]
+    if s in ("team", "project"):
+        ids = teams if s == "team" else projects
+        if len(ids) == 1:
+            return [f"{s}:{ids[0]}"]
+        if not ids:
+            raise ValueError(
+                f"cannot share to '{s}': this agent belongs to no {s}. "
+                f"Pass an explicit '{s}:<id>' or ask an admin to add you."
+            )
+        raise ValueError(
+            f"this agent is in multiple {s}s {ids}; pass an explicit '{s}:<id>'."
+        )
+    if s.startswith(("team:", "project:", "agent:")) and len(s.split(":", 1)[1]) > 0:
+        return [s]
+    raise ValueError(
+        f"invalid share target {share!r}; use 'private', 'global', "
+        f"'team' or 'team:<id>', 'project' or 'project:<id>', or 'agent:<id>'."
+    )
+
+
 def create_server():  # pragma: no cover - optional integration scaffold
     try:
         from mcp.server.fastmcp import FastMCP
@@ -34,22 +67,37 @@ def create_server():  # pragma: no cover - optional integration scaffold
     if agent_id:
         client.store.touch_agent(agent_id)
 
+    def _resolve_share(share: str | None) -> list[str]:
+        return _share_to_visibility(
+            share,
+            teams=client.store.teams_for(agent_id) if agent_id else [],
+            projects=client.store.projects_for(agent_id) if agent_id else [],
+        )
+
     @mcp.tool()
     def memory_add(
         content: Annotated[str, Field(description="The fact to remember, as a self-contained sentence (e.g. 'The user prefers dark mode.'). Write it so it makes sense on its own in a future session.")],
         owner: Annotated[str | None, Field(description="Owner id the memory belongs to. Defaults to this server's AGENT_MEMORY_AGENT_ID, else 'default'.")] = None,
-        scope: Annotated[str, Field(description="Lifecycle label used for graph coloring and filtering: 'user', 'agent', 'project', 'team', or 'global'. Does NOT set access control (use visibility for that).")] = "user",
+        scope: Annotated[str, Field(description="Lifecycle label used for graph coloring and filtering: 'user', 'agent', 'project', 'team', or 'global'. Does NOT set access control (use `share` for that).")] = "user",
         type: Annotated[str, Field(description="Kind of memory: 'preference', 'fact', 'procedure', 'environment', 'decision', 'warning', or 'note'.")] = "note",
+        share: Annotated[str, Field(description="Who may read this memory (the ACL). 'private' (default, owner only), 'global' (all agents), 'team' or 'team:<id>' (your team — teammates on the same node share it), 'project' or 'project:<id>', or 'agent:<id>'. Use 'team'/'project' to share with collaborators; leave 'private' for personal notes.")] = "private",
     ) -> dict:
         """Store a durable memory that will survive across sessions.
 
         Use this to remember a user preference, project fact, decision, procedure,
-        or lesson worth recalling later — not transient chat. Content is de-duplicated
-        softly by the engine and becomes searchable immediately. Returns the new
-        memory's stable `id` and stored `content`.
+        or lesson worth recalling later — not transient chat. Set `share` to make it
+        visible to teammates ('team'/'project') instead of just yourself; the default
+        is private. Content is de-duplicated softly and becomes searchable immediately.
+        Returns the new memory's `id`, `content`, and resolved `visibility`, or an
+        `{"error": ...}` object if `share` names a team/project you can't resolve.
         """
-        rec = client.add(content, owner=owner or agent_id or "default", scope=scope, type=type)
-        return {"id": rec.id, "content": rec.content}
+        try:
+            visibility = _resolve_share(share)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        rec = client.add(content, owner=owner or agent_id or "default", scope=scope,
+                         type=type, visibility=visibility)
+        return {"id": rec.id, "content": rec.content, "visibility": rec.visibility}
 
     @mcp.tool()
     def memory_search(
@@ -157,6 +205,32 @@ def create_server():  # pragma: no cover - optional integration scaffold
         except ValueError as exc:
             return {"error": str(exc)}
         return {"id": rec.id, "content": rec.content, "updated_at": rec.updated_at}
+
+    @mcp.tool()
+    def memory_share(
+        memory_id: Annotated[str, Field(description="Id of the memory whose visibility you want to change.")],
+        share: Annotated[str, Field(description="New audience: 'private' (owner only), 'global' (all agents), 'team' or 'team:<id>', 'project' or 'project:<id>', or 'agent:<id>'.")] = "private",
+    ) -> dict:
+        """Change who can read an existing memory (share it, or make it private again).
+
+        Use this to promote a note you already stored to your team/project so
+        collaborators can recall it, or to lock it back down. Only the memory's OWNER
+        may change its visibility. The change propagates over sync — sharing reaches
+        teammates, and making it private retracts it. Returns the memory's `id` and new
+        `visibility`, or an `{"error": ...}` object if it doesn't exist, isn't yours, or
+        `share` is invalid.
+        """
+        existing = client.get(memory_id)
+        if existing is None:
+            return {"error": f"memory not found: {memory_id}"}
+        if agent_id and existing.owner != agent_id:
+            return {"error": f"only the owner ({existing.owner}) can change this memory's visibility"}
+        try:
+            visibility = _resolve_share(share)
+        except ValueError as exc:
+            return {"error": str(exc)}
+        rec = client.update(memory_id, visibility=visibility)
+        return {"id": rec.id, "visibility": rec.visibility}
 
     @mcp.tool()
     def memory_consolidate(
