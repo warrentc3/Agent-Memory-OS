@@ -4,6 +4,15 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.0.6] — 2026-07-14
+
+- **`agent-memory-mcp` console entry point.** The MCP stdio server can now be
+  launched as `agent-memory-mcp` (in addition to `python -m
+  agent_memory_os.mcp_server`), enabling zero-install runs via
+  `uvx --from "agent-memory-os[mcp]" agent-memory-mcp`. No behaviour change to
+  the server itself. Added to support cleaner MCP-directory listings (e.g.
+  Smithery).
+
 ## [1.0.5] — 2026-07-13
 
 - **MCP can now create SHARED memories.** `memory_add` gains a `share` argument
