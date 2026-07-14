@@ -104,7 +104,9 @@ agent-memory token create    # protects the Web UI API with a bearer token
 
 The token is stored at `<home>/web_token` (mode 600); `agent-memory-web` picks
 it up automatically and the console prompts for it on first use. Manage it
-later with `agent-memory token show|rotate|disable`.
+later with `agent-memory token show|rotate|disable`. Two narrower tiers exist:
+`--readonly` (GET-only) and `--sync` (federation routes only — hand this to a
+peer instead of the admin token).
 
 ## Quickstart
 
@@ -253,8 +255,11 @@ ACL. Ship one project's shared memory to another host with
 ## Federation (multi-host sync)
 
 ```bash
-# one-time, on each host
-agent-memory peers add http://other-host:8000 --peer-token <their token>
+# on the host being joined: mint a sync-scoped token for the peer
+agent-memory token create --sync           # prints amos_sync_… (federation routes only)
+
+# one-time, on the joining host
+agent-memory peers add https://other-host:8000 --peer-token <their sync token>
 
 # converge with every registered peer (pull + push, deterministic merges)
 agent-memory sync auto
@@ -266,6 +271,20 @@ profiles, strongest-wins on links — and unreachable peers fail individually,
 never fatally. File bundles (`sync export/import`) cover air-gapped moves.
 Pair with `agent-memory service install` and a cron/timer entry for
 continuous mesh sync.
+
+**Encrypt the wire.** Give every node the same mesh key and sync bundles are
+encrypted app-layer (Fernet), so memory content stays confidential even over
+plain HTTP or through a proxy — the key is a separate secret that never travels
+on the wire:
+
+```bash
+agent-memory sync genkey                   # prints amos_sk_… ; needs the [secure-sync] extra
+export AGENT_MEMORY_SYNC_KEY=amos_sk_…      # set the SAME value on every node
+```
+
+The sync-scoped token still rides in the `Authorization` header, so prefer
+`https://` peer URLs (certificate-verified) for non-localhost peers to protect
+the token too. See [SECURITY.md](SECURITY.md) for the exact guarantees.
 
 ## Agent integrations
 

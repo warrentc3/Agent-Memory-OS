@@ -223,6 +223,13 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     api_token = token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or load_token(home)
     ro_token = (readonly_token or os.getenv("AGENT_MEMORY_WEB_READONLY_TOKEN")
                 or load_token(home, readonly=True))
+    # Federation-only credential: authorizes just the sync/node routes, so a
+    # peer can join the mesh without being handed the full admin token.
+    sync_token = os.getenv("AGENT_MEMORY_WEB_SYNC_TOKEN") or load_token(home, tier="sync")
+    # Optional mesh sync key: when set, bundle bodies are encrypted on the wire
+    # (app-layer, independent of TLS). Resolved once here from env or <home>.
+    from . import crypto
+    sync_secret = crypto.load_sync_secret(home)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -231,27 +238,47 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
 
     app = FastAPI(title="AgentMemoryOS Web UI", lifespan=lifespan)
 
-    if api_token:
+    if api_token or ro_token or sync_token:
         # Opt-in bearer-token gate for every API route. The page shell and
         # /health stay open so the UI can load and ask for the token.
-        # A read-only token (if configured) authorizes SAFE methods only; any
-        # mutation (POST/PUT/PATCH/DELETE) still requires the full token.
+        # Token tiers, weakest last:
+        #   full  — every route.
+        #   read-only — SAFE methods only (GET/HEAD/OPTIONS); mutations 403.
+        #   sync  — federation only: GET /api/node, GET /api/sync/export,
+        #           POST /api/sync/import. Anything else is rejected, so a peer
+        #           holding this token cannot read/write memory via the API.
         safe_methods = {"GET", "HEAD", "OPTIONS"}
 
         def _authorizes(supplied: str, secret: str) -> bool:
             return bool(secret) and hmac.compare_digest(
                 supplied.encode(), f"Bearer {secret}".encode())
 
+        def _sync_scoped(path: str, method: str) -> bool:
+            if path == "/api/node" or path == "/api/sync/export":
+                return method in safe_methods
+            if path == "/api/sync/import":
+                return method == "POST"
+            return False
+
         @app.middleware("http")
         async def require_token(request, call_next):
             if request.url.path.startswith("/api/"):
                 supplied = request.headers.get("authorization", "")
-                full = _authorizes(supplied, api_token)
+                full = _authorizes(supplied, api_token) if api_token else False
                 ro = _authorizes(supplied, ro_token) if ro_token else False
-                if not full and not (ro and request.method in safe_methods):
-                    detail = ("read-only token cannot perform this action"
-                              if ro else "unauthorized")
-                    return JSONResponse({"detail": detail}, status_code=401 if not ro else 403)
+                sync = _authorizes(supplied, sync_token) if sync_token else False
+                allowed = (
+                    full
+                    or (ro and request.method in safe_methods)
+                    or (sync and _sync_scoped(request.url.path, request.method))
+                )
+                if not allowed:
+                    if (ro or sync):
+                        detail, status = (
+                            "this token is not authorized for this action", 403)
+                    else:
+                        detail, status = "unauthorized", 401
+                    return JSONResponse({"detail": detail}, status_code=status)
             return await call_next(request)
 
     @app.get("/health")
@@ -705,6 +732,12 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             Path(handle.name).unlink(missing_ok=True)
         from fastapi.responses import PlainTextResponse
 
+        # Encrypt the bundle for the wire when a mesh key is configured. The
+        # AMOSENC1 envelope is self-describing, so a peer with the same key
+        # auto-detects and decrypts it (see crypto.py).
+        if sync_secret:
+            body = crypto.encrypt_bundle(body, sync_secret)
+
         return PlainTextResponse(
             body,
             media_type="application/x-ndjson",
@@ -726,6 +759,19 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         from .sync import import_bundle
 
         body = (await request.body()).decode("utf-8")
+        # Decrypt an encrypted push if we share the mesh key; reject one we
+        # cannot open rather than merging ciphertext as if it were memory.
+        if crypto.is_encrypted(body):
+            if not sync_secret:
+                raise HTTPException(
+                    status_code=400,
+                    detail="received an encrypted bundle but this node has no "
+                           "AGENT_MEMORY_SYNC_KEY configured",
+                )
+            try:
+                body = crypto.decrypt_bundle(body, sync_secret)
+            except crypto.SyncCryptoError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         with lock:
             with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
                 handle.write(body)

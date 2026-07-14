@@ -94,7 +94,7 @@ agent-memory doctor          # 驗證 FTS5、turbovec 與其他 extras
 agent-memory token create    # 用 bearer token 保護 Web UI API
 ```
 
-Token 存在 `<home>/web_token`(權限 600);`agent-memory-web` 會自動讀取,主控台首次使用時會提示輸入。之後用 `agent-memory token show|rotate|disable` 管理。
+Token 存在 `<home>/web_token`(權限 600);`agent-memory-web` 會自動讀取,主控台首次使用時會提示輸入。之後用 `agent-memory token show|rotate|disable` 管理。另有兩種較窄的層級:`--readonly`(唯讀,只允許 GET)與 `--sync`(只允許聯邦路由 —— 給 peer 用這個,而不是把 admin token 交出去)。
 
 ## 快速上手
 
@@ -212,14 +212,26 @@ teams = ["apollo", "ops"]
 ## 聯邦(多主機同步)
 
 ```bash
-# 每台主機一次性設定
-agent-memory peers add http://other-host:8000 --peer-token <他們的 token>
+# 在被加入的主機上:為 peer 產生一個 sync 範圍的 token
+agent-memory token create --sync            # 印出 amos_sync_…(只授權聯邦路由)
+
+# 在加入方主機一次性設定
+agent-memory peers add https://other-host:8000 --peer-token <他們的 sync token>
 
 # 與每個已註冊的 peer 收斂(pull + push,確定性合併)
 agent-memory sync auto
 ```
 
 Peer 依 home 各自儲存;`sync auto`(或主控台的「Sync mesh now」)與每個 peer 雙向收斂——記憶與設定檔 last-writer-wins、連結 strongest-wins——不可達的 peer 個別失敗、絕不致命。檔案 bundle(`sync export/import`)涵蓋氣隙移轉。搭配 `agent-memory service install` 與一個 cron/timer 條目即可持續 mesh 同步。
+
+**加密傳輸。** 給每個節點同一把 mesh 金鑰,sync bundle 就會在 app 層加密(Fernet)——即使走純 HTTP 或經過代理,記憶內容也是密的;金鑰是不會上線的獨立祕密:
+
+```bash
+agent-memory sync genkey                    # 印出 amos_sk_… ;需要 [secure-sync] extra
+export AGENT_MEMORY_SYNC_KEY=amos_sk_…       # 每個節點都設同一個值
+```
+
+sync token 仍走 `Authorization` header,所以非本機 peer 建議用 `https://`(會驗證憑證)以連 token 一起保護。詳細保證見 [SECURITY.md](SECURITY.md)。
 
 ## Agent 整合
 

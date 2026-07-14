@@ -38,6 +38,19 @@ Governance rules:
 - Multi-instance (instance.toml, auto-port, node names); Docker + Docker Hub image
 - MCP server (11 tools) with per-agent identity
 
+## Shipped — v1.1 (secure federation transport)
+
+- **Sync token tier** (`token create --sync`, prefix `amos_sync_`): a
+  federation-only bearer token that authorizes just `/api/node` +
+  `/api/sync/*` — hand this to a peer instead of the admin token.
+- **Encrypted sync transport**: shared mesh key (`AGENT_MEMORY_SYNC_KEY` /
+  `agent-memory sync genkey`) encrypts bundle content app-layer (Fernet), so
+  content stays confidential even over plain HTTP or a TLS-terminating proxy;
+  the key never crosses the wire. `secure-sync` extra (folded into `full`).
+- **Explicit TLS verification** for `https://` peer URLs.
+- `agent-memory-mcp` console entry point (zero-install `uvx` runs; MCP-directory
+  listings such as Smithery).
+
 ## v0.3 — Robust persistent memory (shipped)
 
 Goal: a memory you can trust with years of an agent's life.

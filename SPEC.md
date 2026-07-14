@@ -506,3 +506,31 @@ is made to propagate, and the system gains production observability.
   detection. Read-only web token tier (GET-only). `agent-memory update`
   (self-update + pidfile-based console restart), `service restart`, and
   `backup --keep N` (rotation that can never delete the live DB).
+
+## v1.1 Secure federation transport
+
+Federation gains confidentiality on the wire and a least-privilege join
+credential, so a mesh no longer depends on an external TLS proxy for content
+secrecy and no longer requires handing peers the admin token.
+
+- **Sync token tier**: a third bearer-token tier (`web_sync_token`, prefix
+  `amos_sync_`, `agent-memory token create --sync`) alongside full and
+  read-only. The web auth middleware authorizes a sync token for **only**
+  `GET /api/node`, `GET /api/sync/export`, and `POST /api/sync/import` — never
+  the memory API or `/api/sync/run` — so a peer credential cannot read or mutate
+  memory through the API. The auth gate now installs when *any* tier is set.
+- **App-layer bundle encryption**: when a shared mesh secret is configured
+  (`AGENT_MEMORY_SYNC_KEY` env, else `<home>/sync_key`), export/push bodies are
+  wrapped in an authenticated `AMOSENC1:` envelope (Fernet — AES-128-CBC +
+  HMAC-SHA256; key = SHA-256 of the secret). The envelope is self-describing, so
+  import/pull auto-detect and decrypt; a body encrypted under an unknown key is
+  rejected (400 / `SyncCryptoError`) rather than merged. The secret is a
+  **separate** value from the bearer token and never crosses the wire, so
+  content stays confidential even over plain HTTP or through a TLS-terminating
+  proxy. Encryption is opportunistic (engages only when a key is present) for
+  smooth mesh upgrades. `cryptography` ships in the new `secure-sync` extra
+  (folded into `full`); `agent-memory sync genkey` mints and stores a key.
+- **Explicit TLS verification**: `https://` peer URLs use an explicit
+  certificate-verifying `ssl` context (system trust store + hostname check).
+  Plain-HTTP non-local peers still warn, now pointing at both the mesh key and a
+  sync-scoped token.

@@ -709,8 +709,17 @@ def pull_from_peer(client, base_url: str, *, since: str | None = None,
     """Fetch a peer's bundle over HTTP (unlocked) and merge it locally (locked)."""
     import tempfile
 
+    from . import crypto
+
     body = _http(base_url.rstrip("/") + "/api/sync/export"
                  + (f"?since={since}" if since else ""), token=peer_token)
+    if crypto.is_encrypted(body):
+        secret = crypto.load_sync_secret(getattr(client, "home", None))
+        if not secret:
+            raise crypto.SyncCryptoError(
+                f"peer {base_url} returned an encrypted bundle but no "
+                "AGENT_MEMORY_SYNC_KEY is configured on this node")
+        body = crypto.decrypt_bundle(body, secret)
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
         handle.write(body)
     try:
@@ -736,6 +745,11 @@ def push_to_peer(client, base_url: str, *, since: str | None = None,
         payload = Path(handle.name).read_text(encoding="utf-8")
     finally:
         Path(handle.name).unlink(missing_ok=True)
+    from . import crypto
+
+    secret = crypto.load_sync_secret(getattr(client, "home", None))
+    if secret:
+        payload = crypto.encrypt_bundle(payload, secret)
     response = _http(base_url.rstrip("/") + "/api/sync/import", token=peer_token, post=payload)
     return json.loads(response)
 
@@ -800,6 +814,7 @@ def fetch_peer_node_name(url: str, *, token: str | None = None) -> str:
 
 
 def _http(url: str, *, token: str | None, post: str | None = None) -> str:
+    import ssl
     import urllib.request
 
     if not url.startswith(("http://", "https://")):
@@ -812,5 +827,9 @@ def _http(url: str, *, token: str | None, post: str | None = None) -> str:
     )
     if token:
         request.add_header("Authorization", f"Bearer {token}")
-    with urllib.request.urlopen(request, timeout=30) as response:
+    # Explicit, certificate-verifying TLS context for https peers (hostname
+    # check + system trust store). http:// peers are unaffected; confidentiality
+    # over plain HTTP comes from the app-layer bundle encryption instead.
+    context = ssl.create_default_context() if url.startswith("https://") else None
+    with urllib.request.urlopen(request, timeout=30, context=context) as response:
         return response.read().decode("utf-8")

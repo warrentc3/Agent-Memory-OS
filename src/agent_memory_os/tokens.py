@@ -3,6 +3,18 @@
 The token lives next to the memory database (`<home>/web_token`, mode 600) so
 one `--home` carries both the data and its access credential. Resolution order
 in the web app: explicit --token > AGENT_MEMORY_WEB_TOKEN > this file.
+
+Three token tiers share this machinery, each in its own file with its own
+prefix so they are never confused:
+
+- ``full``     (``web_token``,          ``amos_``)      — admin: every API route.
+- ``readonly`` (``web_readonly_token``, ``amos_ro_``)   — GET/HEAD/OPTIONS only.
+- ``sync``     (``web_sync_token``,     ``amos_sync_``) — federation only: the
+  ``/api/sync/*`` and ``/api/node`` routes. Hand THIS to a peer instead of the
+  admin token so joining the mesh does not grant full API access.
+
+The legacy ``readonly=`` keyword is still accepted everywhere for backward
+compatibility; new callers should pass ``tier=``.
 """
 
 from __future__ import annotations
@@ -13,18 +25,36 @@ from pathlib import Path
 
 TOKEN_FILENAME = "web_token"
 READONLY_TOKEN_FILENAME = "web_readonly_token"
+SYNC_TOKEN_FILENAME = "web_sync_token"
+
+_TIER_FILENAME = {
+    "full": TOKEN_FILENAME,
+    "readonly": READONLY_TOKEN_FILENAME,
+    "sync": SYNC_TOKEN_FILENAME,
+}
+_TIER_PREFIX = {"full": "amos_", "readonly": "amos_ro_", "sync": "amos_sync_"}
+
+
+def _resolve_tier(readonly: bool, tier: str | None) -> str:
+    if tier is not None:
+        if tier not in _TIER_FILENAME:
+            raise ValueError(f"unknown token tier: {tier!r}")
+        return tier
+    return "readonly" if readonly else "full"
 
 
 def resolve_home(home: str | Path | None) -> Path:
     return Path(home or os.getenv("AGENT_MEMORY_HOME", "~/.agent-memory")).expanduser()
 
 
-def token_path(home: str | Path | None, *, readonly: bool = False) -> Path:
-    return resolve_home(home) / (READONLY_TOKEN_FILENAME if readonly else TOKEN_FILENAME)
+def token_path(home: str | Path | None, *, readonly: bool = False,
+               tier: str | None = None) -> Path:
+    return resolve_home(home) / _TIER_FILENAME[_resolve_tier(readonly, tier)]
 
 
-def load_token(home: str | Path | None, *, readonly: bool = False) -> str | None:
-    path = token_path(home, readonly=readonly)
+def load_token(home: str | Path | None, *, readonly: bool = False,
+               tier: str | None = None) -> str | None:
+    path = token_path(home, readonly=readonly, tier=tier)
     try:
         token = path.read_text(encoding="utf-8").strip()
     except OSError:
@@ -32,8 +62,9 @@ def load_token(home: str | Path | None, *, readonly: bool = False) -> str | None
     return token or None
 
 
-def save_token(home: str | Path | None, token: str, *, readonly: bool = False) -> Path:
-    path = token_path(home, readonly=readonly)
+def save_token(home: str | Path | None, token: str, *, readonly: bool = False,
+               tier: str | None = None) -> Path:
+    path = token_path(home, readonly=readonly, tier=tier)
     path.parent.mkdir(parents=True, exist_ok=True)
     # Write to a private temp file created 0600 from the start (no
     # world-readable window between write and chmod), then atomically replace
@@ -53,14 +84,16 @@ def save_token(home: str | Path | None, token: str, *, readonly: bool = False) -
     return path
 
 
-def create_token(home: str | Path | None, *, readonly: bool = False) -> str:
-    token = ("amos_ro_" if readonly else "amos_") + secrets.token_urlsafe(32)
-    save_token(home, token, readonly=readonly)
+def create_token(home: str | Path | None, *, readonly: bool = False,
+                  tier: str | None = None) -> str:
+    token = _TIER_PREFIX[_resolve_tier(readonly, tier)] + secrets.token_urlsafe(32)
+    save_token(home, token, readonly=readonly, tier=tier)
     return token
 
 
-def delete_token(home: str | Path | None, *, readonly: bool = False) -> bool:
-    path = token_path(home, readonly=readonly)
+def delete_token(home: str | Path | None, *, readonly: bool = False,
+                 tier: str | None = None) -> bool:
+    path = token_path(home, readonly=readonly, tier=tier)
     if not path.exists():
         return False
     path.unlink()

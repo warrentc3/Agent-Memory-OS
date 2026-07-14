@@ -108,7 +108,10 @@ with its own volume and node name, sharing one token so they can authenticate
 to each other:
 
 ```bash
-echo "AGENT_MEMORY_WEB_TOKEN=$(openssl rand -hex 16)" > .env
+# One shared bearer token authenticates the pair; one shared mesh key encrypts
+# the bundle content on the wire (app-layer, independent of TLS).
+{ echo "AGENT_MEMORY_WEB_TOKEN=$(openssl rand -hex 16)";
+  echo "AGENT_MEMORY_SYNC_KEY=$(openssl rand -hex 32)"; } > .env
 docker compose -f docker-compose.mesh.yml up -d
 
 # Register each as the other's peer (services resolve by name on the network):
@@ -124,7 +127,9 @@ docker compose -f docker-compose.mesh.yml exec node-a agent-memory sync auto
 
 `--policy full` treats the two as your own trusted replicas (private memories
 replicate). Use `--policy shared` between nodes you don't fully trust — private
-memories then never leave. See the [User Guide](USER_GUIDE.md#6-federation--project-sync)
+memories then never leave. Because both nodes share `AGENT_MEMORY_SYNC_KEY`,
+bundle content is encrypted between them (the image includes the `cryptography`
+dependency). See the [User Guide](USER_GUIDE.md#6-federation--project-sync)
 for the full trust model.
 
 ## Health

@@ -59,7 +59,7 @@ Global flag: `--home <dir>`.
 | `stats` | Database statistics. |
 | `check` | SQLite + FTS + link-graph integrity, schema version. |
 | `doctor [--install]` | Dependency/FTS5/token/agents.toml health; auto-install extras. |
-| `token create\|show\|rotate\|disable [--readonly]` | Web API bearer token; `--readonly` manages the GET-only token tier. |
+| `token create\|show\|rotate\|disable [--readonly\|--sync]` | Web API bearer token. `--readonly` = GET-only tier; `--sync` = federation-only tier (authorizes just `/api/node` + `/api/sync/*`), the credential to hand a peer instead of the admin token. |
 | `service install\|uninstall\|start\|stop\|restart\|status [--host --port --dry-run]` | Native login service. |
 | `backup <dest> [--keep N]` / `restore <src> [--force]` | WAL-safe online backup / restore; `--keep N` rotates older backups (never the live DB). |
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
@@ -71,8 +71,9 @@ Global flag: `--home <dir>`.
 | `update [--check] [--yes] [--no-restart]` | Detect host/Docker deployment, check PyPI, upgrade (pip), then restart the running console; `--check` reports only, `--no-restart` skips the restart. |
 | `sync export <file> [--since --team]` | Write a bundle (optionally one project's memory). |
 | `sync import <file>` | Merge a bundle (last-writer-wins / strongest-wins). |
-| `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP. |
+| `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP(S). |
 | `sync auto` | Converge with every registered peer. |
+| `sync genkey` | Generate + store a mesh encryption key (`<home>/sync_key`); set the same `AGENT_MEMORY_SYNC_KEY` on every node to encrypt bundle content on the wire. Needs the `secure-sync` extra. |
 | `import-hermes --profile --profile-home` | Import Hermes `MEMORY.md`/`USER.md` (idempotent). |
 | `import --from mem0\|zep\|chatgpt <file> [--owner --visibility --type]` | Import an export from another memory system (idempotent; private by default). See [docs/IMPORTERS.md](IMPORTERS.md). |
 | `golden-recall --cases <file>` | Recall-quality evaluation gate. |
@@ -162,16 +163,34 @@ MCP tools (11): `memory_add`, `memory_search`, `memory_context_pack`,
 ## 6. Federation & project sync
 
 ```bash
-# each host: register the others (their web token authenticates you)
+# on each host: mint a sync-scoped token to give peers (NOT the admin token)
+agent-memory token create --sync                       # prints amos_sync_…
+
+# each host: register the others (the peer's sync token authenticates you)
 # --policy controls what leaves for this peer:
-agent-memory peers add http://host-b:8000 --peer-token <b-token>            # 'shared' (default)
-agent-memory peers add http://my-laptop:8000 --peer-token <t> --policy full # own trusted node
-agent-memory peers add http://team-hub:8000 --peer-token <t> --policy team:apollo
+agent-memory peers add https://host-b:8000 --peer-token <b-sync-token>          # 'shared' (default)
+agent-memory peers add https://my-laptop:8000 --peer-token <t> --policy full    # own trusted node
+agent-memory peers add https://team-hub:8000 --peer-token <t> --policy team:apollo
 agent-memory sync auto            # pull + push with every peer
 
 # ship one project's memory as a file
 agent-memory sync export apollo.jsonl --team apollo
 ```
+
+**Encrypt bundle content on the wire.** Generate a mesh key once and set the
+same value on every node — bundles are then encrypted app-layer (Fernet), so
+content is confidential even over plain HTTP or through a TLS-terminating proxy
+(the key never crosses the wire). Needs the `secure-sync` extra
+(`pip install "agent-memory-os[secure-sync]"`):
+
+```bash
+agent-memory sync genkey                               # prints amos_sk_… , stores <home>/sync_key
+export AGENT_MEMORY_SYNC_KEY=amos_sk_…                  # or set this env on every node
+```
+
+Encryption is opportunistic — it engages only when a key is configured, so set
+it on *all* nodes. The bearer token still rides in the header, so prefer
+`https://` peer URLs (certificate-verified) for non-localhost peers.
 
 **Peer policy** decides what a peer receives: `shared` (default — everything
 except private `visibility=[]` memories), `full` (the whole store *including

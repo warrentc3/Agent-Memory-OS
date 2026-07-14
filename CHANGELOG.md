@@ -4,14 +4,34 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [1.0.6] — 2026-07-14
+## [1.1.0] — 2026-07-14
 
-- **`agent-memory-mcp` console entry point.** The MCP stdio server can now be
-  launched as `agent-memory-mcp` (in addition to `python -m
+- **Encrypted federation transport (app-layer).** When a shared mesh key is
+  configured — `AGENT_MEMORY_SYNC_KEY` (env) or `<home>/sync_key`, minted with
+  `agent-memory sync genkey` — sync bundles are wrapped in an authenticated
+  `AMOSENC1:` envelope (Fernet: AES-128-CBC + HMAC-SHA256) on both the pull and
+  push legs. The key is a **separate secret from the bearer token and never
+  crosses the wire**, so memory content stays confidential even over plain HTTP
+  or through a TLS-terminating proxy. A bundle encrypted under an unknown key is
+  rejected, not merged. Encryption is opportunistic (engages only when a key is
+  set) for smooth mesh upgrades. Ships in the new `secure-sync` extra (folded
+  into `full`); `agent-memory-web` and the CLI both resolve the key.
+- **Sync-scoped token tier.** `agent-memory token create --sync` mints a
+  federation-only bearer token (`web_sync_token`, prefix `amos_sync_`) that
+  authorizes **only** `GET /api/node`, `GET /api/sync/export`, and
+  `POST /api/sync/import`. Hand this to a peer instead of the full admin token,
+  so a peer credential can neither read nor mutate memory through the API. The
+  Web API auth gate now installs whenever any token tier (full / read-only /
+  sync) is configured.
+- **Explicit TLS verification for HTTPS peers.** `https://` peer URLs now use an
+  explicit certificate-verifying `ssl` context (system trust store + hostname
+  check). The plain-HTTP warning now points at both the mesh key and a
+  sync-scoped token.
+- **`agent-memory-mcp` console entry point.** The MCP stdio server can also be
+  launched as `agent-memory-mcp` (besides `python -m
   agent_memory_os.mcp_server`), enabling zero-install runs via
-  `uvx --from "agent-memory-os[mcp]" agent-memory-mcp`. No behaviour change to
-  the server itself. Added to support cleaner MCP-directory listings (e.g.
-  Smithery).
+  `uvx --from "agent-memory-os[mcp]" agent-memory-mcp` and cleaner MCP-directory
+  listings (e.g. Smithery).
 
 ## [1.0.5] — 2026-07-13
 

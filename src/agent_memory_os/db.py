@@ -1393,8 +1393,11 @@ class MemoryStore:
 
             warnings.warn(
                 f"peer {url} uses plain HTTP over the network — the bearer token "
-                "and memory content will cross the wire unencrypted. Use https:// "
-                "(a TLS reverse proxy or tunnel) for any non-localhost peer.",
+                "crosses the wire unencrypted. Set AGENT_MEMORY_SYNC_KEY on every "
+                "node to encrypt the memory content (app-layer), and prefer "
+                "https:// (a TLS reverse proxy or tunnel) so the token is "
+                "protected too. Also hand peers a sync-scoped token "
+                "(`agent-memory token create --sync`), not the admin token.",
                 stacklevel=2,
             )
         policy = self._validate_peer_policy(policy)

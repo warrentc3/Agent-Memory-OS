@@ -71,9 +71,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     token = sub.add_parser("token", help="Manage the Web UI API token")
     token.add_argument("action", choices=["create", "show", "rotate", "disable"])
-    token.add_argument(
+    tier_group = token.add_mutually_exclusive_group()
+    tier_group.add_argument(
         "--readonly", action="store_true",
         help="Operate on the read-only token (GET-only access) instead of the full token",
+    )
+    tier_group.add_argument(
+        "--sync", action="store_true",
+        help="Operate on the sync token: authorizes ONLY federation routes "
+             "(/api/sync/*, /api/node). Hand this to a peer instead of the admin token.",
     )
 
     doctor = sub.add_parser("doctor", help="Check optional dependencies and setup health")
@@ -102,13 +108,13 @@ def build_parser() -> argparse.ArgumentParser:
     service.add_argument("--dry-run", action="store_true", help="Print actions without executing")
 
     sync = sub.add_parser("sync", help="Federated sync: file bundles, peer HTTP endpoints, or the whole mesh")
-    sync.add_argument("action", choices=["export", "import", "pull", "push", "auto"])
+    sync.add_argument("action", choices=["export", "import", "pull", "push", "auto", "genkey"])
     sync.add_argument(
         "target", nargs="?", default=None,
-        help="Bundle .jsonl path (export/import) or peer base URL (pull/push); omit for auto",
+        help="Bundle .jsonl path (export/import) or peer base URL (pull/push); omit for auto/genkey",
     )
     sync.add_argument("--since", default=None, help="Only records updated after this ISO timestamp")
-    sync.add_argument("--peer-token", default=None, help="Bearer token of the peer's Web API")
+    sync.add_argument("--peer-token", default=None, help="Sync-scoped bearer token of the peer's Web API")
     sync.add_argument("--team", default=None, help="Export only one team/project's shared memory")
 
     peers = sub.add_parser("peers", help="Manage federated sync peers")
@@ -191,34 +197,40 @@ def _cmd_service(args) -> int:
 def _cmd_token(args) -> int:
     from . import tokens
 
-    ro = getattr(args, "readonly", False)
-    label = "read-only Web UI token" if ro else "Web UI token"
-    existing = tokens.load_token(args.home, readonly=ro)
+    tier = "sync" if getattr(args, "sync", False) else (
+        "readonly" if getattr(args, "readonly", False) else "full")
+    flag = {"full": "", "readonly": " --readonly", "sync": " --sync"}[tier]
+    label = {"full": "Web UI token", "readonly": "read-only Web UI token",
+             "sync": "sync token"}[tier]
+    existing = tokens.load_token(args.home, tier=tier)
     if args.action == "show":
         if existing is None:
-            print(f"no {label} set — run: agent-memory token create"
-                  + (" --readonly" if ro else ""))
+            print(f"no {label} set — run: agent-memory token create{flag}")
             return 1
         print(existing)
         return 0
     if args.action == "disable":
-        if tokens.delete_token(args.home, readonly=ro):
+        if tokens.delete_token(args.home, tier=tier):
             print(f"{label} removed")
         else:
             print(f"no {label} was set")
         return 0
     if args.action == "create" and existing is not None:
-        print(f"a {label} already exists — use `... token rotate"
-              + (" --readonly" if ro else "") + "` to replace it,")
-        print("or `agent-memory token show` to display it")
+        print(f"a {label} already exists — use `... token rotate{flag}` to replace it,")
+        print(f"or `agent-memory token show{flag}` to display it")
         return 1
-    token = tokens.create_token(args.home, readonly=ro)
-    print(f"{label} saved to {tokens.token_path(args.home, readonly=ro)} (mode 600):")
+    token = tokens.create_token(args.home, tier=tier)
+    print(f"{label} saved to {tokens.token_path(args.home, tier=tier)} (mode 600):")
     print()
     print(f"  {token}")
     print()
-    print("agent-memory-web now requires this token on every /api/ route.")
-    print("The Web UI will prompt for it on first use.")
+    if tier == "sync":
+        print("Give this to a peer so it can join the mesh WITHOUT your admin token:")
+        print("  on the peer:  agent-memory peers add <this-node-url> --peer-token <token>")
+        print("It authorizes only /api/sync/* and /api/node.")
+    else:
+        print("agent-memory-web now requires this token on every /api/ route.")
+        print("The Web UI will prompt for it on first use.")
     return 0
 
 
@@ -237,6 +249,7 @@ def _cmd_doctor(args) -> int:
         "api": (["fastapi", "uvicorn"], "Web UI (agent-memory-web)"),
         "mcp": (["mcp"], "MCP server for agent integration"),
         "semantic": (["numpy", "turbovec"], "turbovec semantic vector recall"),
+        "secure-sync": (["cryptography"], "encrypted federation transport (AGENT_MEMORY_SYNC_KEY)"),
     }
     fts_ok = True
     try:
@@ -861,6 +874,26 @@ def main(argv: list[str] | None = None) -> int:
                 print("removed" if removed else "not registered")
             return 0
         if args.command == "sync":
+            if args.action == "genkey":
+                from . import crypto
+
+                existing = crypto.load_sync_secret(args.home)
+                if existing:
+                    print("a sync key is already configured (env AGENT_MEMORY_SYNC_KEY "
+                          f"or {crypto.sync_key_path(args.home)}).")
+                    print("delete/replace it deliberately — changing it breaks sync with "
+                          "peers still on the old key.")
+                    return 1
+                secret = crypto.generate_secret()
+                path = crypto.save_sync_secret(args.home, secret)
+                print(f"sync key saved to {path} (mode 600):")
+                print()
+                print(f"  {secret}")
+                print()
+                print("Set this SAME key on every node in the mesh — as env "
+                      "AGENT_MEMORY_SYNC_KEY or in each node's sync_key file — to "
+                      "encrypt bundle content on the wire (app-layer, independent of TLS).")
+                return 0
             if args.action == "auto":
                 from .sync import sync_all_peers
 

@@ -52,10 +52,15 @@ OS user account (owns ~/.agent-memory)      <- the strong boundary
 - **A scoped peer abusing its own scope.** A `team:X` peer is trusted for team X.
   It can add/remove team-X members within that scope. → Scope peers minimally;
   federation is for collaborators, not adversaries.
-- **Network eavesdropping.** Sync and the API speak plain HTTP. → Put anything
-  beyond localhost behind TLS.
+- **Network eavesdropping.** Sync bundle *content* can be encrypted app-layer by
+  setting a shared mesh key (`AGENT_MEMORY_SYNC_KEY`), which stays confidential
+  even over plain HTTP. The bearer token and the rest of the API are still
+  cleartext without TLS. → Set a mesh key on every node, and put anything beyond
+  localhost behind TLS so the token is protected too.
 - **Token compromise.** One shared bearer token = admin. There is no per-user
-  auth. → Keep the token secret; bind to localhost or add real auth at a proxy.
+  auth. A sync-scoped token (`token create --sync`) limits the blast radius to
+  federation routes. → Keep tokens secret; hand peers a sync token, not the
+  admin one; bind to localhost or add real auth at a proxy.
 - **Retracting data from a departed node.** Revocation propagates to nodes that
   keep syncing; it cannot reach a node that left the mesh or a copied database.
   → Once memory has synced off your machine, treat it as disclosed.
@@ -74,8 +79,13 @@ guarantee and does not reach offline/departed nodes.
 - [ ] `chmod 700 ~/.agent-memory`; keep it on a local disk you control.
 - [ ] Configure a Web token (`agent-memory token create`); never expose the API
       tokenless on a shared network.
-- [ ] Use the read-only token for dashboards/auditors.
-- [ ] Terminate TLS in front of any non-localhost peer or console.
+- [ ] Use the read-only token for dashboards/auditors, and a sync-scoped token
+      (`agent-memory token create --sync`) for peers — never hand a peer the
+      admin token.
+- [ ] Set a shared mesh key (`agent-memory sync genkey`, same
+      `AGENT_MEMORY_SYNC_KEY` on every node) to encrypt sync content on the wire.
+- [ ] Terminate TLS in front of any non-localhost peer or console (protects the
+      bearer token, which the mesh key does not).
 - [ ] Grant `full` peer policy only to nodes you own; scope everyone else to the
       narrowest `team:`/`project:`.
 - [ ] Encrypt the disk (or use SQLCipher) if the host is shared or portable.

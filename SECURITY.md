@@ -35,10 +35,13 @@ for the full model. The load-bearing points:
   filesystem encryption (or SQLCipher) if the host is untrusted.
 
 - **The Web API is one shared bearer token (coarse trust).** Any full-token
-  holder is effectively admin; the read-only token is GET-only but still sees
-  all readable content. There is no per-user authentication. Bind to
-  `127.0.0.1` (default) or front it with a reverse proxy that adds real auth
-  before exposing it.
+  holder is effectively admin. Two narrower tiers exist: a **read-only** token
+  (GET-only, but still sees all readable content) and a **sync** token
+  (`agent-memory token create --sync`) that authorizes *only* the federation
+  routes (`/api/node`, `/api/sync/*`) — hand that to a peer instead of the admin
+  token. There is still no per-user authentication. Bind to `127.0.0.1`
+  (default) or front it with a reverse proxy that adds real auth before exposing
+  it.
 
 - **Federation trusts peers up to their declared policy — and no further.** A
   peer can only assert org membership within its own `team:`/`project:` scope,
@@ -48,10 +51,17 @@ for the full model. The load-bearing points:
   or one you explicitly scoped to a team, can do damage within that scope. Only
   grant `full` to nodes you own.
 
-- **Peer transport is not encrypted by AgentMemoryOS.** Sync speaks plain HTTP.
-  For any peer beyond localhost, run it over TLS (a reverse proxy or tunnel);
-  the bearer token and memory content would otherwise cross the network in the
-  clear.
+- **Peer transport: content encryption is available; protect the token with
+  TLS.** Set a shared mesh key (`agent-memory sync genkey`, distributed as
+  `AGENT_MEMORY_SYNC_KEY` on every node) and sync bundles are encrypted
+  app-layer (Fernet / AES-128-CBC+HMAC) — the memory content stays confidential
+  even over plain HTTP or through a TLS-terminating proxy, because the key is a
+  separate secret that never crosses the wire. HTTPS peer URLs are certificate-
+  verified. The **bearer token itself still travels in the `Authorization`
+  header**, so for a non-localhost peer also run it over TLS (reverse proxy or
+  tunnel) and use a sync-scoped token so a captured token grants only sync
+  access, not admin. Encryption is opportunistic: it engages only when a mesh
+  key is configured, so set the key on *all* nodes for confidentiality.
 
 - **Revocation reaches honest nodes that keep syncing.** Revoking access
   propagates and retracts already-synced memory on peers that sync again. It
