@@ -1,0 +1,37 @@
+# Smithery listing for Agent Memory OS — a LOCAL-FIRST stdio MCP server.
+# We intentionally list this as a local stdio server (not a hosted/remote
+# deployment): all memory stays in a single SQLite file on the user's own
+# machine, which is the whole point of the project. Smithery only uses the
+# command below to tell the user's MCP client how to launch it locally.
+#
+# The command uses `uv run --with` so the package is fetched from PyPI into an
+# ephemeral environment at launch — no prior `pip install` and no new release
+# required. Requires `uv` on the machine (https://docs.astral.sh/uv/).
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      agentId:
+        type: string
+        description: >-
+          This agent's identity. Memories default to this owner and recall
+          carries its ACL. Give each agent/teammate a distinct id.
+      home:
+        type: string
+        description: >-
+          Data home directory for the local SQLite store (default ~/.agent-memory).
+    required: []
+  commandFunction: |-
+    (config) => ({
+      command: 'uv',
+      args: ['run', '--with', 'agent-memory-os[mcp]', 'python', '-m', 'agent_memory_os.mcp_server'],
+      env: Object.assign(
+        {},
+        config.agentId ? { AGENT_MEMORY_AGENT_ID: config.agentId } : {},
+        config.home ? { AGENT_MEMORY_HOME: config.home } : {}
+      )
+    })
+  exampleConfig:
+    agentId: my-agent
+    home: ~/.agent-memory
