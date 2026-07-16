@@ -534,3 +534,30 @@ secrecy and no longer requires handing peers the admin token.
   certificate-verifying `ssl` context (system trust store + hostname check).
   Plain-HTTP non-local peers still warn, now pointing at both the mesh key and a
   sync-scoped token.
+
+## v1.2 Hermes Agent native memory provider
+
+AgentMemoryOS becomes a first-class memory backend for NousResearch
+hermes-agent: install the package, register it, and Hermes recalls and stores
+through the ACL-scoped store with no key, no LLM, and no network.
+
+- **MemoryProvider plugin** (`agent_memory_os/hermes_plugin.py`): implements
+  the hermes-agent v0.18 `MemoryProvider` contract — per-turn `prefetch()`
+  injects an ACL-filtered context pack for the user message; `amos_search` /
+  `amos_add` / `amos_share` tools carry the share ACL
+  (`private|team|project|agent:<id>|global`); built-in MEMORY.md/USER.md
+  writes are mirrored idempotently (stable id = SHA-256 of target+content);
+  subagent delegations are captured as low-importance episodic notes;
+  cron/subagent contexts are read-only; `backup_paths()` folds the store into
+  `hermes backup`. Hermes profiles map to ACL identities
+  (`hermes-<profile>`), so profiles and MCP agents share one store with
+  boundaries intact. All hooks fail soft (no memory this turn, never a broken
+  loop). Verified on the official Docker image back to hermes-agent v0.12.
+- **`agent-memory hermes install|uninstall`**: Hermes's `hermes memory
+  setup|status` discovers providers only from plugin *directories*, so the
+  CLI materializes a two-file shim (`plugin.yaml` + `__init__.py` that calls
+  `ctx.register_memory_provider`, satisfying Hermes's text-scan heuristic)
+  under `$HERMES_HOME/plugins/agent-memory-os/`. The implementation stays in
+  the pip package, so upgrades apply without touching the shim. The
+  `hermes_agent.plugins` entry point is also declared for runtime plugin
+  discovery.

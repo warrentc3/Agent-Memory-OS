@@ -51,6 +51,18 @@ Governance rules:
 - `agent-memory-mcp` console entry point (zero-install `uvx` runs; MCP-directory
   listings such as Smithery).
 
+## Shipped — v1.2 (Hermes Agent native memory provider)
+
+- **hermes-agent MemoryProvider plugin**: per-turn ACL-filtered recall
+  injection, `amos_search|add|share` tools with team/project sharing,
+  idempotent MEMORY.md mirroring, subagent-delegation capture, read-only
+  cron/subagent contexts, `hermes backup` coverage. Profiles map to ACL
+  identities (`hermes-<profile>`); verified on the official Docker image
+  back to hermes-agent v0.12.
+- **`agent-memory hermes install|uninstall`**: materializes the provider
+  shim under `$HERMES_HOME/plugins/` so `hermes memory setup|status` can
+  discover it (Hermes only scans plugin directories, not pip entry points).
+
 ## v0.3 — Robust persistent memory (shipped)
 
 Goal: a memory you can trust with years of an agent's life.

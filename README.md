@@ -298,6 +298,12 @@ Step-by-step guides for wiring AgentMemoryOS into common agents — click a tile
   <a href="docs/integrations/hermes-agent.md"><img src="assets/integrations/hermes-agent.svg" alt="Hermes Agent integration guide" height="56"></a>
 </p>
 
+Hermes Agent gets a **native memory-provider plugin** (not just MCP):
+`pip install agent-memory-os && agent-memory hermes install`, then pick
+`agent-memory-os` in `hermes memory setup` — recall is injected every turn and
+`amos_*` tools carry the team/project ACL. No API key, no LLM. See the
+[Hermes guide](docs/integrations/hermes-agent.md).
+
 Any MCP-capable agent can use the same pattern: run
 `python -m agent_memory_os.mcp_server` as a stdio MCP server pointing at a
 shared `AGENT_MEMORY_HOME`.

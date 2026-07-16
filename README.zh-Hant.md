@@ -245,6 +245,8 @@ sync token 仍走 `Authorization` header,所以非本機 peer 建議用 `https:/
   <a href="docs/integrations/hermes-agent.md"><img src="assets/integrations/hermes-agent.svg" alt="Hermes Agent 整合指南" height="56"></a>
 </p>
 
+Hermes Agent 另有**原生記憶供應商外掛**(不只 MCP):`pip install agent-memory-os && agent-memory hermes install`,再到 `hermes memory setup` 選 `agent-memory-os` —— 每回合自動注入召回、`amos_*` 工具帶 team/project ACL,免 API key、免 LLM。詳見 [Hermes 指南](docs/integrations/hermes-agent.md)。
+
 任何支援 MCP 的 agent 都能用同一套模式:把 `python -m agent_memory_os.mcp_server` 當成 stdio MCP server 執行,指向一個共享的 `AGENT_MEMORY_HOME`。
 
 ## MCP server
