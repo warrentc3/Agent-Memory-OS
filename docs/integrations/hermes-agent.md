@@ -18,17 +18,24 @@ store with private/team/project boundaries enforced.
 # 1. Install into the Hermes environment (same Python that runs `hermes`)
 pip install agent-memory-os
 
-# 2. Enable the plugin (it is discovered via the hermes_agent.plugins
-#    entry point automatically)
-hermes plugins        # tick "agent-memory-os"
+# 2. Register the provider with Hermes (writes a shim into
+#    $HERMES_HOME/plugins/agent-memory-os/ so `hermes memory` can see it)
+agent-memory hermes install        # --hermes-home for non-default profiles
 
-# 3. Select it as the memory provider in ~/.hermes/config.yaml:
-#      memory:
-#        provider: agent-memory-os
+# 3. Pick it in the interactive wizard (or pass the name directly)
+hermes memory setup agent-memory-os
+hermes memory status               # verify: provider agent-memory-os active
 ```
 
-Optional setup wizard: `hermes memory setup` walks through the provider's
-config (all non-secret, stored in `$HERMES_HOME/agent-memory-os.json`):
+> Why step 2? `hermes memory setup|status` discovers providers from plugin
+> *directories* only — a pip install alone is invisible to the picker. The
+> shim is a two-file loader that re-exports the provider from the installed
+> package, so `pip install -U agent-memory-os` keeps upgrading the real
+> implementation; re-run `agent-memory hermes install` only to refresh the
+> version stamp. `agent-memory hermes uninstall` removes it.
+
+The wizard (`hermes memory setup`) walks through the provider's config
+(all non-secret, stored in `$HERMES_HOME/agent-memory-os.json`):
 
 | key | default | meaning |
 |---|---|---|

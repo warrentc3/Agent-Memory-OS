@@ -230,3 +230,70 @@ def test_entry_point_declared():
     group = eps.select(group="hermes_agent.plugins") if hasattr(eps, "select") else eps.get("hermes_agent.plugins", [])
     names = {ep.name: ep.value for ep in group}
     assert names.get("agent-memory-os") == "agent_memory_os.hermes_plugin"
+
+
+# ---------- `agent-memory hermes install` shim ----------
+
+
+def test_install_shim_passes_hermes_discovery_heuristic(hermes_plugin, tmp_path):
+    """The shim must satisfy Hermes's `_is_memory_provider_dir` text scan
+    and carry a plugin.yaml with name/description for the setup picker."""
+    report = hermes_plugin.install_shim(tmp_path)
+    shim = tmp_path / "plugins" / "agent-memory-os"
+    assert report["installed"] == str(shim)
+
+    init_src = (shim / "__init__.py").read_text()[:8192]
+    # Hermes scans for these literal strings to classify the dir:
+    assert "register_memory_provider" in init_src or "MemoryProvider" in init_src
+
+    yaml_text = (shim / "plugin.yaml").read_text()
+    assert "name: agent-memory-os" in yaml_text
+    assert "description:" in yaml_text
+    assert "agent-memory-os" in yaml_text  # pip_dependencies restore path
+
+    # Idempotent: re-install refreshes without error.
+    report2 = hermes_plugin.install_shim(tmp_path)
+    assert report2["installed"] == report["installed"]
+
+
+def test_shim_loads_like_hermes_loader(hermes_plugin, tmp_path, monkeypatch):
+    """Load the shim the way Hermes's _load_provider_from_dir does:
+    import __init__.py, call register(collector), expect a provider."""
+    import importlib.util
+
+    hermes_plugin.install_shim(tmp_path)
+    init_file = tmp_path / "plugins" / "agent-memory-os" / "__init__.py"
+    spec = importlib.util.spec_from_file_location("_shim_under_test", init_file)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class Collector:
+        provider = None
+
+        def register_memory_provider(self, p):
+            self.provider = p
+
+    collector = Collector()
+    mod.register(collector)
+    assert isinstance(collector.provider, hermes_plugin.AgentMemoryOSProvider)
+
+
+def test_uninstall_shim(hermes_plugin, tmp_path):
+    hermes_plugin.install_shim(tmp_path)
+    assert hermes_plugin.uninstall_shim(tmp_path) is True
+    assert not (tmp_path / "plugins" / "agent-memory-os").exists()
+    assert hermes_plugin.uninstall_shim(tmp_path) is False  # already gone
+
+
+def test_cli_hermes_install_roundtrip(hermes_plugin, tmp_path, capsys):
+    from agent_memory_os.cli import main
+
+    rc = main(["hermes", "install", "--hermes-home", str(tmp_path), "--json"])
+    assert rc == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["installed"].endswith("plugins/agent-memory-os")
+
+    rc = main(["hermes", "uninstall", "--hermes-home", str(tmp_path), "--json"])
+    assert rc == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["removed"] is True

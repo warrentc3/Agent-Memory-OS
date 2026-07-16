@@ -48,6 +48,21 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--profile-home", required=True, help="Hermes profile home containing memories/MEMORY.md and USER.md")
     imp.add_argument("--json", action="store_true", help="Emit JSON report")
 
+    hermes = sub.add_parser(
+        "hermes",
+        help="Install/remove the Hermes Agent memory-provider plugin shim",
+        description=(
+            "Registers AgentMemoryOS with NousResearch hermes-agent (v0.18+) by "
+            "writing a provider shim into $HERMES_HOME/plugins/agent-memory-os/, "
+            "so it appears in `hermes memory setup` / `hermes memory status`. "
+            "Idempotent — re-run after upgrades to refresh the version stamp."
+        ),
+    )
+    hermes.add_argument("action", choices=["install", "uninstall"])
+    hermes.add_argument("--hermes-home", default=None,
+                        help="Hermes home directory (default: $HERMES_HOME or ~/.hermes)")
+    hermes.add_argument("--json", action="store_true", help="Emit JSON report")
+
     imp2 = sub.add_parser("import", help="Import an export from another memory system (mem0/zep/chatgpt)")
     imp2.add_argument("--from", dest="source", required=True, choices=list(IMPORT_SOURCES),
                       help="Source system")
@@ -763,6 +778,28 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_backup(args)
     if args.command == "restore":
         return _cmd_restore(args)
+    if args.command == "hermes":
+        from .hermes_plugin import install_shim, shim_dir, uninstall_shim
+
+        if args.action == "install":
+            report = install_shim(args.hermes_home)
+            if args.json:
+                print(json.dumps(report, ensure_ascii=False, indent=2))
+            else:
+                print(f"Hermes provider shim installed: {report['installed']} "
+                      f"(agent-memory-os {report['version']})")
+                print("Next steps:")
+                for step in report["next_steps"]:
+                    print(f"  {step}")
+        else:
+            removed = uninstall_shim(args.hermes_home)
+            target = shim_dir(args.hermes_home)
+            if args.json:
+                print(json.dumps({"removed": removed, "path": str(target)}))
+            else:
+                print(f"{'Removed' if removed else 'Nothing to remove at'} {target}")
+        return 0
+
     if args.command == "shadow-summary":
         summary = summarize_shadow_log(args.log, last_n=args.last)
         if args.json:

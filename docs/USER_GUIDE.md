@@ -75,6 +75,7 @@ Global flag: `--home <dir>`.
 | `sync auto` | Converge with every registered peer. |
 | `sync genkey` | Generate + store a mesh encryption key (`<home>/sync_key`); set the same `AGENT_MEMORY_SYNC_KEY` on every node to encrypt bundle content on the wire. Needs the `secure-sync` extra. |
 | `import-hermes --profile --profile-home` | Import Hermes `MEMORY.md`/`USER.md` (idempotent). |
+| `hermes install\|uninstall [--hermes-home]` | Register/remove the Hermes Agent memory-provider shim so `hermes memory setup\|status` can see AgentMemoryOS. See [docs/integrations/hermes-agent.md](integrations/hermes-agent.md). |
 | `import --from mem0\|zep\|chatgpt <file> [--owner --visibility --type]` | Import an export from another memory system (idempotent; private by default). See [docs/IMPORTERS.md](IMPORTERS.md). |
 | `golden-recall --cases <file>` | Recall-quality evaluation gate. |
 | `shadow-summary --log <jsonl>` | Shadow-mode evidence summary. |

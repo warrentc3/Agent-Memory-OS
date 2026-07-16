@@ -510,3 +510,91 @@ def register(ctx: Any) -> None:
         )
         return
     ctx.register_memory_provider(AgentMemoryOSProvider())
+
+
+# ---------------------------------------------------------------------------
+# `agent-memory hermes install` — materialize the provider for `hermes memory`
+# ---------------------------------------------------------------------------
+# Hermes's `hermes memory setup|status` picker discovers providers ONLY from
+# directories (bundled plugins/memory/ and $HERMES_HOME/plugins/), never from
+# pip entry points. So a plain pip install is invisible to `hermes memory`
+# until this shim directory exists. The shim just re-exports register() from
+# the installed package; the implementation stays here and upgrades with pip.
+
+# NOTE: the __init__.py body must literally contain the strings
+# "register_memory_provider"/"MemoryProvider" — Hermes's
+# _is_memory_provider_dir() heuristic text-scans for them.
+_SHIM_INIT = '''"""AgentMemoryOS memory provider for Hermes Agent (shim).
+
+Thin loader: the real MemoryProvider implementation lives in the installed
+`agent-memory-os` pip package (agent_memory_os.hermes_plugin) and upgrades
+with it. Installed by `agent-memory hermes install`; safe to delete.
+"""
+
+
+def register(ctx):
+    from agent_memory_os.hermes_plugin import AgentMemoryOSProvider
+
+    ctx.register_memory_provider(AgentMemoryOSProvider())
+'''
+
+_SHIM_YAML = """name: agent-memory-os
+version: "{version}"
+description: "AgentMemoryOS — local-first team memory: ACL-scoped recall (private/team/project), no API key, no LLM, one SQLite file; shared with MCP agents like Claude Code/Codex."
+pip_dependencies:
+  - agent-memory-os
+"""
+
+
+def _default_hermes_home() -> Path:
+    return Path(os.environ.get("HERMES_HOME") or "~/.hermes").expanduser()
+
+
+def shim_dir(hermes_home: str | os.PathLike[str] | None = None) -> Path:
+    base = Path(hermes_home).expanduser() if hermes_home else _default_hermes_home()
+    return base / "plugins" / PROVIDER_NAME
+
+
+def install_shim(hermes_home: str | os.PathLike[str] | None = None) -> Dict[str, Any]:
+    """Write the provider shim into `$HERMES_HOME/plugins/agent-memory-os/`.
+
+    Idempotent: re-running refreshes the files (e.g. after a pip upgrade
+    bumps the version stamped into plugin.yaml).
+    """
+    try:
+        from importlib.metadata import version as _pkg_version
+        version = _pkg_version("agent-memory-os")
+    except Exception:  # noqa: BLE001 - editable/dev installs
+        version = "0.0.0+dev"
+
+    target = shim_dir(hermes_home)
+    target.mkdir(parents=True, exist_ok=True)
+    (target / "__init__.py").write_text(_SHIM_INIT, encoding="utf-8")
+    (target / "plugin.yaml").write_text(
+        _SHIM_YAML.format(version=version), encoding="utf-8",
+    )
+    return {
+        "installed": str(target),
+        "version": version,
+        "next_steps": [
+            "hermes memory setup agent-memory-os   # or: hermes memory setup",
+            "hermes memory status",
+        ],
+    }
+
+
+def uninstall_shim(hermes_home: str | os.PathLike[str] | None = None) -> bool:
+    """Remove the shim directory. Returns True if something was removed."""
+    target = shim_dir(hermes_home)
+    if not target.is_dir():
+        return False
+    for name in ("__init__.py", "plugin.yaml"):
+        try:
+            (target / name).unlink(missing_ok=True)
+        except OSError:
+            pass
+    try:
+        target.rmdir()  # only removes if empty — never clobbers user files
+    except OSError:
+        pass
+    return True

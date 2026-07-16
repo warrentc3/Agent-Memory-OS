@@ -21,6 +21,12 @@ tagged on GitHub/GitLab.
   store with private/team/project boundaries intact. Cron/subagent contexts
   are read-only; provider failures degrade to "no memory this turn".
   See `docs/integrations/hermes-agent.md`.
+- **`agent-memory hermes install`.** Hermes's `hermes memory setup|status`
+  picker only discovers providers from plugin *directories*, so a pip install
+  alone is invisible to it. The new command writes a two-file shim into
+  `$HERMES_HOME/plugins/agent-memory-os/` (idempotent; `uninstall` removes
+  it); the shim re-exports the provider from the installed package, so pip
+  upgrades keep applying. After install: `hermes memory setup agent-memory-os`.
 
 ## [1.1.0] — 2026-07-14
 
