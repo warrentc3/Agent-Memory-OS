@@ -4,6 +4,24 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.2.0] — 2026-07-15
+
+- **Native Hermes Agent memory-provider plugin.** `pip install agent-memory-os`
+  inside a [NousResearch Hermes Agent](https://github.com/NousResearch/hermes-agent)
+  (v0.18+) environment now exposes an `agent-memory-os` plugin (discovered via
+  the `hermes_agent.plugins` entry point). Enable it and set
+  `memory.provider: agent-memory-os` and Hermes gets: automatic ACL-filtered
+  recall injected every turn (`prefetch`), `amos_search` / `amos_add` /
+  `amos_share` tools (with team/project/global sharing), idempotent mirroring
+  of built-in MEMORY.md/USER.md writes, subagent-delegation capture, and
+  `hermes backup` coverage of the store. Local-first: no API key, no LLM, no
+  network — `is_available()` is true the moment the package is installed.
+  Profiles map to ACL identities automatically (`hermes-<profile>`), so
+  multiple Hermes profiles and MCP agents (Claude Code, Codex) share one
+  store with private/team/project boundaries intact. Cron/subagent contexts
+  are read-only; provider failures degrade to "no memory this turn".
+  See `docs/integrations/hermes-agent.md`.
+
 ## [1.1.0] — 2026-07-14
 
 - **Encrypted federation transport (app-layer).** When a shared mesh key is

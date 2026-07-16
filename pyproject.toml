@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-memory-os"
-version = "1.1.0"
+version = "1.2.0"
 description = "Local-first, MCP-native memory engine for AI agents with RAM cache and context-budgeted recall."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -30,6 +30,12 @@ dev = ["pytest>=8.0", "cryptography>=42"]
 agent-memory = "agent_memory_os.cli:main"
 agent-memory-web = "agent_memory_os.web_app:main"
 agent-memory-mcp = "agent_memory_os.mcp_server:main"
+
+# Discovered by NousResearch hermes-agent (>=0.18) as a memory-provider
+# plugin: `pip install agent-memory-os` inside the Hermes env, enable in
+# `hermes plugins`, then set `memory.provider: agent-memory-os`.
+[project.entry-points."hermes_agent.plugins"]
+agent-memory-os = "agent_memory_os.hermes_plugin"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
