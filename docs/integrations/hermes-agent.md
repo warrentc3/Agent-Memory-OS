@@ -2,7 +2,9 @@
 
 AgentMemoryOS ships a native **memory-provider plugin** for
 [NousResearch Hermes Agent](https://github.com/NousResearch/hermes-agent)
-(v0.18+). Installed in the Hermes environment, it plugs into Hermes's
+(implemented against the v0.18 `MemoryProvider` contract; verified end-to-end
+on the official Docker image back to v0.12). Installed in the Hermes
+environment, it plugs into Hermes's
 `MemoryProvider` interface: relevant memories are recalled into context
 automatically every turn, durable facts are saved through `amos_*` tools, and
 Hermes's built-in MEMORY.md writes are mirrored into the store.
