@@ -51,6 +51,16 @@ Governance rules:
 - `agent-memory-mcp` console entry point (zero-install `uvx` runs; MCP-directory
   listings such as Smithery).
 
+## Shipped — v1.3 (multi-account hosts)
+
+- **`status`** — host service state + live per-peer detail; **`neighbors`** —
+  same-host node discovery over unauthenticated `/healthz` (find ≠ join).
+- **Pairing**: `team invite <team>` one-time codes → `join <code> --url …`
+  swaps sync-scoped tokens both ways, team-scoped peers, mesh-key install,
+  first sync. Redeem endpoint is code-authenticated and payload-encrypted.
+- **Windows per-account task names** (machine-global namespace) and
+  **`service install` port persistence** into instance.toml.
+
 ## Shipped — v1.2 (Hermes Agent native memory provider)
 
 - **hermes-agent MemoryProvider plugin**: per-turn ACL-filtered recall

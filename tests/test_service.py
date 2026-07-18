@@ -42,7 +42,10 @@ def test_schtasks_command_is_onlogon(config):
     command = build_schtasks_create(config)
 
     assert command[:2] == ["schtasks", "/Create"]
-    assert SERVICE_NAME in command
+    # Task names are machine-global on Windows, so the name is per-account
+    # (SERVICE_NAME plus a username suffix) — never the bare SERVICE_NAME.
+    task_name = command[command.index("/TN") + 1]
+    assert task_name.startswith(f"{SERVICE_NAME}-") and task_name != SERVICE_NAME
     assert "/SC" in command and command[command.index("/SC") + 1] == "ONLOGON"
     task_run = command[command.index("/TR") + 1]
     assert "agent_memory_os.web_app" in task_run

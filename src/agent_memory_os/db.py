@@ -10,6 +10,7 @@ import math
 import re
 import sqlite3
 import time
+import uuid
 
 from .candidates import Candidate, CandidateProvider
 from .schema import (
@@ -427,6 +428,27 @@ def _migration_acl_clock(conn: sqlite3.Connection) -> None:
         conn.execute("UPDATE memories SET acl_updated_at = updated_at WHERE acl_updated_at IS NULL")
 
 
+def _migration_pairing_invites(conn: sqlite3.Connection) -> None:
+    # One-time pairing codes for the same-host / cross-node "join a team"
+    # flow. Only a SHA-256 hash of the code is stored — the plaintext code is
+    # shown once to the operator and is the sole credential for redemption.
+    # Single-use (used_at) with a TTL (expires_at); consumption is atomic via
+    # a conditional UPDATE so two concurrent redeems cannot both win.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pairing_invites (
+          id TEXT PRIMARY KEY,
+          code_hash TEXT NOT NULL UNIQUE,
+          team_id TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          used_at TEXT,
+          redeemed_by TEXT
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -443,6 +465,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (13, "first-class teams and projects with membership", _migration_teams_projects),
     (14, "federate org structure: versioning + tombstones + audit", _migration_org_federation),
     (15, "acl clock so share/revoke propagate over sync", _migration_acl_clock),
+    (16, "one-time pairing invites for team join", _migration_pairing_invites),
 ]
 
 
@@ -1462,6 +1485,52 @@ class MemoryStore:
             "SELECT token FROM sync_peers WHERE url = ?", (url.strip().rstrip("/"),)
         ).fetchone()
         return row["token"] if row else None
+
+    # ------------------------------------------------------------------ #
+    # Pairing invites (one-time team-join codes; only the hash is stored)
+    # ------------------------------------------------------------------ #
+
+    def create_pairing_invite(
+        self, team_id: str, code_hash: str, *, ttl_seconds: int = 600
+    ) -> dict[str, object]:
+        if not self.get_team(team_id):
+            raise ValueError(f"unknown team: {team_id}")
+        if ttl_seconds <= 0:
+            raise ValueError("ttl_seconds must be positive")
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=ttl_seconds)
+        invite_id = "inv_" + uuid.uuid4().hex[:16]
+        self.conn.execute(
+            "INSERT INTO pairing_invites (id, code_hash, team_id, created_at, expires_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (invite_id, code_hash, team_id,
+             now.isoformat(timespec="seconds"), expires.isoformat(timespec="seconds")),
+        )
+        self.conn.commit()
+        return {"id": invite_id, "team_id": team_id,
+                "expires_at": expires.isoformat(timespec="seconds")}
+
+    def consume_pairing_invite(self, code_hash: str, *, redeemed_by: str) -> dict[str, object] | None:
+        """Atomically redeem an invite: valid, unexpired, unused → mark used.
+
+        The conditional UPDATE is the concurrency gate — two racing redeems
+        of the same code cannot both see rowcount 1. Returns the invite's
+        team_id on success, None for unknown/expired/already-used codes
+        (indistinguishable to the caller, on purpose).
+        """
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        cursor = self.conn.execute(
+            "UPDATE pairing_invites SET used_at = ?, redeemed_by = ?"
+            " WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?",
+            (now, redeemed_by, code_hash, now),
+        )
+        self.conn.commit()
+        if cursor.rowcount != 1:
+            return None
+        row = self.conn.execute(
+            "SELECT id, team_id FROM pairing_invites WHERE code_hash = ?", (code_hash,)
+        ).fetchone()
+        return {"id": row["id"], "team_id": row["team_id"]} if row else None
 
     def record_peer_sync(self, url: str, result: str) -> None:
         self.conn.execute(

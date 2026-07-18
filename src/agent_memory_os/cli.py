@@ -152,10 +152,46 @@ def build_parser() -> argparse.ArgumentParser:
     node.add_argument("--set-port", type=int, default=None, help="Set the Web UI port")
 
     team = sub.add_parser("team", help="Manage teams and their node members")
-    team.add_argument("action", choices=["list", "create", "delete", "add-member", "remove-member"])
+    team.add_argument("action", choices=["list", "create", "delete", "add-member", "remove-member", "invite"])
     team.add_argument("team_id", nargs="?", default=None)
     team.add_argument("agent_id", nargs="?", default=None)
     team.add_argument("--name", default="", help="Display name (create)")
+    team.add_argument("--ttl", type=int, default=600,
+                      help="invite: pairing-code lifetime in seconds (default 600)")
+
+    join = sub.add_parser(
+        "join",
+        help="Join another node's team with a pairing code (see: team invite)",
+        description=(
+            "Redeem a one-time pairing code issued by another node's "
+            "'agent-memory team invite <team>'. Exchanges sync-scoped tokens "
+            "both ways, registers team-scoped peers, installs the mesh sync "
+            "key if the inviter uses one, and runs a first sync."
+        ),
+    )
+    join.add_argument("code", help="Pairing code (amos_join_…)")
+    join.add_argument("--url", required=True, help="The inviting node's console URL, e.g. http://127.0.0.1:8001")
+    join.add_argument("--agent-id", default=None,
+                      help="This node's agent identity (default: AGENT_MEMORY_AGENT_ID or node name)")
+    join.add_argument("--my-url", default=None,
+                      help="URL the inviter should sync back to (default: this node's host:port)")
+    join.add_argument("--no-sync", action="store_true", help="Skip the initial sync after joining")
+
+    status = sub.add_parser(
+        "status",
+        help="Show this host's service status and every connected node's state",
+    )
+    status.add_argument("--json", action="store_true", help="Emit JSON report")
+    status.add_argument("--no-probe", action="store_true",
+                        help="Skip live /healthz probes of peers (offline mode)")
+
+    neighbors = sub.add_parser(
+        "neighbors",
+        help="Discover other AgentMemoryOS nodes on this host (loopback scan)",
+    )
+    neighbors.add_argument("--json", action="store_true", help="Emit JSON report")
+    neighbors.add_argument("--ports", default=None,
+                           help="Port range to scan, e.g. 8000-8030 (default 8000-8020)")
 
     project = sub.add_parser("project", help="Manage projects under a team (members ⊆ team)")
     project.add_argument("action", choices=["list", "create", "delete", "add-member", "remove-member"])
@@ -182,6 +218,160 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+
+
+def _parse_port_range(spec: str | None):
+    if not spec:
+        return None
+    lo, _, hi = spec.partition("-")
+    return range(int(lo), int(hi or lo) + 1)
+
+
+def _cmd_neighbors(client, args) -> int:
+    """Loopback discovery: list other AMOS nodes on this host (see discovery.py)."""
+    from .discovery import scan_local_nodes
+    from .settings import load_instance_settings
+
+    settings = load_instance_settings(args.home)
+    nodes = scan_local_nodes(
+        ports=_parse_port_range(args.ports),
+        exclude_ports={settings.port},
+    )
+    if args.json:
+        print(json.dumps([n.as_dict() for n in nodes], ensure_ascii=False, indent=2))
+        return 0
+    if not nodes:
+        print("no other AgentMemoryOS nodes found on this host (scanned loopback ports)")
+        return 0
+    print(f"found {len(nodes)} node(s) on this host:")
+    for n in nodes:
+        print(f"  {n.node_name or '(unnamed)':24} {n.url}  status={n.status}")
+    print("\nTo share memory with one of them (explicit consent required):")
+    print("  on that node:  agent-memory team invite <team>")
+    print("  on this node:  agent-memory join <code> --url <that url>")
+    return 0
+
+
+def _cmd_status(client, args) -> int:
+    """This host's service state + every connected node's live state."""
+    import importlib.metadata as _md
+
+    from . import service as svc
+    from .discovery import probe_node
+    from .pidfile import read_web_pidfile
+    from .settings import load_instance_settings
+
+    settings = load_instance_settings(args.home)
+    console_url = f"http://{settings.host}:{settings.port}"
+
+    local: dict = {
+        "node_name": client.node_name,
+        "version": _md.version("agent-memory-os"),
+        "home": str(Path(args.home).expanduser()) if args.home else None,
+        "console_url": console_url,
+        "service": svc.status_info(),
+        "web": None,
+        "pid": None,
+        "stats": client.stats(),
+    }
+    pid_info = read_web_pidfile(args.home)
+    if pid_info:
+        local["pid"] = pid_info.get("pid")
+    if not args.no_probe:
+        local["web"] = probe_node(console_url).as_dict()
+
+    peers = client.store.list_peers()
+    peer_rows = []
+    for peer in peers:
+        row = dict(peer)
+        if not args.no_probe:
+            probe = probe_node(str(peer["url"]))
+            row["online"] = probe.is_amos
+            row["remote_node"] = probe.node_name
+            row["remote_status"] = probe.status
+        peer_rows.append(row)
+
+    report = {"local": local, "peers": peer_rows}
+    if args.json:
+        print(json.dumps(report, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    service_state = local["service"]
+    running = {True: "running", False: "stopped", None: "unknown"}[service_state["running"]]
+    web = local["web"] or {}
+    print(f"Node {local['node_name']}  (agent-memory-os {local['version']})")
+    if web.get("is_amos") and web.get("node_name") not in ("", local["node_name"]):
+        console_state = (f"⚠ answered by a DIFFERENT node ({web['node_name']}) — "
+                         "another instance owns this port; set a distinct port in instance.toml")
+    elif web.get("is_amos"):
+        console_state = "reachable"
+    else:
+        console_state = "not responding"
+    print(f"  console   {console_url}  {console_state}")
+    print(f"  service   {'installed' if service_state['installed'] else 'not installed'}"
+          f" / {running}  [{service_state['platform']}]")
+    if local["pid"]:
+        print(f"  pid       {local['pid']}")
+    stats = local["stats"] or {}
+    if stats:
+        core = {k: stats[k] for k in ("total", "links") if k in stats}
+        if core:
+            print("  store     " + "  ".join(f"{k}={v}" for k, v in core.items()))
+    if not peer_rows:
+        print("  peers     none registered")
+        return 0
+    print(f"  peers     {len(peer_rows)} registered")
+    for row in peer_rows:
+        if args.no_probe:
+            state = "?"
+        else:
+            state = "online" if row.get("online") else "offline"
+        name = row.get("name") or row.get("remote_node") or "(unnamed)"
+        last = row.get("last_synced_at") or "never"
+        print(f"    {state:7} {name:24} {row['url']}")
+        print(f"            policy={row['policy']}  token={'yes' if row['has_token'] else 'no'}"
+              f"  last_synced={last}  last_result={row.get('last_result') or '-'}")
+    return 0
+
+
+def _cmd_join(client, args) -> int:
+    import os
+
+    from .pairing import join_with_code
+    from .settings import load_instance_settings
+    from .sync import sync_with_peer
+
+    settings = load_instance_settings(args.home)
+    agent_id = (args.agent_id or os.getenv("AGENT_MEMORY_AGENT_ID")
+                or settings.node_name)
+    my_url = args.my_url or f"http://{settings.host}:{settings.port}"
+    try:
+        report = join_with_code(
+            client, args.code, args.url,
+            agent_id=agent_id, my_url=my_url,
+            node_name=settings.node_name, home=args.home,
+        )
+    except ValueError as exc:
+        print(f"error: {exc}")
+        return 2
+    print(f"joined team {report['team_id']} — peer "
+          f"{report['peer_name'] or report['peer_url']} registered (policy=team:{report['team_id']})")
+    if report["sync_key_installed"]:
+        print("mesh sync key installed — sync payloads will be encrypted")
+    if not args.no_sync:
+        try:
+            summary = sync_with_peer(
+                client, report["peer_url"],
+                peer_token=client.store.peer_token(report["peer_url"]),
+                policy=f"team:{report['team_id']}",
+            )
+            print(f"initial sync: {summary}")
+        except Exception as exc:  # noqa: BLE001 - join succeeded; sync is best-effort
+            print(f"initial sync failed (retry with: agent-memory sync auto): {exc}")
+    return 0
+
+
+
 def _cmd_service(args) -> int:
     from . import service as svc
     from .settings import load_instance_settings
@@ -189,6 +379,20 @@ def _cmd_service(args) -> int:
     settings = load_instance_settings(args.home)
     host = args.host or settings.host
     port = args.port if args.port is not None else settings.port
+    if args.action == "install" and args.port is None:
+        # Multi-account hosts: if another instance (another account's console)
+        # already holds this port, silently baking it into the unit would make
+        # the two services race at login. Pick the next free port and PERSIST
+        # it to instance.toml so this account's unit and peer URLs stay stable.
+        from .settings import find_available_port, update_instance_settings
+
+        chosen = find_available_port(host, port)
+        if chosen != port:
+            print(f"port {port} is taken on this host — using {chosen} "
+                  f"(persisted to instance.toml)")
+            port = chosen
+            if not args.dry_run:
+                update_instance_settings(args.home, port=port)
     config = svc.make_config(args.home, host, port)
     if args.action == "install":
         actions = svc.install(config, dry_run=args.dry_run)
@@ -321,6 +525,19 @@ def _cmd_doctor(args) -> int:
         return 1
     if not fts_ok:
         return 1
+    # Same-host awareness: other accounts' nodes are worth knowing about.
+    try:
+        from .discovery import scan_local_nodes
+        from .settings import load_instance_settings
+
+        others = scan_local_nodes(
+            exclude_ports={load_instance_settings(args.home).port})
+        if others:
+            names = ", ".join(f"{n.node_name} ({n.url})" for n in others[:3])
+            print(f"[info] {len(others)} other AgentMemoryOS node(s) on this host: {names}")
+            print("       to share memory: agent-memory neighbors  →  team invite / join")
+    except Exception:  # noqa: BLE001 - a hint must never fail doctor
+        pass
     print("all good.")
     return 0
 
@@ -833,8 +1050,30 @@ def main(argv: list[str] | None = None) -> int:
                 "node_name": settings.node_name, "host": settings.host, "port": settings.port,
             }, ensure_ascii=False, indent=2))
             return 0
+        if args.command == "join":
+            return _cmd_join(client, args)
+
+        if args.command == "status":
+            return _cmd_status(client, args)
+
+        if args.command == "neighbors":
+            return _cmd_neighbors(client, args)
+
         if args.command == "team":
             s = client.store
+            if args.action == "invite":
+                from .pairing import issue_invite
+                if not args.team_id:
+                    print("team invite requires a team id"); return 2
+                try:
+                    invite = issue_invite(client, args.team_id, ttl_seconds=args.ttl)
+                except ValueError as exc:
+                    print(f"error: {exc}"); return 2
+                print(f"pairing code (single-use, expires {invite['expires_at']}):")
+                print(f"\n  {invite['code']}\n")
+                print("On the joining node run:")
+                print(f"  agent-memory join {invite['code']} --url http://<this-host>:<this-port>")
+                return 0
             if args.action == "list":
                 print(json.dumps(s.list_teams(), ensure_ascii=False, indent=2))
             elif args.action == "create":

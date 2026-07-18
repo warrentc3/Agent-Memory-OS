@@ -4,6 +4,42 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.3.0] — 2026-07-18
+
+Multi-account hosts: several OS accounts on one machine, each with its own
+store and console, discovering each other and sharing team memory with
+explicit consent.
+
+- **`agent-memory status`.** One view of this host and every connected node:
+  login-service state (launchd/systemd/Task Scheduler), console reachability
+  (with a warning when the port is answered by a DIFFERENT node), pid, store
+  totals, and per-peer live state (online/offline via `/healthz`, policy,
+  token presence, last_synced/last_result). `--json` for scripts.
+- **`agent-memory neighbors`.** Same-host discovery: scans loopback ports for
+  other AgentMemoryOS consoles via the unauthenticated `/healthz` (node name
+  only — never memory data). `doctor` prints a hint when neighbors exist.
+- **`agent-memory team invite <team>` / `agent-memory join <code> --url …`.**
+  One-time pairing codes replace hand-carrying tokens and the mesh key: the
+  invite (hash-only at rest, TTL, atomically single-use) is redeemed at the
+  new `POST /api/pairing/redeem` endpoint — the only route exempt from bearer
+  auth, because the code IS the credential and both payload directions are
+  encrypted under it (same authenticated Fernet as sync bundles). The
+  exchange swaps sync-scoped tokens both ways, registers team-scoped peers on
+  both nodes, adds the joiner to the team, installs the inviter's mesh sync
+  key (refusing mismatched meshes), and runs a first sync. Discovery never
+  grants access — joining always requires a code from the other operator.
+- **Windows service names are per-account.** Task Scheduler names are
+  machine-global (unlike per-user launchd/systemd units), so two accounts
+  installing the service overwrote each other; tasks are now
+  `agent-memory-web-<username>` (uninstall also removes the legacy bare name).
+- **`service install` picks and persists a free port.** If another instance
+  already holds the configured port, install chooses the next free one and
+  writes it to `instance.toml`, so login services from several accounts stop
+  racing for port 8000 and peer URLs stay stable.
+- `sync_with_peer` now records `last_synced/last_result` on the peer for every
+  sync path (previously only the mesh loop did), so `status` is accurate.
+- Migration 16: `pairing_invites` table.
+
 ## [1.2.0] — 2026-07-15
 
 - **Native Hermes Agent memory-provider plugin.** `pip install agent-memory-os`

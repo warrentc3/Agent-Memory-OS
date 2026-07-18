@@ -259,6 +259,10 @@ ACL. Ship one project's shared memory to another host with
 agent-memory token create --sync           # prints amos_sync_… (federation routes only)
 
 # one-time, on the joining host
+# easiest: pairing (one command on each side — tokens/mesh key exchanged for you)
+#   on the existing node:  agent-memory team invite apollo
+#   on the joining node:   agent-memory join <code> --url http://that-node:8000
+# or wire a peer by hand:
 agent-memory peers add https://other-host:8000 --peer-token <their sync token>
 
 # converge with every registered peer (pull + push, deterministic merges)

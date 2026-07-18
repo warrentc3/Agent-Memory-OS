@@ -25,6 +25,35 @@ SERVICE_LABEL = "com.agent-memory-os.web"
 SERVICE_NAME = "agent-memory-web"
 
 
+def _sanitized_username() -> str:
+    import getpass
+    import re as _re
+
+    try:
+        raw = getpass.getuser()
+    except Exception:  # noqa: BLE001 - no login database, etc.
+        raw = "user"
+    clean = _re.sub(r"[^A-Za-z0-9_-]+", "-", raw).strip("-")
+    return clean or "user"
+
+
+def windows_task_name() -> str:
+    """Per-account Task Scheduler name.
+
+    Unlike launchd LaunchAgents and systemd user units — which live in the
+    account's own domain, so every account can use the same name — Windows
+    Task Scheduler names in the root folder are MACHINE-GLOBAL. Two accounts
+    installing plain "agent-memory-web" would silently overwrite each other
+    (`/Create /F` replaces the task, changing which user it runs as). The
+    username suffix keeps each account's task distinct.
+    """
+    return f"{SERVICE_NAME}-{_sanitized_username()}"
+
+
+# Pre-suffix installs used the bare name; uninstall keeps removing it too.
+LEGACY_WINDOWS_TASK_NAME = SERVICE_NAME
+
+
 @dataclass
 class ServiceConfig:
     home: Path
@@ -80,7 +109,7 @@ def build_schtasks_create(config: ServiceConfig) -> list[str]:
         [f'"{launcher}"'] + [f'"{part}"' if " " in part else part for part in config.arguments[1:]]
     )
     return [
-        "schtasks", "/Create", "/TN", SERVICE_NAME, "/TR", command,
+        "schtasks", "/Create", "/TN", windows_task_name(), "/TR", command,
         "/SC", "ONLOGON", "/F",
     ]
 
@@ -130,7 +159,7 @@ def install(config: ServiceConfig, *, platform: str = sys.platform, dry_run: boo
         actions.append("hint: loginctl enable-linger $USER  # start at boot without login")
     elif platform == "win32":
         create = build_schtasks_create(config)
-        run_now = ["schtasks", "/Run", "/TN", SERVICE_NAME]
+        run_now = ["schtasks", "/Run", "/TN", windows_task_name()]
         for command in (create, run_now):
             actions.append(" ".join(command))
             if not dry_run:
@@ -149,7 +178,11 @@ def uninstall(*, platform: str = sys.platform, dry_run: bool = False) -> list[st
         commands = [["systemctl", "--user", "disable", "--now", f"{SERVICE_NAME}.service"]]
         path = _unit_path(platform)
     elif platform == "win32":
-        commands = [["schtasks", "/Delete", "/TN", SERVICE_NAME, "/F"]]
+        commands = [
+            ["schtasks", "/Delete", "/TN", windows_task_name(), "/F"],
+            # Installs made before the per-account suffix used the bare name.
+            ["schtasks", "/Delete", "/TN", LEGACY_WINDOWS_TASK_NAME, "/F"],
+        ]
         path = None
     else:
         raise RuntimeError(f"unsupported platform: {platform}")
@@ -182,9 +215,9 @@ def control(action: str, *, platform: str = sys.platform) -> subprocess.Complete
         }
     elif platform == "win32":
         commands = {
-            "start": ["schtasks", "/Run", "/TN", SERVICE_NAME],
-            "stop": ["schtasks", "/End", "/TN", SERVICE_NAME],
-            "status": ["schtasks", "/Query", "/TN", SERVICE_NAME],
+            "start": ["schtasks", "/Run", "/TN", windows_task_name()],
+            "stop": ["schtasks", "/End", "/TN", windows_task_name()],
+            "status": ["schtasks", "/Query", "/TN", windows_task_name()],
         }
         if action == "restart":
             _run(commands["stop"])
@@ -204,3 +237,42 @@ def _uid() -> int:
     # os.getuid does not exist on Windows; only reachable there in dry-run
     # previews of the darwin flow, where any stable placeholder is fine.
     return os.getuid() if hasattr(os, "getuid") else 0
+
+
+def status_info(*, platform: str = sys.platform) -> dict:
+    """Structured install/run state of this account's Web UI service.
+
+    Never raises: on hosts without the service manager available the fields
+    degrade to installed=False / running=None with the error in `detail`.
+    """
+    info: dict = {"platform": platform, "installed": False, "running": None,
+                  "unit": None, "detail": ""}
+    try:
+        if platform == "darwin":
+            path = _unit_path(platform)
+            info["unit"] = str(path)
+            info["installed"] = path.exists()
+            result = _run(["launchctl", "print", f"gui/{_uid()}/{SERVICE_LABEL}"])
+            info["running"] = result.returncode == 0 and "state = running" in (result.stdout or "")
+            if result.returncode != 0:
+                info["detail"] = (result.stderr or "").strip()[:200]
+        elif platform.startswith("linux"):
+            path = _unit_path(platform)
+            info["unit"] = str(path)
+            info["installed"] = path.exists()
+            result = _run(["systemctl", "--user", "is-active", f"{SERVICE_NAME}.service"])
+            info["running"] = (result.stdout or "").strip() == "active"
+            info["detail"] = (result.stdout or result.stderr or "").strip()[:200]
+        elif platform == "win32":
+            task = windows_task_name()
+            info["unit"] = task
+            result = _run(["schtasks", "/Query", "/TN", task])
+            info["installed"] = result.returncode == 0
+            info["running"] = "Running" in (result.stdout or "") if result.returncode == 0 else None
+            if result.returncode != 0:
+                info["detail"] = (result.stderr or "").strip()[:200]
+        else:
+            info["detail"] = f"unsupported platform: {platform}"
+    except Exception as exc:  # noqa: BLE001 - status must never crash the CLI
+        info["detail"] = str(exc)
+    return info

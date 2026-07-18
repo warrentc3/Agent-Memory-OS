@@ -51,6 +51,14 @@ for the full model. The load-bearing points:
   or one you explicitly scoped to a team, can do damage within that scope. Only
   grant `full` to nodes you own.
 
+- **Pairing codes are bearer credentials for one join.** `team invite` codes
+  are single-use with a short TTL, stored hash-only, and the redeem exchange is
+  encrypted under the code — but anyone holding an unexpired code can join
+  that one team and receive a sync token and the mesh key. Share codes over a
+  channel you trust and mint them just-in-time. The redeem endpoint
+  (`POST /api/pairing/redeem`) is the only API route exempt from bearer auth
+  and grants nothing without a valid code.
+
 - **Peer transport: content encryption is available; protect the token with
   TLS.** Set a shared mesh key (`agent-memory sync genkey`, distributed as
   `AGENT_MEMORY_SYNC_KEY` on every node) and sync bundles are encrypted

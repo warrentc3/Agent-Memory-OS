@@ -561,3 +561,36 @@ through the ACL-scoped store with no key, no LLM, and no network.
   the pip package, so upgrades apply without touching the shim. The
   `hermes_agent.plugins` entry point is also declared for runtime plugin
   discovery.
+
+
+## v1.3 Multi-account hosts: discovery, pairing, and status
+
+Several OS accounts on one machine each run their own node; v1.3 makes them
+aware of each other and able to share team memory with explicit consent —
+without weakening the boundary that separate accounts ARE separate trust
+domains.
+
+- **Discovery ≠ access**: `agent-memory neighbors` (and a `doctor` hint) scan
+  loopback ports with the unauthenticated `/healthz`, which reveals only node
+  name and integrity — never memory. Seeing a node grants nothing.
+- **Pairing invites** (migration 16, `pairing_invites`): `team invite <team>`
+  mints a single-use TTL code (hash-only at rest). `join <code> --url …`
+  redeems it at `POST /api/pairing/redeem` — the one bearer-auth-exempt API
+  route, because the code is the credential; request and response bodies are
+  encrypted under the code with the same authenticated Fernet used for sync
+  bundles, keeping both sides' sync tokens and the mesh key out of logs. The
+  exchange is symmetric: each node ends with a `team:<id>`-scoped peer entry
+  and the other's SYNC-tier token (minted on demand — never admin); the
+  joiner is added to the team; the inviter's mesh key is installed (mismatched
+  meshes are refused); a first sync converges org structure and team memory.
+  A redeem that mints the running console's first sync token hot-rebinds the
+  auth middleware so the joiner's first sync doesn't 401.
+- **Service collision fixes**: Windows Task Scheduler names are machine-global
+  (launchd/systemd user units are not), so tasks are now per-account
+  (`agent-memory-web-<username>`; uninstall also clears the legacy bare name).
+  `service install` probes the configured port and, if another instance holds
+  it, picks the next free port and persists it to `instance.toml`.
+- **Operability**: `agent-memory status` reports service state, console
+  reachability (flagging when the port answers as a DIFFERENT node), store
+  totals, and live per-peer state; `sync_with_peer` now records
+  last_synced/last_result on every path.

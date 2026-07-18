@@ -216,6 +216,10 @@ teams = ["apollo", "ops"]
 agent-memory token create --sync            # 印出 amos_sync_…(只授權聯邦路由)
 
 # 在加入方主機一次性設定
+# 最簡單:配對(兩邊各一個指令,token 與 mesh key 自動交換)
+#   既有節點:  agent-memory team invite apollo
+#   加入節點:  agent-memory join <配對碼> --url http://that-node:8000
+# 或手動接 peer:
 agent-memory peers add https://other-host:8000 --peer-token <他們的 sync token>
 
 # 與每個已註冊的 peer 收斂(pull + push,確定性合併)

@@ -166,6 +166,11 @@ class PeerRequest(BaseModel):
     name: str = ""
 
 
+class PairingRedeemRequest(BaseModel):
+    code: str = Field(min_length=12)
+    envelope: str = Field(min_length=8)
+
+
 class ShareRequest(BaseModel):
     actor: str = Field(min_length=1)
     to_agent: str | None = None
@@ -262,6 +267,13 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
 
         @app.middleware("http")
         async def require_token(request, call_next):
+            # Pairing redemption authenticates with the one-time invite code
+            # itself (the whole exchange is encrypted under it) — a joiner by
+            # definition has no bearer token yet. Everything else under /api/
+            # stays token-gated.
+            if (request.url.path == "/api/pairing/redeem"
+                    and request.method == "POST"):
+                return await call_next(request)
             if request.url.path.startswith("/api/"):
                 supplied = request.headers.get("authorization", "")
                 full = _authorizes(supplied, api_token) if api_token else False
@@ -693,6 +705,35 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/pairing/redeem")
+    def pairing_redeem(request: PairingRedeemRequest) -> dict[str, Any]:
+        """Redeem a one-time team-join invite (see pairing.py).
+
+        Deliberately exempt from bearer-token auth: the single-use code is
+        the credential, and the request/response bodies are encrypted under
+        it. All failures collapse to one opaque 403 so probing cannot
+        distinguish unknown, expired, and used codes.
+        """
+        nonlocal sync_token
+
+        from . import pairing
+
+        with lock:
+            try:
+                payload = pairing.redeem_invite(
+                    client, request.envelope, request.code,
+                    home=home, self_node_name=client.node_name,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=403, detail="pairing refused") from exc
+        # Redemption may have MINTED this node's first sync token; the auth
+        # middleware captured `sync_token` at startup, so rebind it now or the
+        # joiner's very first sync gets 401 until the console restarts.
+        minted = str(payload.get("sync_token") or "")
+        if minted and not sync_token:
+            sync_token = minted
+        return {"envelope": pairing.encrypt_payload(payload, request.code)}
 
     @app.delete("/api/peers")
     def peers_remove(url: str = Query(min_length=1)) -> dict[str, Any]:

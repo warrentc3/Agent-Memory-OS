@@ -63,6 +63,10 @@ Global flag: `--home <dir>`.
 | `service install\|uninstall\|start\|stop\|restart\|status [--host --port --dry-run]` | Native login service. |
 | `backup <dest> [--keep N]` / `restore <src> [--force]` | WAL-safe online backup / restore; `--keep N` rotates older backups (never the live DB). |
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
+| `status [--json] [--no-probe]` | This host + connected nodes: service state, console reachability, store totals, per-peer online/offline + policy/token/last-synced. |
+| `neighbors [--ports A-B]` | Discover other AgentMemoryOS nodes on this host (loopback `/healthz` scan; finding is not joining). |
+| `team invite <team> [--ttl s]` | Mint a one-time pairing code so another node can join this team. |
+| `join <code> --url <peer> [--agent-id] [--my-url]` | Redeem a pairing code: swaps sync-scoped tokens both ways, registers team-scoped peers, installs the mesh key, runs a first sync. |
 | `peers add\|remove\|list [url] [--peer-token] [--policy shared\|full\|team:<id>] [--name <n>]` | Federation peer registry; `--policy` scopes what syncs to the peer, `--name` labels it (auto-fetched if omitted). |
 | `node [--set-name <n>] [--set-host <h>] [--set-port <p>]` | Show or set this instance's sync identity and Web UI host/port (`<home>/instance.toml`). |
 | `team list\|create\|delete\|add-member\|remove-member [id] [agent] [--name]` | Manage teams and their node members. |

@@ -769,6 +769,14 @@ def sync_with_peer(client, url: str, *, peer_token: str | None = None,
         org_scope=_org_scope_for_policy(policy), lock=lock,
     )
     pushed = push_to_peer(client, url, peer_token=peer_token, policy=policy, lock=lock)
+    # Record on the registered peer (if any) so `agent-memory status` and the
+    # console show real last_synced/last_result for EVERY sync path — direct
+    # pull/push, join's first sync, and the mesh loop alike.
+    with _guard(lock):
+        client.store.record_peer_sync(
+            url,
+            f"ok +{pulled['memories_added']}/~{pulled['memories_updated']} pulled",
+        )
     return {"peer": url, "pulled": pulled, "pushed": pushed, "ok": True}
 
 
@@ -792,14 +800,10 @@ def sync_all_peers(client, *, lock=None) -> list[dict[str, object]]:
                 policy=peer.get("policy", "shared"),
                 lock=lock,
             )
-            summary = (
-                f"ok +{result['pulled']['memories_added']}/"
-                f"~{result['pulled']['memories_updated']} pulled"
-            )
         except Exception as exc:  # noqa: BLE001 - one unreachable peer must not stop the mesh
             result = {"peer": url, "ok": False, "error": str(exc)}
-            summary = f"error: {exc}"
-        client.store.record_peer_sync(url, summary)
+            # Successes are recorded inside sync_with_peer; only failures here.
+            client.store.record_peer_sync(url, f"error: {exc}")
         results.append(result)
     return results
 
