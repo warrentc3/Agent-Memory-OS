@@ -94,7 +94,10 @@ def test_web_api_agents_endpoints(tmp_path):
 
     web.post("/api/memories", json={"content": "Neo memory.", "owner": "neo", "visibility": []})
     listed = web.get("/api/agents").json()["agents"]
-    assert listed[0]["id"] == "neo" and listed[0]["memory_count"] == 1
+    # The registry also contains the auto-seeded node-default agent, so look
+    # neo up by id rather than by position.
+    neo = next(a for a in listed if a["id"] == "neo")
+    assert neo["memory_count"] == 1
 
     assert web.delete("/api/agents/neo").status_code == 200
     assert web.delete("/api/agents/neo").status_code == 404

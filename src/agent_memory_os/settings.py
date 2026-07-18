@@ -35,10 +35,28 @@ def settings_path(home: str | Path | None) -> Path:
 
 
 def default_node_name(home: str | Path | None) -> str:
-    """A stable, machine+home-derived name that disambiguates co-located instances."""
+    """A stable machine+account+home-derived name for co-located instances.
+
+    The OS username is part of the default because several accounts on one
+    machine all use the same default home basename ("agent-memory") — without
+    it every account's node advertised the same name to peers. The home
+    basename still disambiguates multiple instances within one account; it is
+    dropped when it's just the default, to keep names short.
+    """
+    import getpass
+
     host = socket.gethostname().split(".")[0] or "amos"
+    try:
+        user = getpass.getuser()
+    except Exception:  # noqa: BLE001 - no login database
+        user = ""
     base = resolve_home(home).name.lstrip(".") or "amos"
-    return f"{host}-{base}"
+    parts = [host]
+    if user and user.lower() not in host.lower():
+        parts.append(user)
+    if base != "agent-memory":
+        parts.append(base)
+    return "-".join(parts)
 
 
 @dataclass(slots=True)

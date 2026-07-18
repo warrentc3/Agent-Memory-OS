@@ -51,6 +51,13 @@ Governance rules:
 - `agent-memory-mcp` console entry point (zero-install `uvx` runs; MCP-directory
   listings such as Smithery).
 
+## Shipped — v1.4 (identity & fleet operability)
+
+- `agent rename` full-migration; node display names refresh over sync; default
+  node names include the account; WebUI/API node rename; member picker
+  free-text + seeding; `path install`; `update --team` (opt-in) + version in
+  `/healthz`; docs/DEPLOYMENT.md topologies.
+
 ## Shipped — v1.3 (multi-account hosts)
 
 - **`status`** — host service state + live per-peer detail; **`neighbors`** —

@@ -86,6 +86,8 @@ def probe_node(url: str, *, timeout: float = PROBE_TIMEOUT * 4) -> NodeProbe:
         probe.node_name = str(payload.get("node", ""))
         probe.status = str(payload.get("status", ""))
         probe.integrity = payload.get("integrity")
+        if payload.get("version"):
+            probe.extras["version"] = str(payload["version"])
     return probe
 
 

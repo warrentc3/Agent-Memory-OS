@@ -63,6 +63,8 @@ Global flag: `--home <dir>`.
 | `service install\|uninstall\|start\|stop\|restart\|status [--host --port --dry-run]` | Native login service. |
 | `backup <dest> [--keep N]` / `restore <src> [--force]` | WAL-safe online backup / restore; `--keep N` rotates older backups (never the live DB). |
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
+| `path show\|install` | Diagnose/fix "command not found": add the pip scripts dir to your shell PATH. |
+| `agent rename <old> <new>` | Migrate an agent identity everywhere (ownership, `agent:` grants, memberships, profiles). |
 | `status [--json] [--no-probe]` | This host + connected nodes: service state, console reachability, store totals, per-peer online/offline + policy/token/last-synced. |
 | `neighbors [--ports A-B]` | Discover other AgentMemoryOS nodes on this host (loopback `/healthz` scan; finding is not joining). |
 | `team invite <team> [--ttl s]` | Mint a one-time pairing code so another node can join this team. |
@@ -72,7 +74,7 @@ Global flag: `--home <dir>`.
 | `team list\|create\|delete\|add-member\|remove-member [id] [agent] [--name]` | Manage teams and their node members. |
 | `project list\|create\|delete\|add-member\|remove-member [id] [agent] [--team] [--name]` | Manage projects under a team (members ⊆ team). |
 | `maintenance scan\|orphans [--delete]\|reindex\|vacuum` | Ops: health scan, clean orphan memories (scoped to an empty group), rebuild the index, reclaim disk. |
-| `update [--check] [--yes] [--no-restart]` | Detect host/Docker deployment, check PyPI, upgrade (pip), then restart the running console; `--check` reports only, `--no-restart` skips the restart. |
+| `update [--check] [--yes] [--no-restart] [--team]` | Detect host/Docker deployment, check PyPI, upgrade (pip), then restart the running console; `--check` reports only. `--team` also triggers self-update on every peer that opted in (console started with `AGENT_MEMORY_ALLOW_TEAM_UPDATE=1`). |
 | `sync export <file> [--since --team]` | Write a bundle (optionally one project's memory). |
 | `sync import <file>` | Merge a bundle (last-writer-wins / strongest-wins). |
 | `sync pull\|push <peer-url> [--peer-token]` | One peer over HTTP(S). |

@@ -171,6 +171,15 @@ class PairingRedeemRequest(BaseModel):
     envelope: str = Field(min_length=8)
 
 
+class NodeUpdateRequest(BaseModel):
+    node_name: str = Field(min_length=1, max_length=80)
+
+
+class AgentRenameRequest(BaseModel):
+    old_id: str = Field(min_length=1)
+    new_id: str = Field(min_length=1)
+
+
 class ShareRequest(BaseModel):
     actor: str = Field(min_length=1)
     to_agent: str | None = None
@@ -223,6 +232,17 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     # because sync endpoints run in a threadpool.
     client = MemoryClient(home=home, check_same_thread=False)
     lock = threading.Lock()
+    # Close the first-run loop: with an empty agents registry the Teams tab's
+    # member picker had nothing to offer. Seed this node's own default agent
+    # identity (env AGENT_MEMORY_AGENT_ID, else the node name) so the very
+    # first install can add itself to a team.
+    try:
+        if not client.store.list_agents():
+            seed_id = os.getenv("AGENT_MEMORY_AGENT_ID") or client.node_name
+            client.store.register_agent(seed_id, display_name=client.node_name,
+                                        kind="custom")
+    except Exception:  # noqa: BLE001 - seeding must never block startup
+        pass
     # Resolution order: explicit --token > env > <home>/web_token created by
     # `agent-memory token create`.
     api_token = token or os.getenv("AGENT_MEMORY_WEB_TOKEN") or load_token(home)
@@ -263,6 +283,10 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 return method in safe_methods
             if path == "/api/sync/import":
                 return method == "POST"
+            if path == "/api/maintenance/update-run" and method == "POST":
+                # Team-wide updates: a peer's sync token may trigger THIS
+                # node's self-update only when the operator opted in.
+                return os.getenv("AGENT_MEMORY_ALLOW_TEAM_UPDATE", "").lower() in ("1", "true", "yes")
             return False
 
         @app.middleware("http")
@@ -304,8 +328,14 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         try:
             with lock:
                 ok = bool(client.integrity_check().get("ok", False))
+            try:
+                from importlib.metadata import version as _v
+                ver = _v("agent-memory-os")
+            except Exception:  # noqa: BLE001
+                ver = ""
             return JSONResponse({"status": "ok" if ok else "degraded",
-                                 "node": client.node_name, "integrity": ok},
+                                 "node": client.node_name, "integrity": ok,
+                                 "version": ver},
                                 status_code=200 if ok else 503)
         except Exception as exc:  # noqa: BLE001 - health must never raise
             return JSONResponse({"status": "error", "detail": str(exc)}, status_code=503)
@@ -357,6 +387,35 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             f"agentmemory_integrity_ok {1 if scan.get('schema_ok', True) else 0}",
         ]
         return Response("\n".join(lines) + "\n", media_type="text/plain; version=0.0.4")
+
+    @app.post("/api/node")
+    def node_update(request: NodeUpdateRequest) -> dict[str, Any]:
+        """Rename this node (persists to instance.toml, applies immediately).
+
+        Peers pick the new name up automatically on their next sync — display
+        names refresh from /api/node each cycle. Agent IDs are identities and
+        are NOT touched; use /api/agents/rename to migrate one.
+        """
+        from .settings import update_instance_settings
+
+        name = request.node_name.strip()
+        with lock:
+            update_instance_settings(home, node_name=name)
+            client.node_name = name
+            client.settings.node_name = name
+        return {"node_name": name}
+
+    @app.post("/api/agents/rename")
+    def agent_rename(request: AgentRenameRequest) -> dict[str, Any]:
+        """Migrate an agent identity everywhere: memory ownership, agent:<id>
+        ACL grants (ACL clock bumped so it propagates), team/project
+        membership, registry, and recall profiles — atomically."""
+        with lock:
+            try:
+                counts = client.store.rename_agent(request.old_id, request.new_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"old_id": request.old_id, "new_id": request.new_id, "changed": counts}
 
     @app.get("/api/node")
     def node_identity() -> dict[str, Any]:

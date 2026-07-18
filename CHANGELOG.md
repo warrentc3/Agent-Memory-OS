@@ -4,6 +4,38 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.4.0] — 2026-07-18
+
+Field-reported gaps from real multi-account use: identity vs display cleanup,
+first-run loop closure, PATH ergonomics, and fleet-wide updates.
+
+- **`agent-memory path show|install`.** pip's per-user script directory is
+  often not on PATH ("command not found" right after install); `path install`
+  appends the export to the right shell profile (zsh/bash/fish; prints the
+  `setx` command on Windows) and works via `python -m agent_memory_os.cli`
+  when the script itself is unreachable. `doctor` now warns about it.
+- **Default node names include the account.** Every account using the default
+  home used to advertise the SAME node name (host + "agent-memory"); the
+  default is now host + username (+ home basename when non-default). Nodes
+  with a persisted name are unaffected.
+- **Node rename propagates.** New `POST /api/node` + a WebUI control (Tools →
+  Rename node); peers refresh a node's display name automatically on every
+  sync, so renames finally reach the peers that registered the old name.
+- **`agent-memory agent rename <old> <new>`** (+ `POST /api/agents/rename`):
+  migrates an agent identity atomically across memory ownership, `agent:<id>`
+  ACL grants (ACL clock bumped so peers converge), team/project memberships,
+  the registry, and recall profiles — with per-table change counts.
+- **First-run loop closed.** The agents registry is seeded with the node's own
+  default agent at console startup, and the Teams member picker is now a
+  free-text input with suggestions — so the very first install can add itself
+  to a team, and unregistered remote agents can be added by id.
+- **Fleet updates: `agent-memory update --team`.** Reports each peer's version
+  (now exposed in `/healthz`) and triggers self-update on peers that opted in
+  (console started with `AGENT_MEMORY_ALLOW_TEAM_UPDATE=1`); a sync token
+  gains no other authority from the opt-in. `status` shows version drift.
+- **`docs/DEPLOYMENT.md`**: the four topologies (single/multi account ×
+  single/multi machine) with a recipe each.
+
 ## [1.3.0] — 2026-07-18
 
 Multi-account hosts: several OS accounts on one machine, each with its own

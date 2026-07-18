@@ -209,6 +209,29 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--yes", action="store_true", help="Install without prompting (host/pip only)")
     update.add_argument("--no-restart", action="store_true",
                         help="After upgrading, do not restart the running web console")
+    update.add_argument("--team", action="store_true",
+                        help="Also trigger self-update on every registered peer that "
+                             "opted in (peer console started with AGENT_MEMORY_ALLOW_TEAM_UPDATE=1)")
+
+    path_cmd = sub.add_parser(
+        "path",
+        help="Check/fix whether the agent-memory scripts directory is on PATH",
+        description=(
+            "pip installs console scripts into a directory that is often NOT "
+            "on PATH for per-user installs — 'agent-memory: command not found' "
+            "right after installing. 'path show' diagnoses; 'path install' "
+            "appends the export line to your shell profile "
+            "(zsh/bash/fish; on Windows it prints the setx command). "
+            "Works via 'python -m agent_memory_os.cli path install' when the "
+            "script itself is unreachable."
+        ),
+    )
+    path_cmd.add_argument("action", choices=["show", "install"])
+
+    agent = sub.add_parser("agent", help="Manage agent identities")
+    agent.add_argument("action", choices=["rename"])
+    agent.add_argument("old_id", nargs="?", default=None)
+    agent.add_argument("new_id", nargs="?", default=None)
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -372,6 +395,99 @@ def _cmd_join(client, args) -> int:
 
 
 
+def _scripts_dir() -> str:
+    import sysconfig
+
+    return sysconfig.get_path("scripts") or ""
+
+
+def _cmd_path(args) -> int:
+    import os
+    import sys
+
+    scripts = _scripts_dir()
+    on_path = scripts in os.environ.get("PATH", "").split(os.pathsep)
+    print(f"scripts directory: {scripts}")
+    print(f"on PATH:           {'yes' if on_path else 'NO'}")
+    if args.action == "show":
+        if not on_path:
+            print("fix: agent-memory path install   (or: python -m agent_memory_os.cli path install)")
+        return 0 if on_path else 1
+    if on_path:
+        print("nothing to do.")
+        return 0
+    if sys.platform == "win32":
+        print("run this in PowerShell, then open a NEW terminal:")
+        print(f'  setx PATH "$env:PATH;{scripts}"')
+        return 0
+    shell = os.path.basename(os.environ.get("SHELL", "sh"))
+    if shell == "fish":
+        rc = Path("~/.config/fish/config.fish").expanduser()
+        line = f'fish_add_path "{scripts}"'
+    elif shell == "zsh":
+        rc = Path("~/.zshrc").expanduser()
+        line = f'export PATH="$PATH:{scripts}"'
+    else:  # bash and everything sh-like
+        rc = Path("~/.bash_profile" if sys.platform == "darwin" else "~/.bashrc").expanduser()
+        line = f'export PATH="$PATH:{scripts}"'
+    marker = "# added by agent-memory path install"
+    existing = rc.read_text(encoding="utf-8") if rc.exists() else ""
+    if line in existing:
+        print(f"{rc} already contains the export line — open a new terminal.")
+        return 0
+    rc.parent.mkdir(parents=True, exist_ok=True)
+    with rc.open("a", encoding="utf-8") as handle:
+        handle.write(f"\n{marker}\n{line}\n")
+    print(f"appended to {rc} — open a new terminal (or: source {rc})")
+    return 0
+
+
+def _cmd_team_update(client, own_version: str) -> int:
+    """Trigger self-update on every opted-in peer (their console must run
+    with AGENT_MEMORY_ALLOW_TEAM_UPDATE=1; the sync token then authorizes
+    POST /api/maintenance/update-run on that node — and nothing else new)."""
+    import json as _json
+    import urllib.request
+
+    from .discovery import probe_node
+
+    peers = client.store.list_peers()
+    if not peers:
+        print("no peers registered — nothing to update")
+        return 0
+    failures = 0
+    for peer in peers:
+        url = str(peer["url"])
+        label = peer.get("name") or url
+        probe = probe_node(url)
+        if not probe.is_amos:
+            print(f"  {label}: offline — skipped")
+            continue
+        peer_ver = probe.extras.get("version") or ""
+        if peer_ver == own_version:
+            print(f"  {label}: already {own_version}")
+            continue
+        token = client.store.peer_token(url)
+        request = urllib.request.Request(
+            url.rstrip("/") + "/api/maintenance/update-run?confirm=update",
+            method="POST", data=b"",
+            headers={"Authorization": f"Bearer {token}"} if token else {},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+                payload = _json.loads(response.read().decode("utf-8"))
+            print(f"  {label}: {peer_ver or '?'} → update started ({payload.get('status', 'ok')})")
+        except Exception as exc:  # noqa: BLE001
+            failures += 1
+            code = getattr(exc, "code", None)
+            if code in (401, 403):
+                print(f"  {label}: refused — that node has not opted in "
+                      f"(start its console with AGENT_MEMORY_ALLOW_TEAM_UPDATE=1)")
+            else:
+                print(f"  {label}: failed — {exc}")
+    return 1 if failures else 0
+
+
 def _cmd_service(args) -> int:
     from . import service as svc
     from .settings import load_instance_settings
@@ -525,6 +641,12 @@ def _cmd_doctor(args) -> int:
         return 1
     if not fts_ok:
         return 1
+    import os as _os
+
+    scripts = _scripts_dir()
+    if scripts and scripts not in _os.environ.get("PATH", "").split(_os.pathsep):
+        print(f"[warn] scripts dir not on PATH ({scripts}) — 'agent-memory' may be"
+              " 'command not found' in new shells. Fix: agent-memory path install")
     # Same-host awareness: other accounts' nodes are worth knowing about.
     try:
         from .discovery import scan_local_nodes
@@ -983,8 +1105,21 @@ def _cmd_update(args) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "path":
+        return _cmd_path(args)
     if args.command == "update":
-        return _cmd_update(args)
+        rc = _cmd_update(args)
+        if getattr(args, "team", False):
+            import importlib.metadata as _md
+
+            client = MemoryClient(home=args.home)
+            try:
+                print("team update:")
+                team_rc = _cmd_team_update(client, _md.version("agent-memory-os"))
+            finally:
+                client.close()
+            return rc or team_rc
+        return rc
     if args.command == "service":
         return _cmd_service(args)
     if args.command == "token":
@@ -1050,6 +1185,20 @@ def main(argv: list[str] | None = None) -> int:
                 "node_name": settings.node_name, "host": settings.host, "port": settings.port,
             }, ensure_ascii=False, indent=2))
             return 0
+        if args.command == "agent":
+            if args.action == "rename":
+                if not (args.old_id and args.new_id):
+                    print("agent rename requires <old_id> <new_id>"); return 2
+                try:
+                    counts = client.store.rename_agent(args.old_id, args.new_id)
+                except ValueError as exc:
+                    print(f"error: {exc}"); return 2
+                print(f"renamed {args.old_id} -> {args.new_id}:")
+                for key, value in counts.items():
+                    print(f"  {key}: {value}")
+                print("note: peers converge on the next sync (ACL clock bumped)")
+                return 0
+
         if args.command == "join":
             return _cmd_join(client, args)
 

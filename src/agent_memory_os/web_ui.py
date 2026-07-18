@@ -1045,13 +1045,22 @@ function chipRemove(label, onRemove) {
 }
 
 function memberPicker(candidates, onAdd) {
+  // Free-text input + datalist rather than a closed <select>: known agents
+  // are suggested, but any agent id can be typed — on multi-machine meshes
+  // a member may not be registered locally yet (it converges over sync).
   const row = el("div", "row"); row.style.cssText = "margin-top:6px;gap:6px";
-  const sel = el("select");
-  sel.appendChild(Object.assign(document.createElement("option"), { value: "", textContent: t("select node…") }));
-  for (const id of candidates) sel.appendChild(Object.assign(document.createElement("option"), { value: id, textContent: id }));
+  const listId = "agents-dl-" + Math.random().toString(36).slice(2, 8);
+  const input = el("input");
+  input.placeholder = t("select node…");
+  input.setAttribute("list", listId);
+  input.style.cssText = "font-size:12px;padding:3px 8px;min-width:180px";
+  const dl = document.createElement("datalist"); dl.id = listId;
+  for (const id of candidates) dl.appendChild(Object.assign(document.createElement("option"), { value: id }));
   const btn = el("button", "ghost", t("+ Add")); btn.style.cssText = "font-size:11px;padding:2px 10px";
-  btn.addEventListener("click", () => { if (sel.value) onAdd(sel.value); });
-  row.appendChild(sel); row.appendChild(btn);
+  const submit = () => { const v = input.value.trim(); if (v) onAdd(v); };
+  btn.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } });
+  row.appendChild(input); row.appendChild(dl); row.appendChild(btn);
   return row;
 }
 
@@ -1196,6 +1205,14 @@ $("btn-maint-orphans").addEventListener("click", () => { if (confirm(t("Delete a
 $("btn-maint-reindex").addEventListener("click", () => maint("/api/maintenance/reindex", "POST", t("Reindex")));
 $("btn-maint-vacuum").addEventListener("click", () => maint("/api/maintenance/vacuum", "POST", t("Vacuum")));
 $("btn-maint-update").addEventListener("click", checkForUpdates);
+$("btn-node-rename").addEventListener("click", async () => {
+  const v = $("node-name-input").value.trim();
+  if (!v) return;
+  try {
+    const r = await api("/api/node", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ node_name: v }) });
+    toast("node → " + r.node_name);
+  } catch (e) { toast(e.message, "err"); }
+});
 $("btn-audit-refresh").addEventListener("click", loadAudit);
 $("graph-filter").addEventListener("change", (e) => { graphFilter = e.target.value; loadGraph(); });
 $("btn-team-create").addEventListener("click", async () => {

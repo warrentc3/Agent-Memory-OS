@@ -1063,6 +1063,76 @@ class MemoryStore:
         self._invalidate_membership_caches()
         return cur.rowcount > 0
 
+    def rename_agent(self, old_id: str, new_id: str) -> dict[str, int]:
+        """Migrate an agent identity everywhere it appears, atomically.
+
+        An agent id is IDENTITY (memory ownership, ACL grants, memberships,
+        profiles) — renaming a node's display name does not touch it, but when
+        an operator really does want a new id, every reference must move
+        together or recall silently breaks. Returns per-table change counts.
+
+        `agent:<old>` visibility grants also bump acl_updated_at so the
+        rename propagates to peers over sync like any other ACL change.
+        """
+        old_id = old_id.strip()
+        new_id = new_id.strip()
+        if not old_id or not new_id:
+            raise ValueError("rename_agent requires non-empty ids")
+        if old_id == new_id:
+            raise ValueError("old and new agent ids are identical")
+        if self.conn.execute("SELECT 1 FROM agents WHERE id = ?", (new_id,)).fetchone():
+            raise ValueError(f"agent id already exists: {new_id}")
+
+        counts: dict[str, int] = {}
+        now = utc_now()
+        with self.conn:  # one transaction — all or nothing
+            counts["memories_owner"] = self.conn.execute(
+                "UPDATE memories SET owner = ? WHERE owner = ?", (new_id, old_id)
+            ).rowcount
+            counts["archive_owner"] = self.conn.execute(
+                "UPDATE memories_archive SET owner = ? WHERE owner = ?", (new_id, old_id)
+            ).rowcount
+            # ACL grants: visibility is a JSON array; rewrite the exact token
+            # and advance the ACL clock so peers converge on the new grant.
+            old_token = json.dumps(f"agent:{old_id}", ensure_ascii=False)
+            new_token = json.dumps(f"agent:{new_id}", ensure_ascii=False)
+            counts["visibility_grants"] = self.conn.execute(
+                "UPDATE memories SET visibility = replace(visibility, ?, ?),"
+                " acl_updated_at = ? WHERE visibility LIKE ?",
+                (old_token, new_token, now, f'%"agent:{old_id}"%'),
+            ).rowcount
+            counts["agents_registry"] = self.conn.execute(
+                "UPDATE agents SET id = ? WHERE id = ?", (new_id, old_id)
+            ).rowcount
+            counts["team_memberships"] = self.conn.execute(
+                "UPDATE OR IGNORE team_members SET agent_id = ? WHERE agent_id = ?",
+                (new_id, old_id),
+            ).rowcount
+            counts["project_memberships"] = self.conn.execute(
+                "UPDATE OR IGNORE project_members SET agent_id = ? WHERE agent_id = ?",
+                (new_id, old_id),
+            ).rowcount
+            # If both ids were already members somewhere, drop the leftovers.
+            self.conn.execute("DELETE FROM team_members WHERE agent_id = ?", (old_id,))
+            self.conn.execute("DELETE FROM project_members WHERE agent_id = ?", (old_id,))
+            counts["recall_profiles"] = self.conn.execute(
+                "UPDATE OR REPLACE recall_profiles SET agent_id = ? WHERE agent_id = ?",
+                (new_id, old_id),
+            ).rowcount
+        return counts
+
+    def update_peer_name(self, url: str, name: str) -> bool:
+        """Refresh a peer's display name (from its advertised node identity)."""
+        name = (name or "").strip()
+        if not name:
+            return False
+        cursor = self.conn.execute(
+            "UPDATE sync_peers SET name = ? WHERE url = ? AND name != ?",
+            (name, url.strip().rstrip("/"), name),
+        )
+        self.conn.commit()
+        return cursor.rowcount > 0
+
     def touch_agent(self, agent_id: str) -> None:
         """Record activity for a registered agent (no-op for unknown ids)."""
         self.conn.execute(

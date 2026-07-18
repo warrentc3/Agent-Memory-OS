@@ -594,3 +594,24 @@ domains.
   reachability (flagging when the port answers as a DIFFERENT node), store
   totals, and live per-peer state; `sync_with_peer` now records
   last_synced/last_result on every path.
+
+
+## v1.4 Identity vs display, and fleet operability
+
+Field-driven: real multi-account use showed the seams between what identifies
+an agent and what merely names a node.
+
+- **Identity/display separation made operational**: agent IDs are identity
+  (ownership, ACL, membership) — `agent rename` migrates all of it atomically
+  with the ACL clock bumped so grants converge on peers. Node names are
+  display — renameable via CLI/API/WebUI, and peers refresh them on every
+  sync instead of keeping the name captured at `peers add` time. Default node
+  names now include the OS username (all accounts previously derived the same
+  default from host + home basename).
+- **First-run closure**: console startup seeds the node's default agent into
+  the registry; the Teams member picker accepts free text with suggestions.
+- **Ergonomics**: `path show|install` fixes the pip scripts-dir-not-on-PATH
+  trap; doctor warns. `/healthz` exposes the version; `update --team`
+  triggers peer self-updates gated on an explicit per-node opt-in env
+  (AGENT_MEMORY_ALLOW_TEAM_UPDATE) that grants the sync tier nothing else.
+- **docs/DEPLOYMENT.md** names the four supported topologies.

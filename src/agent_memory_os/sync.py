@@ -769,6 +769,15 @@ def sync_with_peer(client, url: str, *, peer_token: str | None = None,
         org_scope=_org_scope_for_policy(policy), lock=lock,
     )
     pushed = push_to_peer(client, url, peer_token=peer_token, policy=policy, lock=lock)
+    # Refresh the peer's display name from its advertised identity: node
+    # renames otherwise never reach the peers that registered the old name.
+    try:
+        advertised = fetch_peer_node_name(url, token=peer_token)
+        if advertised:
+            with _guard(lock):
+                client.store.update_peer_name(url, advertised)
+    except Exception:  # noqa: BLE001 - cosmetic; sync result matters more
+        pass
     # Record on the registered peer (if any) so `agent-memory status` and the
     # console show real last_synced/last_result for EVERY sync path — direct
     # pull/push, join's first sync, and the mesh loop alike.
