@@ -615,3 +615,42 @@ an agent and what merely names a node.
   triggers peer self-updates gated on an explicit per-node opt-in env
   (AGENT_MEMORY_ALLOW_TEAM_UPDATE) that grants the sync tier nothing else.
 - **docs/DEPLOYMENT.md** names the four supported topologies.
+
+## v1.5 Ownership tooling
+
+Field-driven again: an operator saw the console's Browse tab empty on a host
+that plainly held memories. Root cause was not a bug but the ACL working as
+designed — Browse is filtered by the "Acting as" identity, and the memories
+were owned by an identity nobody was browsing as (a fallback `default` owner,
+or another account's agent). The store had no operator-facing way to *see* that
+this had happened, let alone fix it.
+
+- **Owner as a first-class operable dimension.** `owner_counts()` aggregates
+  every owner on the host (live + archived, plus whether it is a registered
+  agent) with no ACL filter — the ground-truth view Browse deliberately hides.
+  The Web console's **Ownership** panel renders it, flags owners not visible
+  under the current "Acting as", and hangs Reassign/Delete off each row. Same
+  three verbs on the CLI (`owner list|reassign|delete`).
+- **`reassign_owner` vs `rename_agent`.** Renaming an identity must never
+  silently merge two identities, so `rename_agent` keeps its "target must not
+  exist" guard. But the field problem is precisely a merge — "these landed
+  under `default`, fold them into my real agent id, which already exists." So
+  `reassign_owner` is the merge-capable engine (no existence guard; renames the
+  registry row when the target is free, drops it when taken), and `rename_agent`
+  is now a thin guarded wrapper over it. Both move ownership, `agent:<id>` ACL
+  grants (ACL clock bumped), memberships, and profiles in one transaction.
+- **Deletion reuses right-to-forget.** No new delete path — owner delete routes
+  through the existing `purge_owner` (live + archive + links + audit/recall logs
+  + tombstones), which already had the confirmation gate. New API is additive:
+  `GET /api/owners`, `POST /api/owners/reassign`.
+- **A move must not recreate the disease it cures.** Two guards close the loop:
+  (1) rename/reassign preview the exact count that will move and confirm before
+  acting, so a rename can't silently strand memories; (2) reassign registers the
+  destination as an agent when it isn't one, because a memory owned by an
+  unregistered id is invisible to every identity surface — the same hidden state
+  the tools exist to fix. Ownership is the ACL key, so the memory itself stays
+  readable by the destination the instant the owner column changes (regression-
+  tested on a private memory); the registry step is what makes that destination
+  *discoverable*, not merely reachable. `agent rename` additionally warns that a
+  live service/MCP still bound to the old id won't see the memories until
+  repointed — identity is data, not process state.

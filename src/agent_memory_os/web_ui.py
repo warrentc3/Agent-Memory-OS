@@ -532,6 +532,12 @@ PAGE = r"""<!doctype html>
         <div id="maint-out" style="margin:6px 0;font-size:13px;color:var(--muted)"></div>
       </div>
       <div class="tool" style="grid-column: 1 / -1;">
+        <h3>Ownership</h3>
+        <p class="hint">Every owner that holds memories on this host, with live and archived counts. Browse is filtered by <b>Acting as</b>; this list is not — so memories owned by an identity you are not browsing as (and not shared with you) show up here even when the Browse tab looks empty. Reassign folds one owner's memories into another (the target may already exist); delete removes them for good.</p>
+        <div class="row"><button class="ghost" id="btn-owners-refresh">Refresh owners</button></div>
+        <div class="toplist" id="owners-list" style="margin-top:8px"></div>
+      </div>
+      <div class="tool" style="grid-column: 1 / -1;">
         <h3>Membership audit</h3>
         <p class="hint">Recent team/project membership changes (create, delete, add/remove member). Actor "web" = a change made through this console.</p>
         <div class="row"><button class="ghost" id="btn-audit-refresh">Refresh</button></div>
@@ -708,6 +714,11 @@ Object.assign(I18N["zh-CN"], {"Token usage":"Token 用量","Total":"总计","Top
 Object.assign(I18N["ja"], {"Token usage":"トークン使用量","Total":"合計","Top agent":"トップエージェント","Top team":"トップチーム","Top project":"トッププロジェクト","none":"なし","Check for updates":"更新を確認","Update now":"今すぐ更新","Up to date":"最新です","A new version is available":"新しいバージョンがあります","Updating… the console will restart shortly.":"更新中…まもなくコンソールが再起動します。","Pull the new image tag and recreate the container.":"新しいイメージタグを取得してコンテナを再作成してください。","Membership audit":"メンバー監査","Refresh":"更新","No membership changes yet.":"メンバー変更はまだありません。","Filter":"フィルター","All":"すべて","memories":"件の記憶","read-only mode — changes are disabled":"読み取り専用モード — 変更は無効です"});
 Object.assign(I18N["ko"], {"Token usage":"토큰 사용량","Total":"합계","Top agent":"최상위 에이전트","Top team":"최상위 팀","Top project":"최상위 프로젝트","none":"없음","Check for updates":"업데이트 확인","Update now":"지금 업데이트","Up to date":"최신 상태입니다","A new version is available":"새 버전이 있습니다","Updating… the console will restart shortly.":"업데이트 중… 콘솔이 곧 다시 시작됩니다.","Pull the new image tag and recreate the container.":"새 이미지 태그를 받아 컨테이너를 다시 만드세요.","Membership audit":"멤버 감사","Refresh":"새로고침","No membership changes yet.":"아직 멤버 변경이 없습니다.","Filter":"필터","All":"전체","memories":"개의 기억","read-only mode — changes are disabled":"읽기 전용 모드 — 변경이 비활성화됨"});
 
+Object.assign(I18N["zh-TW"], {"Ownership":"擁有權","Refresh owners":"重新整理擁有者","No owners yet.":"尚無擁有者。","live":"現存","archived":"已歸檔","registered":"已註冊","not shown while acting as":"以此身分瀏覽時不顯示:","Reassign…":"重新指派…","Delete":"刪除","Reassign every memory owned by":"將此擁有者的所有記憶重新指派","to which owner? (the target may already exist — its memories are kept and these are folded in)":"到哪個擁有者?(目標可存在——保留其記憶並把這些併入)","Enter a target owner.":"請輸入目標擁有者。","Source and target are the same.":"來源與目標相同。","moved":"筆已移轉","registered so it's recognized":"已註冊,系統可辨識","This permanently deletes ALL memories, links and the recall profile of":"這將永久刪除以下擁有者的所有記憶、關聯與召回設定檔:","Type the owner id again to confirm:":"再次輸入擁有者 ID 以確認:","Confirmation did not match — nothing was deleted.":"確認不符——未刪除任何項目。","Owner":"擁有者","forgotten":"已遺忘","Working…":"處理中…"});
+Object.assign(I18N["zh-CN"], {"Ownership":"归属","Refresh owners":"刷新所有者","No owners yet.":"暂无所有者。","live":"现存","archived":"已归档","registered":"已注册","not shown while acting as":"以此身份浏览时不显示:","Reassign…":"重新指派…","Delete":"删除","Reassign every memory owned by":"将该所有者的所有记忆重新指派","to which owner? (the target may already exist — its memories are kept and these are folded in)":"到哪个所有者?(目标可已存在——保留其记忆并将这些并入)","Enter a target owner.":"请输入目标所有者。","Source and target are the same.":"来源与目标相同。","moved":"条已迁移","registered so it's recognized":"已注册,系统可识别","This permanently deletes ALL memories, links and the recall profile of":"这将永久删除以下所有者的全部记忆、关联与召回配置:","Type the owner id again to confirm:":"再次输入所有者 ID 以确认:","Confirmation did not match — nothing was deleted.":"确认不符——未删除任何内容。","Owner":"所有者","forgotten":"已遗忘","Working…":"处理中…"});
+Object.assign(I18N["ja"], {"Ownership":"所有権","Refresh owners":"所有者を更新","No owners yet.":"所有者はまだいません。","live":"現存","archived":"アーカイブ済み","registered":"登録済み","not shown while acting as":"この識別子で閲覧中は非表示:","Reassign…":"再割り当て…","Delete":"削除","Reassign every memory owned by":"次の所有者のすべての記憶を再割り当て","to which owner? (the target may already exist — its memories are kept and these are folded in)":"どの所有者へ?(既存でも可——その記憶は保持され、これらが統合されます)","Enter a target owner.":"対象の所有者を入力してください。","Source and target are the same.":"元と先が同じです。","moved":"件を移動","registered so it's recognized":"登録済み・認識可能に","This permanently deletes ALL memories, links and the recall profile of":"次の所有者のすべての記憶・リンク・想起プロファイルを完全に削除します:","Type the owner id again to confirm:":"確認のため所有者IDを再入力:","Confirmation did not match — nothing was deleted.":"確認が一致しません——何も削除されていません。","Owner":"所有者","forgotten":"忘却しました","Working…":"処理中…"});
+Object.assign(I18N["ko"], {"Ownership":"소유권","Refresh owners":"소유자 새로고침","No owners yet.":"아직 소유자가 없습니다.","live":"현존","archived":"보관됨","registered":"등록됨","not shown while acting as":"이 신원으로 탐색 중에는 표시 안 됨:","Reassign…":"재할당…","Delete":"삭제","Reassign every memory owned by":"다음 소유자의 모든 기억을 재할당","to which owner? (the target may already exist — its memories are kept and these are folded in)":"어느 소유자로? (대상이 이미 있어도 됨 — 그 기억은 유지되고 이것들이 병합됩니다)","Enter a target owner.":"대상 소유자를 입력하세요.","Source and target are the same.":"원본과 대상이 같습니다.","moved":"개 이동됨","registered so it's recognized":"등록되어 인식됨","This permanently deletes ALL memories, links and the recall profile of":"다음 소유자의 모든 기억·링크·회상 프로필을 영구 삭제합니다:","Type the owner id again to confirm:":"확인을 위해 소유자 ID를 다시 입력:","Confirmation did not match — nothing was deleted.":"확인이 일치하지 않음 — 아무것도 삭제되지 않았습니다.","Owner":"소유자","forgotten":"잊음","Working…":"처리 중…"});
+
 let locale = localStorage.getItem("amos.locale") || (() => {
   const nav = (navigator.language || "en");
   if (/^zh-(TW|HK|Hant)/i.test(nav)) return "zh-TW";
@@ -846,6 +857,7 @@ document.querySelectorAll("nav.tabs button").forEach((button) => {
     if (button.dataset.tab === "dashboard") loadDashboard();
     if (button.dataset.tab === "agents") refreshAgents();
     if (button.dataset.tab === "teams") refreshTeams();
+    if (button.dataset.tab === "tools") loadOwners();
   });
 });
 
@@ -951,6 +963,92 @@ async function loadAudit() {
     row.appendChild(left); row.appendChild(right);
     box.appendChild(row);
   }
+}
+
+async function loadOwners() {
+  const box = $("owners-list");
+  box.textContent = t("Working…");
+  let data;
+  try { data = await api("/api/owners"); }
+  catch (e) { box.textContent = String(e.message || e); return; }
+  const owners = (data && data.owners) || [];
+  box.innerHTML = "";
+  if (!owners.length) { box.textContent = t("No owners yet."); return; }
+  const acting = actingAs();
+  for (const o of owners) {
+    const row = document.createElement("div");
+    row.className = "topitem";
+    const left = document.createElement("span");
+    const name = el("b", null, o.owner);
+    left.appendChild(name);
+    const meta = el("span", "muted");
+    meta.style.fontSize = "11px";
+    meta.style.marginLeft = "8px";
+    let metaText = o.memories + " " + t("live");
+    if (o.archived) metaText += " · " + o.archived + " " + t("archived");
+    if (o.registered_agent) metaText += " · " + t("registered");
+    meta.textContent = metaText;
+    left.appendChild(meta);
+    // Hidden-memory hint: when browsing AS an identity, an owner that is not
+    // that identity holds memories the Browse tab may not show.
+    if (acting && o.owner !== acting) {
+      const tag = el("span", "muted");
+      tag.style.cssText = "font-size:11px;margin-left:8px;color:var(--warn,#d29922)";
+      tag.textContent = t("not shown while acting as") + " " + acting;
+      left.appendChild(tag);
+    }
+    const right = document.createElement("span");
+    right.style.cssText = "display:flex;gap:6px";
+    const reBtn = el("button", "ghost", t("Reassign…"));
+    reBtn.style.fontSize = "11px";
+    reBtn.addEventListener("click", () => reassignOwner(o));
+    const delBtn = el("button", "danger", t("Delete"));
+    delBtn.style.fontSize = "11px";
+    delBtn.addEventListener("click", () => deleteOwner(o.owner));
+    right.append(reBtn, delBtn);
+    row.appendChild(left); row.appendChild(right);
+    box.appendChild(row);
+  }
+}
+
+async function reassignOwner(owner) {
+  const oldOwner = owner.owner;
+  const n = owner.memories + owner.archived;
+  const target = prompt(
+    t("Reassign every memory owned by") + " “" + oldOwner + "” (" + n + ") " +
+    t("to which owner? (the target may already exist — its memories are kept and these are folded in)")
+  );
+  if (target === null) return;
+  const newOwner = target.trim();
+  if (!newOwner) { toast(t("Enter a target owner."), "err"); return; }
+  if (newOwner === oldOwner) { toast(t("Source and target are the same."), "err"); return; }
+  try {
+    const r = await api("/api/owners/reassign", {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ old_owner: oldOwner, new_owner: newOwner }),
+    });
+    let msg = oldOwner + " → " + newOwner + ": " + r.changed.memories_owner + " " + t("moved");
+    if (r.changed.target_registered) msg += " · " + t("registered so it's recognized");
+    toast(msg, "ok");
+    loadOwners(); loadStats(); loadDashboard(); browseLoaded = false;
+  } catch (e) { toast(e.message, "err"); }
+}
+
+async function deleteOwner(owner) {
+  const typed = prompt(
+    t("This permanently deletes ALL memories, links and the recall profile of") +
+    " “" + owner + "”.\n\n" + t("Type the owner id again to confirm:")
+  );
+  if (typed === null) return;
+  if (typed.trim() !== owner) { toast(t("Confirmation did not match — nothing was deleted."), "err"); return; }
+  try {
+    const r = await api(
+      "/api/owners/" + encodeURIComponent(owner) + "/memories?confirm=" + encodeURIComponent(owner),
+      { method: "DELETE" }
+    );
+    toast(t("Owner") + " “" + owner + "” " + t("forgotten") + " (" + r.memories_deleted + ")", "ok");
+    loadOwners(); loadStats(); loadDashboard(); browseLoaded = false;
+  } catch (e) { toast(e.message, "err"); }
 }
 
 async function loadDashboard() {
@@ -1219,6 +1317,7 @@ $("btn-node-rename").addEventListener("click", async () => {
   } catch (e) { toast(e.message, "err"); }
 });
 $("btn-audit-refresh").addEventListener("click", loadAudit);
+$("btn-owners-refresh").addEventListener("click", loadOwners);
 $("graph-filter").addEventListener("change", (e) => { graphFilter = e.target.value; loadGraph(); });
 $("btn-team-create").addEventListener("click", async () => {
   const id = $("tm-id").value.trim(); if (!id) return;

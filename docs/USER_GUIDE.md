@@ -64,7 +64,10 @@ Global flag: `--home <dir>`.
 | `backup <dest> [--keep N]` / `restore <src> [--force]` | WAL-safe online backup / restore; `--keep N` rotates older backups (never the live DB). |
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
 | `path show\|install` | Diagnose/fix "command not found": add the pip scripts dir to your shell PATH. |
-| `agent rename <old> <new>` | Migrate an agent identity everywhere (ownership, `agent:` grants, memberships, profiles). |
+| `agent rename <old> <new> [--yes]` | Migrate an agent identity to a **new** id everywhere (ownership, `agent:` grants, memberships, profiles). Previews the memory count and confirms first; refuses an existing target — use `owner reassign` to merge. Reminds you to repoint any running service/MCP still on the old id. |
+| `owner list` | Every owner holding memories on this host, with live/archived counts and whether it is a registered agent. Surfaces owners the Browse tab hides (ACL-filtered by "Acting as"). |
+| `owner reassign <old> <new> [--yes] [--no-register]` | Fold one owner's memories into another (merge-capable — the target **may already exist**). Previews the count and confirms first. Registers the destination as an agent so the moved memories stay recognized (`--no-register` opts out, with a warning). The fix for "memories landed under `default` instead of my agent id." |
+| `owner delete <owner> [--yes]` | Permanently forget every memory owned by `<owner>` (live + archive + links + audit/recall logs + tombstones). Prompts to confirm unless `--yes`. |
 | `status [--json] [--no-probe]` | This host + connected nodes: service state, console reachability, store totals, per-peer online/offline + policy/token/last-synced. |
 | `neighbors [--ports A-B]` | Discover other AgentMemoryOS nodes on this host (loopback `/healthz` scan; finding is not joining). |
 | `team invite <team> [--ttl s]` | Mint a one-time pairing code so another node can join this team. |
@@ -128,6 +131,7 @@ and auditors.
 | `POST /api/consolidate`, `POST /api/retention`, `GET /api/archive`, `POST /api/archive/{id}/restore` | Hygiene & lifecycle. |
 | `GET/POST/DELETE /api/agents[…]` | Agent registry. |
 | `GET/POST/DELETE /api/peers`, `POST /api/sync/run`, `GET /api/sync/export`, `POST /api/sync/import` | Federation. |
+| `GET /api/owners`, `POST /api/owners/reassign` | List owners with counts; re-attribute one owner's memories to another (merge-capable). |
 | `DELETE /api/owners/{owner}/memories?confirm=<owner>` | Forget an agent entirely (double confirmation). |
 
 ---

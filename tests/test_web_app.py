@@ -373,3 +373,32 @@ def test_webui_toplevel_handlers_reference_existing_ids():
     present_ids = set(re.findall(r'id="([\w-]+)"', PAGE))
     missing = sorted(handler_ids - present_ids)
     assert not missing, f"handlers reference ids with no HTML element: {missing}"
+
+
+def test_web_api_owners_list_and_reassign(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+
+    for owner in ("default", "default", "mizuki"):
+        client.post("/api/memories", json={"content": f"n {owner}", "owner": owner})
+
+    owners = client.get("/api/owners").json()["owners"]
+    counts = {o["owner"]: o for o in owners}
+    assert counts["default"]["memories"] == 2
+    assert counts["mizuki"]["memories"] == 1
+
+    r = client.post("/api/owners/reassign",
+                    json={"old_owner": "default", "new_owner": "mizuki"})
+    assert r.status_code == 200
+    assert r.json()["changed"]["memories_owner"] == 2
+
+    owners2 = {o["owner"]: o for o in client.get("/api/owners").json()["owners"]}
+    assert "default" not in owners2
+    assert owners2["mizuki"]["memories"] == 3
+
+
+def test_web_api_owners_reassign_rejects_identical(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    r = client.post("/api/owners/reassign", json={"old_owner": "x", "new_owner": "x"})
+    assert r.status_code == 400

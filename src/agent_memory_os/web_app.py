@@ -180,6 +180,12 @@ class AgentRenameRequest(BaseModel):
     new_id: str = Field(min_length=1)
 
 
+class OwnerReassignRequest(BaseModel):
+    old_owner: str = Field(min_length=1)
+    new_owner: str = Field(min_length=1)
+    register_target: bool = True
+
+
 class ShareRequest(BaseModel):
     actor: str = Field(min_length=1)
     to_agent: str | None = None
@@ -416,6 +422,30 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"old_id": request.old_id, "new_id": request.new_id, "changed": counts}
+
+    @app.get("/api/owners")
+    def owners_list() -> dict[str, Any]:
+        """Memory count per owner. Surfaces identities that hold memories no
+        current browsing identity can see (the 'hidden memories' case)."""
+        with lock:
+            return {"owners": client.owner_counts()}
+
+    @app.post("/api/owners/reassign")
+    def owners_reassign(request: OwnerReassignRequest) -> dict[str, Any]:
+        """Re-attribute one owner's memories to another (merge-capable). Unlike
+        agent rename, the target may already exist — used to fold memories
+        written under a fallback owner into a real identity."""
+        with lock:
+            try:
+                counts = client.reassign_owner(
+                    request.old_owner, request.new_owner,
+                    register_target=request.register_target)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"old_owner": request.old_owner, "new_owner": request.new_owner,
+                "changed": counts}
+    # NOTE: destructive owner deletion is DELETE /api/owners/{owner}/memories
+    # (defined below), which already enforces a ?confirm=<owner> guard.
 
     @app.get("/api/node")
     def node_identity() -> dict[str, Any]:

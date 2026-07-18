@@ -104,6 +104,34 @@ class MemoryClient:
         self.cache.clear()
         return result
 
+    def owner_counts(self) -> list[dict[str, object]]:
+        """Memory count per owner — powers the console's identity/owner panel."""
+        return self.store.owner_counts()
+
+    def reassign_owner(
+        self, old_owner: str, new_owner: str, *, register_target: bool = True
+    ) -> dict[str, int]:
+        """Re-attribute one owner's memories to another (merge-capable).
+
+        By default the target is registered as an agent if it isn't already, so
+        the moved memories land under a *recognized* identity — one that shows
+        up in the Agents tab, member pickers, and "acting as" suggestions.
+        Skipping this (register_target=False) would leave them owned by an id no
+        identity surface knows about — exactly the "memories exist but nothing
+        sees them" state these tools exist to fix. `target_registered` in the
+        result is 1 when this call newly registered the target, else 0.
+        """
+        result = self.store.reassign_owner(old_owner, new_owner)
+        newly_registered = False
+        if register_target and self.store.get_agent(new_owner) is None:
+            self.store.register_agent(new_owner, display_name=new_owner, kind="custom")
+            newly_registered = True
+        result["target_registered"] = 1 if newly_registered else 0
+        self._profile_cache.pop(old_owner, None)
+        self._profile_cache.pop(new_owner, None)
+        self.cache.clear()  # ownership move changes ACL visibility
+        return result
+
     def run_retention(
         self, *, decayed_half_lives: float | None = RETENTION_MIN_HALF_LIVES
     ) -> dict[str, int]:

@@ -338,7 +338,7 @@ agent-memory-web --host 127.0.0.1 --port 8000 --home ~/.agent-memory-web
 
 The console speaks **English, 繁體中文, 简体中文, 日本語, and 한국어** — auto-detected from the browser, switchable in the header. It ships with a stats dashboard (scope/type/relation breakdowns, 14-day activity, most-recalled memories), search and recency browsing (memory cards with in-place editing, feedback, links, and delete actions), an interactive association-graph view, a context-pack preview with per-memory decisions, and add/link/consolidate tools — all driven by a global "acting as" identity.
 
-Endpoints: health/stats/dashboard/integrity · memories CRUD + browse · search / context-pack / orchestrate · links + graph · recall feedback · share / revoke / audit · consolidate / retention / archive+restore · agents registry · peers + mesh sync · bundle export/import · owner purge. Full table in the [User Guide](docs/USER_GUIDE.md).
+Endpoints: health/stats/dashboard/integrity · memories CRUD + browse · search / context-pack / orchestrate · links + graph · recall feedback · share / revoke / audit · consolidate / retention / archive+restore · agents registry · peers + mesh sync · bundle export/import · owner list / reassign / purge. Full table in the [User Guide](docs/USER_GUIDE.md).
 
 Search, browse, graph, recall feedback, and context-pack accept `requester_agent_id` and enforce the same ACL hard gates as the SDK. Requests without a requester run in unrestricted admin view — bind to localhost only, or require a bearer token on every API route with `--token <secret>` (or `AGENT_MEMORY_WEB_TOKEN`).
 

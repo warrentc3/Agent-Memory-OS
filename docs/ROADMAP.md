@@ -1,6 +1,6 @@
 # AgentMemoryOS Roadmap
 
-Last updated: 2026-07-12
+Last updated: 2026-07-19
 
 Governance rules:
 
@@ -50,6 +50,16 @@ Governance rules:
 - **Explicit TLS verification** for `https://` peer URLs.
 - `agent-memory-mcp` console entry point (zero-install `uvx` runs; MCP-directory
   listings such as Smithery).
+
+## Shipped — v1.5 (ownership tooling)
+
+- **Owner tools** across CLI, Web console, and API: `owner list` surfaces every
+  owner on the host (live/archived counts; hidden-from-current-"Acting as"
+  hint), `owner reassign` merges one owner's memories into another (merge-capable
+  — the target may already exist, the gap `agent rename` refuses to fill), and
+  `owner delete` routes through the existing right-to-forget purge. New API
+  `GET /api/owners` + `POST /api/owners/reassign`; console **Ownership** panel
+  with per-owner Reassign/Delete, translated across all five locales.
 
 ## Shipped — v1.4 (identity & fleet operability)
 

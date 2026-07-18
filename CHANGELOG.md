@@ -4,6 +4,41 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.5.0] — 2026-07-19
+
+Ownership tooling: find, migrate, and delete memories by owner — the operator
+answer to "the WebUI browse tab is empty but I know memories exist here."
+
+- **Owner tools (CLI + Web console + API).** Memories are keyed by an *owner*
+  identity, and the Browse tab is ACL-filtered by the "Acting as" identity — so
+  memories written under an identity you are not browsing as (a fallback owner
+  like `default`, another account's agent) are simply invisible there. The new
+  **Ownership** panel in Tools lists every owner on the host with live/archived
+  counts, flags the ones hidden from your current "Acting as" identity, and
+  offers per-owner **Reassign** and **Delete**. Same surface on the CLI:
+  `agent-memory owner list | reassign <old> <new> | delete <owner>`.
+- **`reassign_owner` — merge-capable re-attribution.** Unlike `agent rename`
+  (which refuses an existing target so two identities never silently merge),
+  reassign folds one owner's memories, `agent:<id>` ACL grants (ACL clock
+  bumped so peers converge), team/project memberships, recall profile, and
+  registry row into a target that *may already exist*. This is the operation
+  that fixes the common "memories landed under `default` instead of my agent
+  id" case. Deletion reuses the existing right-to-forget purge (live + archive
+  + links + audit/recall logs + tombstones).
+- New API: `GET /api/owners`, `POST /api/owners/reassign` (destructive delete
+  stays on the existing `DELETE /api/owners/{owner}/memories?confirm=<owner>`).
+  Console strings translated across all five locales.
+- **Move safety — preview, confirm, and stay recognized.** `agent rename` and
+  `owner reassign` now show what will move (N live + M archived memories, plus
+  grants/memberships/profile) and ask before acting (`--yes` skips). Reassign
+  **registers the destination as an agent** when it isn't one already, so moved
+  memories land under an identity the console, member pickers, and "acting as"
+  suggestions recognize — instead of silently recreating the hidden-owner state
+  (`--no-register` opts out, with a warning). `agent rename` also reminds you to
+  repoint any running service/MCP client still using the old id. Verified by a
+  regression test that a private memory follows its owner and stays readable by
+  the new identity (and not the old).
+
 ## [1.4.1] — 2026-07-18
 
 - **Fix: Web console dashboard was blank on 1.4.0.** The node-rename control's

@@ -1063,16 +1063,94 @@ class MemoryStore:
         self._invalidate_membership_caches()
         return cur.rowcount > 0
 
+    def owner_counts(self) -> list[dict[str, object]]:
+        """Memory count per owner (live + archived), newest-active first.
+
+        Powers the console's owner/identity panel and the "some memories are
+        owned by an identity you are not browsing as" hint: an owner with
+        memories that no current identity can see is otherwise invisible.
+        """
+        live = {r["owner"]: r["n"] for r in self.conn.execute(
+            "SELECT owner, COUNT(*) AS n FROM memories GROUP BY owner")}
+        arch = {r["owner"]: r["n"] for r in self.conn.execute(
+            "SELECT owner, COUNT(*) AS n FROM memories_archive GROUP BY owner")}
+        registered = {a["id"] for a in self.list_agents()}
+        owners = sorted(set(live) | set(arch))
+        return [
+            {"owner": o, "memories": live.get(o, 0), "archived": arch.get(o, 0),
+             "registered_agent": o in registered}
+            for o in owners
+        ]
+
+    def reassign_owner(self, old_owner: str, new_owner: str) -> dict[str, int]:
+        """Move every reference from `old_owner` to `new_owner`, atomically.
+
+        Unlike `rename_agent`, this MERGES: `new_owner` may already exist (its
+        memories/memberships are kept and the old owner's folded in). Use it to
+        re-attribute memories written under a fallback owner (e.g. 'default')
+        to a real agent identity. Moves memory ownership, archived rows,
+        `agent:<old>` ACL grants (bumping the ACL clock so peers converge),
+        team/project memberships (dedup on conflict), recall profiles, and the
+        agents-registry row if present. Returns per-table change counts.
+        """
+        old_owner = old_owner.strip()
+        new_owner = new_owner.strip()
+        if not old_owner or not new_owner:
+            raise ValueError("reassign_owner requires non-empty ids")
+        if old_owner == new_owner:
+            raise ValueError("old and new owner are identical")
+
+        counts: dict[str, int] = {}
+        now = utc_now()
+        with self.conn:  # one transaction — all or nothing
+            counts["memories_owner"] = self.conn.execute(
+                "UPDATE memories SET owner = ? WHERE owner = ?", (new_owner, old_owner)
+            ).rowcount
+            counts["archive_owner"] = self.conn.execute(
+                "UPDATE memories_archive SET owner = ? WHERE owner = ?", (new_owner, old_owner)
+            ).rowcount
+            old_token = json.dumps(f"agent:{old_owner}", ensure_ascii=False)
+            new_token = json.dumps(f"agent:{new_owner}", ensure_ascii=False)
+            counts["visibility_grants"] = self.conn.execute(
+                "UPDATE memories SET visibility = replace(visibility, ?, ?),"
+                " acl_updated_at = ? WHERE visibility LIKE ?",
+                (old_token, new_token, now, f'%"agent:{old_owner}"%'),
+            ).rowcount
+            # Agents registry: rename the row if the target is free, else drop
+            # the old row (memberships below are merged onto new_owner anyway).
+            if self.conn.execute("SELECT 1 FROM agents WHERE id = ?", (old_owner,)).fetchone():
+                if self.conn.execute("SELECT 1 FROM agents WHERE id = ?", (new_owner,)).fetchone():
+                    self.conn.execute("DELETE FROM agents WHERE id = ?", (old_owner,))
+                    counts["agents_registry"] = 1
+                else:
+                    counts["agents_registry"] = self.conn.execute(
+                        "UPDATE agents SET id = ? WHERE id = ?", (new_owner, old_owner)
+                    ).rowcount
+            else:
+                counts["agents_registry"] = 0
+            counts["team_memberships"] = self.conn.execute(
+                "UPDATE OR IGNORE team_members SET agent_id = ? WHERE agent_id = ?",
+                (new_owner, old_owner),
+            ).rowcount
+            counts["project_memberships"] = self.conn.execute(
+                "UPDATE OR IGNORE project_members SET agent_id = ? WHERE agent_id = ?",
+                (new_owner, old_owner),
+            ).rowcount
+            self.conn.execute("DELETE FROM team_members WHERE agent_id = ?", (old_owner,))
+            self.conn.execute("DELETE FROM project_members WHERE agent_id = ?", (old_owner,))
+            counts["recall_profiles"] = self.conn.execute(
+                "UPDATE OR REPLACE recall_profiles SET agent_id = ? WHERE agent_id = ?",
+                (new_owner, old_owner),
+            ).rowcount
+        self._invalidate_membership_caches()
+        return counts
+
     def rename_agent(self, old_id: str, new_id: str) -> dict[str, int]:
-        """Migrate an agent identity everywhere it appears, atomically.
+        """Rename an agent identity to a NEW (non-existent) id, atomically.
 
-        An agent id is IDENTITY (memory ownership, ACL grants, memberships,
-        profiles) — renaming a node's display name does not touch it, but when
-        an operator really does want a new id, every reference must move
-        together or recall silently breaks. Returns per-table change counts.
-
-        `agent:<old>` visibility grants also bump acl_updated_at so the
-        rename propagates to peers over sync like any other ACL change.
+        Like `reassign_owner` but with a guard: the target id must not already
+        exist, so a rename can never silently merge two identities. To merge
+        into an existing identity, use `reassign_owner`.
         """
         old_id = old_id.strip()
         new_id = new_id.strip()
@@ -1082,44 +1160,7 @@ class MemoryStore:
             raise ValueError("old and new agent ids are identical")
         if self.conn.execute("SELECT 1 FROM agents WHERE id = ?", (new_id,)).fetchone():
             raise ValueError(f"agent id already exists: {new_id}")
-
-        counts: dict[str, int] = {}
-        now = utc_now()
-        with self.conn:  # one transaction — all or nothing
-            counts["memories_owner"] = self.conn.execute(
-                "UPDATE memories SET owner = ? WHERE owner = ?", (new_id, old_id)
-            ).rowcount
-            counts["archive_owner"] = self.conn.execute(
-                "UPDATE memories_archive SET owner = ? WHERE owner = ?", (new_id, old_id)
-            ).rowcount
-            # ACL grants: visibility is a JSON array; rewrite the exact token
-            # and advance the ACL clock so peers converge on the new grant.
-            old_token = json.dumps(f"agent:{old_id}", ensure_ascii=False)
-            new_token = json.dumps(f"agent:{new_id}", ensure_ascii=False)
-            counts["visibility_grants"] = self.conn.execute(
-                "UPDATE memories SET visibility = replace(visibility, ?, ?),"
-                " acl_updated_at = ? WHERE visibility LIKE ?",
-                (old_token, new_token, now, f'%"agent:{old_id}"%'),
-            ).rowcount
-            counts["agents_registry"] = self.conn.execute(
-                "UPDATE agents SET id = ? WHERE id = ?", (new_id, old_id)
-            ).rowcount
-            counts["team_memberships"] = self.conn.execute(
-                "UPDATE OR IGNORE team_members SET agent_id = ? WHERE agent_id = ?",
-                (new_id, old_id),
-            ).rowcount
-            counts["project_memberships"] = self.conn.execute(
-                "UPDATE OR IGNORE project_members SET agent_id = ? WHERE agent_id = ?",
-                (new_id, old_id),
-            ).rowcount
-            # If both ids were already members somewhere, drop the leftovers.
-            self.conn.execute("DELETE FROM team_members WHERE agent_id = ?", (old_id,))
-            self.conn.execute("DELETE FROM project_members WHERE agent_id = ?", (old_id,))
-            counts["recall_profiles"] = self.conn.execute(
-                "UPDATE OR REPLACE recall_profiles SET agent_id = ? WHERE agent_id = ?",
-                (new_id, old_id),
-            ).rowcount
-        return counts
+        return self.reassign_owner(old_id, new_id)
 
     def join_team_and_register_peer(
         self, team_id: str, agent_id: str, *,

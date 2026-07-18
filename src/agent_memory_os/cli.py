@@ -235,6 +235,25 @@ def build_parser() -> argparse.ArgumentParser:
     agent.add_argument("action", choices=["rename"])
     agent.add_argument("old_id", nargs="?", default=None)
     agent.add_argument("new_id", nargs="?", default=None)
+    agent.add_argument("--yes", action="store_true",
+                       help="skip the confirmation prompt")
+
+    owner = sub.add_parser(
+        "owner",
+        help="Inspect and re-attribute memory ownership (list / reassign / delete)",
+    )
+    owner.add_argument("action", choices=["list", "reassign", "delete"])
+    owner.add_argument(
+        "old_owner", nargs="?", default=None,
+        help="reassign: source owner; delete: owner to purge",
+    )
+    owner.add_argument("new_owner", nargs="?", default=None,
+                       help="reassign: destination owner (may already exist — merges)")
+    owner.add_argument("--yes", action="store_true",
+                       help="reassign/delete: skip the confirmation prompt")
+    owner.add_argument("--no-register", action="store_true",
+                       help="reassign: do NOT register the destination as an agent "
+                            "(leaves the moved memories under an unrecognized owner)")
 
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
@@ -1208,14 +1227,96 @@ def main(argv: list[str] | None = None) -> int:
             if args.action == "rename":
                 if not (args.old_id and args.new_id):
                     print("agent rename requires <old_id> <new_id>"); return 2
+                # Preview what moves so a rename can never silently strand
+                # memories under the old id. owner_counts is unfiltered.
+                src = {r["owner"]: r for r in client.owner_counts()}.get(args.old_id)
+                live = src["memories"] if src else 0
+                arch = src["archived"] if src else 0
+                print(f"rename {args.old_id} -> {args.new_id} will move "
+                      f"{live} live + {arch} archived memories, plus any "
+                      f"agent:{args.old_id} grants, memberships, and recall profile.")
+                if not args.yes:
+                    reply = input("proceed? [y/N]: ")
+                    if reply.strip().lower() not in ("y", "yes"):
+                        print("aborted"); return 1
                 try:
                     counts = client.store.rename_agent(args.old_id, args.new_id)
                 except ValueError as exc:
                     print(f"error: {exc}"); return 2
+                client.cache.clear()  # ownership/ACL moved — drop stale visibility
                 print(f"renamed {args.old_id} -> {args.new_id}:")
                 for key, value in counts.items():
                     print(f"  {key}: {value}")
                 print("note: peers converge on the next sync (ACL clock bumped)")
+                if live or arch:
+                    print(f"note: if a running service or MCP client still uses "
+                          f"'{args.old_id}', point it at '{args.new_id}' — it won't "
+                          f"see these memories until you do.")
+                return 0
+
+        if args.command == "owner":
+            if args.action == "list":
+                rows = client.owner_counts()
+                print(json.dumps(rows, ensure_ascii=False, indent=2))
+                return 0
+            if args.action == "reassign":
+                if not (args.old_owner and args.new_owner):
+                    print("owner reassign requires <old_owner> <new_owner>"); return 2
+                owners = {r["owner"]: r for r in client.owner_counts()}
+                src = owners.get(args.old_owner)
+                live = src["memories"] if src else 0
+                arch = src["archived"] if src else 0
+                if not (live or arch):
+                    print(f"note: {args.old_owner} owns no memories to move "
+                          f"(grants/memberships, if any, still migrate).")
+                dst = owners.get(args.new_owner)
+                dst_registered = bool(dst and dst["registered_agent"])
+                print(f"reassign will move {live} live + {arch} archived memories "
+                      f"(plus agent:{args.old_owner} grants, memberships, profile) "
+                      f"from {args.old_owner} -> {args.new_owner}.")
+                if not dst_registered and not args.no_register:
+                    print(f"  {args.new_owner} is not a registered agent yet — it "
+                          f"will be registered so the moved memories are recognized.")
+                elif not dst_registered and args.no_register:
+                    print(f"  WARNING: {args.new_owner} is not a registered agent and "
+                          f"--no-register was given; the moved memories will be owned "
+                          f"by an identity no console surface recognizes.")
+                if not args.yes:
+                    reply = input("proceed? [y/N]: ")
+                    if reply.strip().lower() not in ("y", "yes"):
+                        print("aborted"); return 1
+                try:
+                    counts = client.reassign_owner(
+                        args.old_owner, args.new_owner,
+                        register_target=not args.no_register)
+                except ValueError as exc:
+                    print(f"error: {exc}"); return 2
+                registered = counts.pop("target_registered", 0)
+                print(f"reassigned {args.old_owner} -> {args.new_owner}:")
+                for key, value in counts.items():
+                    print(f"  {key}: {value}")
+                if registered:
+                    print(f"  registered '{args.new_owner}' as an agent "
+                          f"(now recognized by the console and pickers)")
+                print("note: peers converge on the next sync (ACL clock bumped)")
+                return 0
+            if args.action == "delete":
+                if not args.old_owner:
+                    print("owner delete requires <owner>"); return 2
+                target = args.old_owner
+                if not args.yes:
+                    existing = {r["owner"]: r for r in client.owner_counts()}
+                    row = existing.get(target)
+                    n = (row["memories"] + row["archived"]) if row else 0
+                    reply = input(
+                        f"permanently delete ALL {n} memories owned by "
+                        f"'{target}'? this cannot be undone [y/N]: ")
+                    if reply.strip().lower() not in ("y", "yes"):
+                        print("aborted"); return 1
+                counts = client.purge_owner(target)
+                print(f"deleted owner {target}:")
+                for key, value in counts.items():
+                    print(f"  {key}: {value}")
                 return 0
 
         if args.command == "join":
