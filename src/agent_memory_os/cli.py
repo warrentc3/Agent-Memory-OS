@@ -255,6 +255,32 @@ def build_parser() -> argparse.ArgumentParser:
                        help="reassign: do NOT register the destination as an agent "
                             "(leaves the moved memories under an unrecognized owner)")
 
+    fleet = sub.add_parser(
+        "fleet",
+        help="Fleet admin identity: keygen on the console node, grant/revoke on each managed node",
+        description=(
+            "A fleet admin holds an Ed25519 private key on ONE console node; every "
+            "node that should accept its signed cross-node operations registers the "
+            "PUBLIC key with 'fleet grant'. Grants are local-only by design — they "
+            "never propagate over sync, so a peer cannot make itself an admin."
+        ),
+    )
+    fleet.add_argument("action",
+                       choices=["keygen", "grant", "revoke", "list",
+                                "status", "sync", "update"])
+    fleet.add_argument("value", nargs="?", default=None,
+                       help="grant: the console's PUBLIC key (b64); revoke: the key id")
+    fleet.add_argument("--caps", default="manage",
+                       help="grant: comma-separated capabilities — 'manage' (status, "
+                            "update, sync, owner ops) and/or 'read-private' (read "
+                            "memory content across nodes). Default: manage")
+    fleet.add_argument("--force", action="store_true",
+                       help="keygen: overwrite an existing fleet key")
+    fleet.add_argument("--json", action="store_true", dest="as_json",
+                       help="status: machine-readable output")
+    fleet.add_argument("--node", default=None,
+                       help="sync/update: target one node's URL instead of all")
+
     retention = sub.add_parser("retention", help="Archive expired and deeply-decayed memories")
     retention.add_argument(
         "--half-lives", type=float, default=None,
@@ -1318,6 +1344,110 @@ def main(argv: list[str] | None = None) -> int:
                 for key, value in counts.items():
                     print(f"  {key}: {value}")
                 return 0
+
+        if args.command == "fleet":
+            from . import crypto
+
+            if args.action == "keygen":
+                existing = crypto.load_fleet_key(args.home)
+                if existing and not args.force:
+                    print(f"fleet key already exists (key id {existing.get('key_id')}); "
+                          "pass --force to replace it — nodes that granted the old "
+                          "key will need a re-grant")
+                    return 2
+                keypair = crypto.generate_fleet_keypair()
+                path = crypto.save_fleet_key(args.home, keypair)
+                print(f"fleet admin keypair written to {path} (mode 600)")
+                print(f"  key id:     {keypair['key_id']}")
+                print(f"  public key: {keypair['public_key']}")
+                print("on every node this console should manage, run:")
+                print(f"  agent-memory fleet grant {keypair['public_key']} --caps manage")
+                print("(add --caps manage,read-private to also allow reading memory content)")
+                return 0
+            if args.action == "grant":
+                if not args.value:
+                    print("fleet grant requires the console's public key"); return 2
+                caps = [c.strip() for c in args.caps.split(",") if c.strip()]
+                try:
+                    grant = client.store.grant_fleet_admin(args.value, caps)
+                except ValueError as exc:
+                    print(f"error: {exc}"); return 2
+                print(f"granted fleet admin {grant['key_id']} caps={','.join(grant['caps'])}")
+                if "read-private" in grant["caps"]:
+                    print("note: read-private lets this key read ALL memory content on "
+                          "this node, including private memories — every such read is "
+                          "recorded in the org audit log")
+                return 0
+            if args.action == "revoke":
+                if not args.value:
+                    print("fleet revoke requires a key id"); return 2
+                if client.store.revoke_fleet_admin(args.value):
+                    print(f"revoked fleet admin {args.value} — signed requests from "
+                          "this key are refused immediately")
+                    return 0
+                print(f"no active grant for key id {args.value}")
+                return 1
+            if args.action == "list":
+                admins = client.store.list_fleet_admins()
+                own = crypto.load_fleet_key(args.home)
+                if own:
+                    print(f"this node's own fleet key: {own.get('key_id')} "
+                          f"(private key held here — this node can act as console)")
+                print(json.dumps(admins, ensure_ascii=False, indent=2))
+                return 0
+            from .fleet import FleetKeyMissing, fleet_status, fleet_trigger
+
+            if args.action == "status":
+                try:
+                    report = fleet_status(client, args.home)
+                except FleetKeyMissing as exc:
+                    print(f"error: {exc}"); return 2
+                if args.as_json:
+                    print(json.dumps(report, ensure_ascii=False, indent=2))
+                    return 0
+                console = report["console"]
+                print(f"console: {console['node_name']} (key {console['key_id']}, "
+                      f"v{console['version']}) — {console['memories']} memories, "
+                      f"{console['links']} links, {len(console['owners'])} owners")
+                if not report["nodes"]:
+                    print("no managed nodes — register peers (join/peers add), then "
+                          "run `fleet grant` on each")
+                    return 0
+                for n in report["nodes"]:
+                    if not n["reachable"]:
+                        mark, extra = "✗ offline", n["detail"]
+                    elif not n["authorized"]:
+                        mark, extra = "! unauthorized", n["detail"]
+                    else:
+                        owners = len(n["owners"] or [])
+                        mark = "✓ ok"
+                        extra = (f"v{n['version']} — {n['memories']} memories, "
+                                 f"{n['links']} links, {owners} owners")
+                    name = n["name"] or n["node_name"] or n["url"]
+                    print(f"  {mark:15s} {name:20s} {n['url']}  {extra}")
+                if report["version_drift"]:
+                    print(f"⚠ version drift across the fleet: {report['versions']} — "
+                          "run `agent-memory fleet update` to converge")
+                return 0
+            if args.action in ("sync", "update"):
+                try:
+                    results = fleet_trigger(client, args.home, args.action,
+                                            only_url=args.node)
+                except (FleetKeyMissing, ValueError) as exc:
+                    print(f"error: {exc}"); return 2
+                if not results:
+                    print("no managed nodes"); return 0
+                failed = 0
+                for r in results:
+                    state = "ok" if r["ok"] else f"FAILED (HTTP {r['status']})"
+                    print(f"  {r['name'] or r['url']}: {state}")
+                    if not r["ok"]:
+                        failed += 1
+                        detail = r["response"]
+                        if isinstance(detail, dict):
+                            detail = detail.get("detail", detail)
+                        print(f"    {detail}")
+                return 1 if failed else 0
 
         if args.command == "join":
             return _cmd_join(client, args)

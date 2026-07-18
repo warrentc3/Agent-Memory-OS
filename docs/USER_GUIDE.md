@@ -68,6 +68,11 @@ Global flag: `--home <dir>`.
 | `owner list` | Every owner holding memories on this host, with live/archived counts and whether it is a registered agent. Surfaces owners the Browse tab hides (ACL-filtered by "Acting as"). |
 | `owner reassign <old> <new> [--yes] [--no-register]` | Fold one owner's memories into another (merge-capable — the target **may already exist**). Previews the count and confirms first. Registers the destination as an agent so the moved memories stay recognized (`--no-register` opts out, with a warning). The fix for "memories landed under `default` instead of my agent id." |
 | `owner delete <owner> [--yes]` | Permanently forget every memory owned by `<owner>` (live + archive + links + audit/recall logs + tombstones). Prompts to confirm unless `--yes`. |
+| `fleet keygen [--force]` | Make THIS node a fleet console: mint an Ed25519 keypair (`<home>/fleet_admin_key`, mode 600) and print the public key to grant elsewhere. |
+| `fleet grant <public key> [--caps manage,read-private]` | On a managed node: accept signed operations from that console key. `manage` = operate (status/owner tools/sync/update); `read-private` additionally allows reading memory content — audited per read. |
+| `fleet revoke <key id>` / `fleet list` | Stop accepting a key immediately (per node — grants never propagate, so neither must revocations) / show grants + this node's own key. |
+| `fleet status [--json]` | The whole fleet at a glance: console + every peer's version (drift warning), health, memory totals, owner counts. Up-but-not-granted nodes show as `! unauthorized`. |
+| `fleet sync\|update [--node URL]` | Trigger a mesh sync or self-update on every managed node (or one). |
 | `status [--json] [--no-probe]` | This host + connected nodes: service state, console reachability, store totals, per-peer online/offline + policy/token/last-synced. |
 | `neighbors [--ports A-B]` | Discover other AgentMemoryOS nodes on this host (loopback `/healthz` scan; finding is not joining). |
 | `team invite <team> [--ttl s]` | Mint a one-time pairing code so another node can join this team. |
@@ -132,6 +137,7 @@ and auditors.
 | `GET/POST/DELETE /api/agents[…]` | Agent registry. |
 | `GET/POST/DELETE /api/peers`, `GET /api/peers/status`, `POST /api/sync/run`, `GET /api/sync/export`, `POST /api/sync/import` | Federation. `/peers/status` probes each peer's health for the console's connection dot. |
 | `GET /api/owners`, `POST /api/owners/reassign` | List owners with counts; re-attribute one owner's memories to another (merge-capable). |
+| `GET /api/fleet/status`, `POST /api/fleet/trigger` | Console-node only: aggregate fleet view; run sync/update across managed nodes. Cross-node calls authenticate with per-request Ed25519 signatures (`X-AMOS-Fleet-*` headers), not bearer tokens. |
 | `DELETE /api/owners/{owner}/memories?confirm=<owner>` | Forget an agent entirely (double confirmation). |
 
 ---

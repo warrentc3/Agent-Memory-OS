@@ -65,6 +65,23 @@ for the full model. The load-bearing points:
   unless you pass `--insecure`. (A future asymmetric handshake would remove
   the need to transmit the code at all.)
 
+- **Fleet admin (v1.6): delegated, verifiable, per-node-revocable authority.**
+  A console signs each cross-node operation with an Ed25519 private key; a
+  managed node accepts it only if its *local operator* granted the matching
+  public key (`fleet grant`) — grants have no sync channel, so a peer can
+  never make itself an admin. Signatures cover method+path+query+body digest
+  +timestamp+nonce (±120 s freshness, durable single-use nonces), so nothing
+  replayable crosses the wire. Capabilities split `manage` (operate the node)
+  from `read-private` (read memory content, including private memories) —
+  grant the latter deliberately and per node; every accepted mutation and
+  every content read is written to the target node's org audit as
+  `fleet:<key id>`. **Known limitations:** the console's
+  `<home>/fleet_admin_key` is a high-value secret (compromise = every cap on
+  every granting node until revoked per node — protect it with OS permissions
+  and revoke immediately on suspicion), and fleet requests ride the same HTTP
+  transport as everything else, so use TLS beyond loopback: the signature
+  authenticates but does not encrypt (pair with the mesh key / TLS as below).
+
 - **Peer transport: content encryption is available; protect the token with
   TLS.** Set a shared mesh key (`agent-memory sync genkey`, distributed as
   `AGENT_MEMORY_SYNC_KEY` on every node) and sync bundles are encrypted

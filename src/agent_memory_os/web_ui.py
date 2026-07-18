@@ -301,6 +301,7 @@ PAGE = r"""<!doctype html>
     <button data-tab="graph">Graph</button>
     <button data-tab="agents">Agents</button>
     <button data-tab="teams">Teams</button>
+    <button data-tab="fleet">Fleet</button>
     <button data-tab="add">Add memory</button>
     <button data-tab="tools">Tools</button>
   </nav>
@@ -411,6 +412,22 @@ PAGE = r"""<!doctype html>
       </div>
     </div>
     <div id="teams-list" style="margin-top:12px"></div>
+  </section>
+
+  <section class="tab" id="tab-fleet">
+    <div class="panel">
+      <h3>Fleet console</h3>
+      <p class="hint" style="font-size:12.5px;color:var(--muted);margin:0 0 12px">Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.</p>
+      <div class="row">
+        <button class="ghost" id="btn-fleet-refresh">Refresh fleet</button>
+        <button class="ghost" id="btn-fleet-sync-all">⇆ Sync all</button>
+        <button class="ghost" id="btn-fleet-update-all">⬆ Update all</button>
+      </div>
+      <div id="fleet-console-card" style="margin-top:10px"></div>
+      <div id="fleet-drift" style="margin-top:6px;font-size:13px;color:var(--warn,#d29922)"></div>
+    </div>
+    <div class="toplist" id="fleet-nodes" style="margin-top:12px"></div>
+    <div id="fleet-out" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
   </section>
 
   <section class="tab" id="tab-add">
@@ -722,6 +739,10 @@ Object.assign(I18N["zh-TW"], {"connected":"已連線","disconnected":"已斷線"
 Object.assign(I18N["zh-CN"], {"connected":"已连接","disconnected":"已断开","reachable but degraded":"可连接但状态异常","local (no peer)":"本机(无 peer)"});
 Object.assign(I18N["ja"], {"connected":"接続済み","disconnected":"切断","reachable but degraded":"到達可能だが劣化","local (no peer)":"ローカル(peer なし)"});
 Object.assign(I18N["ko"], {"connected":"연결됨","disconnected":"연결 끊김","reachable but degraded":"도달 가능하나 저하됨","local (no peer)":"로컬(피어 없음)"});
+Object.assign(I18N["zh-TW"], {"Fleet":"艦隊","Fleet console":"艦隊主控台","Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.":"這個主控台管理的所有節點一覽:版本、健康、記憶總數、擁有者。跨節點操作以本節點的艦隊金鑰簽章,由各節點各自驗證、檢查能力並稽核——不會有共享祕密經過網路。","Refresh fleet":"重新整理艦隊","⇆ Sync all":"⇆ 全部同步","⬆ Update all":"⬆ 全部更新","This node has no fleet key — it is a managed node, not a console. To make it the console, run:":"本節點沒有艦隊金鑰——它是受管節點,不是主控台。要讓它成為主控台,請執行:","key":"金鑰","⚠ version drift across the fleet:":"⚠ 艦隊版本不一致:","No managed nodes — register peers (join / peers add), then run fleet grant on each.":"尚無受管節點——先註冊 peer(join / peers add),再到各節點執行 fleet grant。","reachable but not granted":"可連線但未授權","not granted — run fleet grant on this node":"未授權——請在該節點執行 fleet grant","Sync":"同步","Update":"更新","Update this node? It will upgrade itself and restart.":"更新此節點?它會自行升級並重啟。","Update ALL nodes? Each will upgrade itself and restart.":"更新「全部」節點?每台都會自行升級並重啟。","owners":"位擁有者","no managed nodes":"尚無受管節點"});
+Object.assign(I18N["zh-CN"], {"Fleet":"舰队","Fleet console":"舰队控制台","Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.":"该控制台管理的所有节点一览:版本、健康、记忆总数、所有者。跨节点操作以本节点的舰队密钥签名,由各节点独立验证、检查能力并审计——没有共享秘密经过网络。","Refresh fleet":"刷新舰队","⇆ Sync all":"⇆ 全部同步","⬆ Update all":"⬆ 全部更新","This node has no fleet key — it is a managed node, not a console. To make it the console, run:":"本节点没有舰队密钥——它是受管节点,不是控制台。要让它成为控制台,请运行:","key":"密钥","⚠ version drift across the fleet:":"⚠ 舰队版本不一致:","No managed nodes — register peers (join / peers add), then run fleet grant on each.":"尚无受管节点——先注册 peer(join / peers add),再到各节点运行 fleet grant。","reachable but not granted":"可连接但未授权","not granted — run fleet grant on this node":"未授权——请在该节点运行 fleet grant","Sync":"同步","Update":"更新","Update this node? It will upgrade itself and restart.":"更新此节点?它会自行升级并重启。","Update ALL nodes? Each will upgrade itself and restart.":"更新「全部」节点?每台都会自行升级并重启。","owners":"位所有者","no managed nodes":"尚无受管节点"});
+Object.assign(I18N["ja"], {"Fleet":"フリート","Fleet console":"フリートコンソール","Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.":"このコンソールが管理する全ノードを一望:バージョン、ヘルス、記憶総数、所有者。ノード間操作は本ノードのフリート鍵で署名され、各ノードが独立に検証・権限確認・監査します——共有シークレットはネットワークを流れません。","Refresh fleet":"フリートを更新","⇆ Sync all":"⇆ すべて同期","⬆ Update all":"⬆ すべて更新","This node has no fleet key — it is a managed node, not a console. To make it the console, run:":"このノードにはフリート鍵がありません——管理対象ノードであり、コンソールではありません。コンソールにするには実行:","key":"鍵","⚠ version drift across the fleet:":"⚠ フリート内でバージョン不一致:","No managed nodes — register peers (join / peers add), then run fleet grant on each.":"管理対象ノードがありません——peer を登録(join / peers add)し、各ノードで fleet grant を実行してください。","reachable but not granted":"到達可能だが未許可","not granted — run fleet grant on this node":"未許可——このノードで fleet grant を実行","Sync":"同期","Update":"更新","Update this node? It will upgrade itself and restart.":"このノードを更新?自己アップグレードして再起動します。","Update ALL nodes? Each will upgrade itself and restart.":"「全」ノードを更新?各ノードが自己アップグレードして再起動します。","owners":"所有者","no managed nodes":"管理対象ノードなし"});
+Object.assign(I18N["ko"], {"Fleet":"플릿","Fleet console":"플릿 콘솔","Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.":"이 콘솔이 관리하는 모든 노드 한눈에 보기: 버전, 상태, 기억 총수, 소유자. 노드 간 작업은 이 노드의 플릿 키로 서명되며 각 노드가 독립적으로 검증·권한 확인·감사합니다 — 공유 비밀이 네트워크를 지나지 않습니다.","Refresh fleet":"플릿 새로고침","⇆ Sync all":"⇆ 모두 동기화","⬆ Update all":"⬆ 모두 업데이트","This node has no fleet key — it is a managed node, not a console. To make it the console, run:":"이 노드에는 플릿 키가 없습니다 — 관리 대상 노드이며 콘솔이 아닙니다. 콘솔로 만들려면 실행:","key":"키","⚠ version drift across the fleet:":"⚠ 플릿 버전 불일치:","No managed nodes — register peers (join / peers add), then run fleet grant on each.":"관리 노드 없음 — peer를 등록(join / peers add)한 뒤 각 노드에서 fleet grant를 실행하세요.","reachable but not granted":"도달 가능하나 미승인","not granted — run fleet grant on this node":"미승인 — 이 노드에서 fleet grant 실행","Sync":"동기화","Update":"업데이트","Update this node? It will upgrade itself and restart.":"이 노드를 업데이트할까요? 스스로 업그레이드 후 재시작합니다.","Update ALL nodes? Each will upgrade itself and restart.":"모든 노드를 업데이트할까요? 각 노드가 스스로 업그레이드 후 재시작합니다.","owners":"명의 소유자","no managed nodes":"관리 노드 없음"});
 
 let locale = localStorage.getItem("amos.locale") || (() => {
   const nav = (navigator.language || "en");
@@ -901,6 +922,7 @@ document.querySelectorAll("nav.tabs button").forEach((button) => {
     if (button.dataset.tab === "agents") refreshAgents();
     if (button.dataset.tab === "teams") refreshTeams();
     if (button.dataset.tab === "tools") loadOwners();
+    if (button.dataset.tab === "fleet") loadFleet();
   });
 });
 
@@ -1366,6 +1388,88 @@ $("btn-node-rename").addEventListener("click", async () => {
 });
 $("btn-audit-refresh").addEventListener("click", loadAudit);
 $("btn-owners-refresh").addEventListener("click", loadOwners);
+
+/* ---------- fleet console ---------- */
+async function loadFleet() {
+  const card = $("fleet-console-card"), list = $("fleet-nodes"), drift = $("fleet-drift");
+  card.textContent = t("Working…"); list.innerHTML = ""; drift.textContent = "";
+  let data;
+  try { data = await api("/api/fleet/status"); }
+  catch (e) { card.textContent = String(e.message || e); return; }
+  card.innerHTML = "";
+  if (!data.configured) {
+    card.appendChild(el("div", "sm", t("This node has no fleet key — it is a managed node, not a console. To make it the console, run:")));
+    const code = el("code", null, "agent-memory fleet keygen");
+    code.style.cssText = "display:inline-block;margin-top:4px";
+    card.appendChild(code);
+    return;
+  }
+  const c = data.console;
+  const line = el("div", "sm");
+  line.appendChild(el("b", null, c.node_name));
+  line.appendChild(document.createTextNode(
+    " · v" + c.version + " · " + c.memories + " " + t("memories") +
+    " · " + (c.owners ? c.owners.length : 0) + " " + t("owners") +
+    " · " + t("key") + " " + c.key_id));
+  card.appendChild(line);
+  if (data.version_drift)
+    drift.textContent = t("⚠ version drift across the fleet:") + " " + data.versions.join(", ");
+  if (!data.nodes.length) {
+    list.appendChild(el("span", "sm", t("No managed nodes — register peers (join / peers add), then run fleet grant on each.")));
+    return;
+  }
+  for (const n of data.nodes) {
+    const row = el("div", "toprow");
+    const label = el("span", "sm");
+    const entry = !n.reachable
+      ? { state: "down", title: t("disconnected") + (n.detail ? " · " + n.detail : "") }
+      : (!n.authorized
+        ? { state: "warn", title: t("reachable but not granted") + (n.detail ? " · " + n.detail : "") }
+        : { state: "ok", title: t("connected") + " · v" + n.version });
+    label.appendChild(statusDot(entry));
+    label.appendChild(el("b", null, n.name || n.node_name || n.url));
+    let extra = " · " + n.url;
+    if (n.authorized) {
+      extra += " · v" + n.version + " · " + n.memories + " " + t("memories") +
+        " · " + (n.owners ? n.owners.length : 0) + " " + t("owners");
+    } else if (n.reachable) {
+      extra += " · " + t("not granted — run fleet grant on this node");
+    }
+    label.appendChild(document.createTextNode(extra));
+    row.appendChild(label);
+    const actions = el("span");
+    actions.style.cssText = "display:flex;gap:6px;flex:0 0 auto";
+    const syncBtn = el("button", "ghost", t("Sync"));
+    syncBtn.style.fontSize = "11px";
+    syncBtn.addEventListener("click", () => fleetTrigger("sync", n.url));
+    const updBtn = el("button", "ghost", t("Update"));
+    updBtn.style.fontSize = "11px";
+    updBtn.addEventListener("click", () => {
+      if (confirm(t("Update this node? It will upgrade itself and restart."))) fleetTrigger("update", n.url);
+    });
+    actions.append(syncBtn, updBtn);
+    row.appendChild(actions);
+    list.appendChild(row);
+  }
+}
+async function fleetTrigger(action, url) {
+  const out = $("fleet-out");
+  out.textContent = t("Working…");
+  try {
+    const r = await api("/api/fleet/trigger", { method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: action, url: url || "" }) });
+    out.textContent = r.results.map((x) =>
+      (x.name || x.url) + ": " + (x.ok ? "ok" : "HTTP " + x.status)).join(" · ")
+      || t("no managed nodes");
+    loadFleet();
+  } catch (e) { out.textContent = e.message; }
+}
+$("btn-fleet-refresh").addEventListener("click", loadFleet);
+$("btn-fleet-sync-all").addEventListener("click", () => fleetTrigger("sync", ""));
+$("btn-fleet-update-all").addEventListener("click", () => {
+  if (confirm(t("Update ALL nodes? Each will upgrade itself and restart."))) fleetTrigger("update", "");
+});
 $("graph-filter").addEventListener("change", (e) => { graphFilter = e.target.value; loadGraph(); });
 $("btn-team-create").addEventListener("click", async () => {
   const id = $("tm-id").value.trim(); if (!id) return;

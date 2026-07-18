@@ -51,6 +51,18 @@ Governance rules:
 - `agent-memory-mcp` console entry point (zero-install `uvx` runs; MCP-directory
   listings such as Smithery).
 
+## Shipped — v1.6 (fleet console)
+
+- **Central management without central authority**: any node with a fleet key
+  (`fleet keygen`) consoles every node that granted it (`fleet grant`), over
+  per-request Ed25519 signatures (method+path+query+body+timestamp+nonce;
+  durable nonce replay guard; ±120 s freshness). Grants are local-CLI-only
+  (no sync channel — tested), capability-split (`manage` vs `read-private`),
+  audited on the target node, revocable per node instantly.
+- **Fleet tab (WebUI) + `fleet status|sync|update` (CLI)**: version matrix
+  with drift warning, per-node health/memories/owners, per-node and
+  fleet-wide sync/update. `GET /api/fleet/status`, `POST /api/fleet/trigger`.
+
 ## Shipped — v1.5 (ownership tooling)
 
 - **Owner tools** across CLI, Web console, and API: `owner list` surfaces every

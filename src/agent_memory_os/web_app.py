@@ -12,6 +12,7 @@ import argparse
 import hmac
 import os
 import threading
+import time
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
@@ -186,6 +187,11 @@ class OwnerReassignRequest(BaseModel):
     register_target: bool = True
 
 
+class FleetTriggerRequest(BaseModel):
+    action: str = Field(pattern="^(sync|update)$")
+    url: str = ""
+
+
 class ShareRequest(BaseModel):
     actor: str = Field(min_length=1)
     to_agent: str | None = None
@@ -295,6 +301,64 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 return os.getenv("AGENT_MEMORY_ALLOW_TEAM_UPDATE", "").lower() in ("1", "true", "yes")
             return False
 
+        # Fleet admin signatures (v1.6): an alternative to bearer tokens for
+        # cross-node operations. The console signs each request with its
+        # Ed25519 key; this node verifies against the PUBLIC keys the local
+        # operator granted (fleet_admins). Content-bearing routes additionally
+        # require the 'read-private' capability — a manage-only admin can
+        # operate the node but never read memory content.
+        FLEET_FRESHNESS_S = 120
+        FLEET_CONTENT_PREFIXES = (
+            "/api/memories", "/api/search", "/api/recall", "/api/context-pack",
+            "/api/orchestrate", "/api/archive", "/api/graph", "/api/sync/export",
+        )
+
+        def _fleet_required_cap(path: str) -> str:
+            if any(path.startswith(p) for p in FLEET_CONTENT_PREFIXES):
+                return "read-private"
+            return "manage"
+
+        async def _fleet_authorizes(request) -> tuple[bool, str, str]:
+            """(allowed, key_id, deny_reason) for a signed fleet request."""
+            from . import crypto as _crypto
+
+            key_id = request.headers.get("x-amos-fleet-key-id", "")
+            timestamp = request.headers.get("x-amos-fleet-timestamp", "")
+            nonce = request.headers.get("x-amos-fleet-nonce", "")
+            signature = request.headers.get("x-amos-fleet-signature", "")
+            if not (key_id and timestamp and nonce and signature):
+                return False, key_id, "incomplete fleet signature headers"
+            with lock:
+                admin = client.store.get_fleet_admin(key_id)
+            if admin is None:
+                return False, key_id, "unknown or revoked fleet key"
+            try:
+                skew = abs(time.time() - int(timestamp))
+            except ValueError:
+                return False, key_id, "malformed timestamp"
+            if skew > FLEET_FRESHNESS_S:
+                return False, key_id, "signature expired"
+            target = request.url.path + (
+                f"?{request.url.query}" if request.url.query else "")
+            body = await request.body()
+            message = _crypto.fleet_canonical_message(
+                request.method, target, body, timestamp, nonce)
+            if not _crypto.fleet_verify(admin["public_key"], message, signature):
+                return False, key_id, "invalid signature"
+            required = _fleet_required_cap(request.url.path)
+            if required not in admin["caps"]:
+                return False, key_id, f"capability '{required}' not granted"
+            # Consume the nonce LAST — only a fully valid signature may burn
+            # it, and the atomic insert makes concurrent replays lose.
+            with lock:
+                if not client.store.consume_fleet_nonce(nonce):
+                    return False, key_id, "replayed nonce"
+                # Every accepted mutation and every content read is auditable
+                # on the node it happened on.
+                if request.method not in safe_methods or required == "read-private":
+                    client.store.audit_fleet_op(f"{request.method} {target}", key_id)
+            return True, key_id, ""
+
         @app.middleware("http")
         async def require_token(request, call_next):
             # Pairing redemption authenticates with the one-time invite code
@@ -314,8 +378,13 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                     or (ro and request.method in safe_methods)
                     or (sync and _sync_scoped(request.url.path, request.method))
                 )
+                fleet_reason = ""
+                if not allowed and request.headers.get("x-amos-fleet-key-id"):
+                    allowed, _fleet_key, fleet_reason = await _fleet_authorizes(request)
                 if not allowed:
-                    if (ro or sync):
+                    if fleet_reason:
+                        detail, status = f"fleet signature refused: {fleet_reason}", 403
+                    elif (ro or sync):
                         detail, status = (
                             "this token is not authorized for this action", 403)
                     else:
@@ -777,6 +846,40 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     def peers_list() -> dict[str, Any]:
         with lock:
             return {"peers": client.store.list_peers()}
+
+    @app.get("/api/fleet/status")
+    def fleet_status_view() -> dict[str, Any]:
+        """Aggregate fleet view — only meaningful on a console node (one that
+        holds a fleet admin private key). Elsewhere returns configured=false
+        with setup guidance instead of erroring, so the UI can explain."""
+        from .fleet import (FleetKeyMissing, assemble_status, console_snapshot,
+                            load_console_key, probe_peers)
+
+        try:
+            keypair = load_console_key(home)
+        except FleetKeyMissing as exc:
+            return {"configured": False, "hint": str(exc)}
+        # Local snapshot under the store lock; the (slow) network fan-out
+        # runs outside it so the console stays responsive meanwhile.
+        with lock:
+            console, peers = console_snapshot(client, keypair)
+        nodes = probe_peers(keypair, peers)
+        return {"configured": True} | assemble_status(console, nodes)
+
+    @app.post("/api/fleet/trigger")
+    def fleet_trigger_view(request: FleetTriggerRequest) -> dict[str, Any]:
+        """Run 'sync' or 'update' on every managed node (or one URL)."""
+        from .fleet import FleetKeyMissing, load_console_key, trigger_on
+
+        try:
+            keypair = load_console_key(home)
+            with lock:
+                peers = client.store.list_peers()
+            results = trigger_on(keypair, peers, request.action,
+                                 only_url=request.url or None)
+        except (FleetKeyMissing, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"action": request.action, "results": results}
 
     @app.get("/api/peers/status")
     def peers_status() -> dict[str, Any]:

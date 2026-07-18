@@ -75,6 +75,32 @@ Same pairing flow, over the network instead of loopback:
   `AGENT_MEMORY_ALLOW_TEAM_UPDATE=1` (explicit per-node opt-in; a sync token
   gains no other power from it). `agent-memory status` flags version drift.
 
+## Central console (fleet admin — works on top of topology 3 or 4)
+
+Any of the above can add ONE management surface without giving up per-node
+data sovereignty: pick a node to be the console and delegate it verifiable,
+per-node-revocable authority.
+
+```bash
+# on the console node (the one whose WebUI you'll use):
+agent-memory fleet keygen           # prints the public key
+
+# on EVERY node it should manage:
+agent-memory fleet grant <public key> --caps manage
+#   add ,read-private ONLY if this node's owner wants the console
+#   to read memory content here (each read is audited)
+
+# then, from the console:
+agent-memory fleet status           # version matrix, health, totals, owners
+agent-memory fleet sync|update      # fan out to all nodes (or --node URL)
+```
+
+The WebUI's **Fleet** tab gives the same view and actions. Managed nodes can
+run headless (service only, no browser use) — one console WebUI covers the
+whole fleet. Each operation is Ed25519-signed per request (no shared secret
+on the wire), each node verifies against its own local grant, and
+`fleet revoke <key id>` on any node cuts that node loose immediately.
+
 ## Quick matrix
 
 | Topology | Stores | Sharing mechanism | Extra setup |
@@ -83,3 +109,4 @@ Same pairing flow, over the network instead of loopback:
 | 1 machine / 1 account / N agents | **one** | same home + per-agent `AGENT_MEMORY_AGENT_ID` | register agents/teams |
 | 1 machine / N accounts | one per account | `neighbors` → `team invite`/`join` (loopback) | per-account service; ports auto-assigned |
 | N machines | one per node | `team invite`/`join` (network) + `sync auto` | TLS or mesh key; `update --team` opt-in |
+| + central console | unchanged | `fleet keygen` / `fleet grant` (Ed25519-signed ops) | grant per node; `read-private` only where wanted |

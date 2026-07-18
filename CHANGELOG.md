@@ -4,6 +4,39 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.6.0] — 2026-07-19
+
+Fleet console: manage every node from one place — one WebUI for a same-host
+multi-account fleet or a multi-host mesh — without giving up local-first data
+sovereignty.
+
+- **Coordinator, not controller.** Any node that runs `agent-memory fleet
+  keygen` can act as the console for every node that ran `agent-memory fleet
+  grant <public key>`. Each managed node keeps final say: it verifies every
+  request's Ed25519 signature against its own locally-stored grant, enforces
+  its own capability split, audits what it accepted, and can revoke at any
+  moment. Losing the console loses nothing but the aggregate view.
+- **Signed cross-node auth (no shared secret on the wire).** Requests carry
+  `X-AMOS-Fleet-*` headers signing method + path + query + body digest +
+  timestamp + nonce: tampering with any of them, replaying (durable nonce
+  table), or drifting past ±120 s invalidates the signature. Grants live in a
+  new `fleet_admins` table (migration 17) written ONLY via the local CLI —
+  the sync bundle has no channel for them, so an untrusted peer can never
+  mint itself admin access.
+- **Two capabilities, granted per node.** `manage` operates the node (status,
+  owner tooling, sync, self-update); `read-private` additionally allows
+  reading memory content across nodes — deliberately separate, off by
+  default, and every such read lands in the owning node's org audit log
+  attributed to the signing key.
+- **Fleet tab (WebUI) + `fleet status|sync|update` (CLI).** Version matrix
+  with drift warning, per-node health dot / memory totals / owner counts,
+  per-node and fleet-wide Sync and Update actions. Nodes that are up but not
+  granted show as such instead of vanishing. New API: `GET /api/fleet/status`,
+  `POST /api/fleet/trigger`.
+- Revocation is per node by design (grants never propagate, so neither must
+  revocations): `agent-memory fleet revoke <key id>` on the node(s) involved
+  takes effect immediately.
+
 ## [1.5.1] — 2026-07-19
 
 Fixes to the team-join flow that left the console out of sync on both nodes,

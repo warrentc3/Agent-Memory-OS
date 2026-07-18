@@ -654,3 +654,41 @@ this had happened, let alone fix it.
   *discoverable*, not merely reachable. `agent rename` additionally warns that a
   live service/MCP still bound to the old id won't see the memories until
   repointed — identity is data, not process state.
+
+## v1.6 Fleet console: coordinator, not controller
+
+Field-driven by fleet operations pain: three nodes meant three upgrades, three
+consoles, and SSH-into-the-DB to confirm a join. The obvious fix — a central
+management node — collides with the local-first thesis, so v1.6 resolves the
+tension by making the console a COORDINATOR with delegated, verifiable,
+per-node-revocable authority instead of a controller with standing power.
+
+- **Identity = Ed25519 keypair, authority = per-node grants.** The console
+  holds a private key (`fleet keygen`, `<home>/fleet_admin_key`, 0600); each
+  managed node stores only the public key with the capabilities ITS operator
+  granted (`fleet grant`, `fleet_admins`, migration 17). Grants are written
+  only via the local CLI — the sync bundle has no fleet channel (tested), so
+  the D1–D4 boundary holds: no peer can escalate itself.
+- **Per-request signatures instead of bearer secrets.** Every cross-node call
+  signs method + path?query + SHA-256(body) + timestamp + nonce. Freshness is
+  ±120 s; nonces burn once in a durable table (replay-safe across restarts);
+  any mutation of route, params, or payload invalidates the signature. Nothing
+  reusable crosses the wire.
+- **Capability split maps to the privacy boundary.** `manage` = operate the
+  node (status, owner tooling, sync, update). `read-private` = read memory
+  content (the content-bearing routes: memories/search/recall/context-pack/
+  orchestrate/archive/graph/sync-export). The split exists so the common case
+  — operating a fleet — never implies reading anyone's private memories; the
+  uncommon case is an explicit, per-node, audited choice.
+- **Audit lands where the data lives.** Every accepted mutation and every
+  content read is recorded in the TARGET node's org_audit as
+  `fleet:<key id>` — a node's owner can always see what the console did here.
+- **Revocation is per node because grants are per node.** There is nothing to
+  propagate: `fleet revoke` takes effect immediately on that node. (A signed
+  fleet-wide revoke convenience can layer on later without model changes.)
+- **Console surfaces.** `fleet status` (CLI) and the WebUI Fleet tab aggregate
+  version (with drift warning), health, memory totals, and owner counts across
+  all peers concurrently; `fleet sync|update` fan out management actions. A
+  node that is up but not granted reports "unauthorized" instead of vanishing
+  — visibility of the fleet's trust state is itself a feature. Recommended
+  topology: managed nodes run headless (API only), one node runs the console.

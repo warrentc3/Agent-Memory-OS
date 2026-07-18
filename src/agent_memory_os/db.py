@@ -449,6 +449,37 @@ def _migration_pairing_invites(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_fleet_admins(conn: sqlite3.Connection) -> None:
+    # Fleet admin trust anchors (v1.6). Each row is an Ed25519 PUBLIC key this
+    # node accepts signed cross-node operations from, with the capabilities the
+    # local operator granted it. Grants arrive ONLY via the local CLI/trusted
+    # pairing channel — never from a peer's sync bundle — so an untrusted peer
+    # can never mint itself admin access (the D1–D4 trust boundary).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fleet_admins (
+          key_id TEXT PRIMARY KEY,
+          public_key TEXT NOT NULL,
+          caps TEXT NOT NULL,
+          granted_at TEXT NOT NULL,
+          granted_by TEXT NOT NULL DEFAULT 'local',
+          revoked_at TEXT
+        )
+        """
+    )
+    # Replay guard for signed fleet requests: each nonce is accepted exactly
+    # once (INSERT is the atomic check). Durable so a service restart within
+    # the signature-freshness window cannot be replayed against.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS fleet_nonces (
+          nonce TEXT PRIMARY KEY,
+          seen_at TEXT NOT NULL
+        )
+        """
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -466,6 +497,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (14, "federate org structure: versioning + tombstones + audit", _migration_org_federation),
     (15, "acl clock so share/revoke propagate over sync", _migration_acl_clock),
     (16, "one-time pairing invites for team join", _migration_pairing_invites),
+    (17, "fleet admin trust anchors + signature replay guard", _migration_fleet_admins),
 ]
 
 
@@ -1689,6 +1721,101 @@ class MemoryStore:
             "SELECT id, team_id FROM pairing_invites WHERE code_hash = ?", (code_hash,)
         ).fetchone()
         return {"id": row["id"], "team_id": row["team_id"]} if row else None
+
+    # ---------- fleet admin trust anchors (v1.6) ----------
+
+    FLEET_CAPS = {"manage", "read-private"}
+
+    def grant_fleet_admin(
+        self, public_key: str, caps: Sequence[str], *, actor: str = "local"
+    ) -> dict[str, object]:
+        """Accept signed fleet operations from this Ed25519 public key.
+
+        Local-trust-channel only by design: this method is reached from the
+        CLI (or a deliberate operator surface), NEVER from sync import — a
+        peer must not be able to grant itself admin access. Granting an
+        existing key updates its caps and clears any revocation.
+        """
+        public_key = public_key.strip()
+        if not public_key:
+            raise ValueError("public key must be non-empty")
+        cap_list = sorted({c.strip() for c in caps if c.strip()})
+        if not cap_list:
+            raise ValueError("at least one capability is required")
+        unknown = set(cap_list) - self.FLEET_CAPS
+        if unknown:
+            raise ValueError(
+                f"unknown capabilities: {sorted(unknown)} (valid: {sorted(self.FLEET_CAPS)})")
+        from . import crypto
+
+        key_id = crypto.fleet_key_id(public_key)
+        now = utc_now()
+        self.conn.execute(
+            "INSERT INTO fleet_admins(key_id, public_key, caps, granted_at, granted_by)"
+            " VALUES (?, ?, ?, ?, ?)"
+            " ON CONFLICT(key_id) DO UPDATE SET caps = excluded.caps,"
+            " granted_at = excluded.granted_at, granted_by = excluded.granted_by,"
+            " revoked_at = NULL",
+            (key_id, public_key, json.dumps(cap_list), now, actor),
+        )
+        self._org_audit("grant_fleet_admin", f"{key_id} caps={','.join(cap_list)}", actor)
+        self.conn.commit()
+        return {"key_id": key_id, "caps": cap_list, "granted_at": now}
+
+    def revoke_fleet_admin(self, key_id: str, *, actor: str = "local") -> bool:
+        """Stop accepting this key immediately (row kept for the audit trail)."""
+        cursor = self.conn.execute(
+            "UPDATE fleet_admins SET revoked_at = ? WHERE key_id = ? AND revoked_at IS NULL",
+            (utc_now(), key_id.strip()),
+        )
+        if cursor.rowcount:
+            self._org_audit("revoke_fleet_admin", key_id.strip(), actor)
+        self.conn.commit()
+        return cursor.rowcount > 0
+
+    def list_fleet_admins(self) -> list[dict[str, object]]:
+        rows = self.conn.execute(
+            "SELECT key_id, public_key, caps, granted_at, granted_by, revoked_at"
+            " FROM fleet_admins ORDER BY granted_at DESC"
+        ).fetchall()
+        return [dict(r) | {"caps": json.loads(r["caps"])} for r in rows]
+
+    def get_fleet_admin(self, key_id: str) -> dict[str, object] | None:
+        """The ACTIVE (non-revoked) grant for a key id, or None."""
+        row = self.conn.execute(
+            "SELECT key_id, public_key, caps FROM fleet_admins"
+            " WHERE key_id = ? AND revoked_at IS NULL",
+            (key_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        return {"key_id": row["key_id"], "public_key": row["public_key"],
+                "caps": json.loads(row["caps"])}
+
+    def audit_fleet_op(self, detail: str, key_id: str) -> None:
+        """Record an accepted fleet-admin operation in the org audit trail —
+        on the node it happened on, attributed to the signing key."""
+        self._org_audit("fleet_op", detail, f"fleet:{key_id}")
+        self.conn.commit()
+
+    def consume_fleet_nonce(self, nonce: str, *, prune_older_than_s: int = 600) -> bool:
+        """Atomically claim a signature nonce; False if already seen (replay).
+
+        Nonces only need to outlive the signature-freshness window; anything
+        older is pruned opportunistically on each call.
+        """
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=prune_older_than_s)).isoformat()
+        self.conn.execute("DELETE FROM fleet_nonces WHERE seen_at < ?", (cutoff,))
+        try:
+            self.conn.execute(
+                "INSERT INTO fleet_nonces(nonce, seen_at) VALUES (?, ?)",
+                (nonce, utc_now()),
+            )
+        except sqlite3.IntegrityError:
+            self.conn.commit()
+            return False
+        self.conn.commit()
+        return True
 
     def record_peer_sync(self, url: str, result: str) -> None:
         self.conn.execute(
