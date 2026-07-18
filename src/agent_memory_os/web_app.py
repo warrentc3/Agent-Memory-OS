@@ -778,6 +778,38 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         with lock:
             return {"peers": client.store.list_peers()}
 
+    @app.get("/api/peers/status")
+    def peers_status() -> dict[str, Any]:
+        """Probe every registered peer's /healthz concurrently and report
+        liveness. Powers the console's connection dot (green ok / orange
+        degraded / red unreachable). Separate from /api/peers so the peer list
+        renders instantly while these network probes fill in."""
+        from concurrent.futures import ThreadPoolExecutor
+        from .discovery import probe_node
+
+        with lock:
+            peers = client.store.list_peers()
+        if not peers:
+            return {"statuses": []}
+
+        def _probe(peer: dict) -> dict:
+            p = probe_node(peer["url"])
+            return {
+                "url": peer["url"],
+                "name": peer.get("name") or "",
+                "node_name": p.node_name,
+                "reachable": p.reachable,
+                "is_amos": p.is_amos,
+                "status": p.status,
+                "integrity": p.integrity,
+                "version": p.extras.get("version", ""),
+                "detail": p.detail,
+            }
+
+        with ThreadPoolExecutor(max_workers=min(8, len(peers))) as pool:
+            statuses = list(pool.map(_probe, peers))
+        return {"statuses": statuses}
+
     @app.post("/api/peers")
     def peers_add(request: PeerRequest) -> dict[str, Any]:
         # Auto-fill the peer's friendly name from its advertised node identity
@@ -813,6 +845,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 payload = pairing.redeem_invite(
                     client, request.envelope, request.code,
                     home=home, self_node_name=client.node_name,
+                    self_agent_id=os.getenv("AGENT_MEMORY_AGENT_ID") or client.node_name,
                 )
             except ValueError as exc:
                 raise HTTPException(status_code=403, detail="pairing refused") from exc

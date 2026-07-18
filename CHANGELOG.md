@@ -4,6 +4,30 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.5.1] — 2026-07-19
+
+Fixes to the team-join flow that left the console out of sync on both nodes,
+plus a connection-status indicator.
+
+- **Fix: a joining node never appeared in the inviter's Agents tab.**
+  `join_team_and_register_peer` used `UPDATE agents … WHERE id = ?`, a no-op for
+  an id that doesn't exist yet — so a paired remote agent landed in
+  `team_members` and `sync_peers` but never in the agents registry. It is now
+  registered (kind `custom`, named after its node), so it shows up as a proper
+  identity instead of a bare member id. Re-joins only bump `last_seen_at`,
+  never clobbering an operator-set display name.
+- **Fix: a joining node's own Teams tab stayed empty.** `join_with_code` wired
+  up the inviter as a peer but never recorded the team locally. It now creates
+  the team and adds itself as a member on redemption, and — using the inviter's
+  identity, newly returned in the redeem response — registers the inviter as a
+  team member/agent too. Both sides converge immediately instead of waiting on
+  a sync pass.
+- **Connection status in the console.** New `GET /api/peers/status` probes every
+  peer's `/healthz` concurrently; the Federation panel, Agents tab, and Teams
+  member chips now show a color dot next to the display name — green (connected),
+  orange (reachable but degraded/integrity failure), red (unreachable). Local
+  identities with no peer stay dotless. Translated across all five locales.
+
 ## [1.5.0] — 2026-07-19
 
 Ownership tooling: find, migrate, and delete memories by owner — the operator

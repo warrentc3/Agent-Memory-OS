@@ -1183,8 +1183,17 @@ class MemoryStore:
                 raise ValueError("peer URL must start with http:// or https://")
         with self.conn:  # single atomic transaction (no inner commits below)
             now = utc_now()
+            # Register the joining agent in the registry, not just touch it: a
+            # remote node joining by pairing has no prior row here, and an
+            # UPDATE would no-op and leave it invisible in the Agents tab
+            # (member of the team, but not a known identity). INSERT it as a
+            # 'custom' agent named after its node; on re-join only bump the
+            # clock so an operator-set display_name/kind is never clobbered.
             self.conn.execute(
-                "UPDATE agents SET last_seen_at = ? WHERE id = ?", (now, agent_id))
+                "INSERT INTO agents(id, display_name, kind, teams, notes, created_at, last_seen_at)"
+                " VALUES (?, ?, 'custom', '[]', '', ?, ?)"
+                " ON CONFLICT(id) DO UPDATE SET last_seen_at = excluded.last_seen_at",
+                (agent_id, peer_name or agent_id, now, now))
             self.conn.execute(
                 "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
                 (team_id, agent_id))

@@ -402,3 +402,20 @@ def test_web_api_owners_reassign_rejects_identical(tmp_path):
     client = TestClient(app)
     r = client.post("/api/owners/reassign", json={"old_owner": "x", "new_owner": "x"})
     assert r.status_code == 400
+
+
+def test_web_api_peers_status_probes_and_reports(tmp_path):
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    # No peers → empty, fast.
+    assert client.get("/api/peers/status").json() == {"statuses": []}
+    # A registered but unreachable peer reports reachable=False with keys the
+    # console's color dot relies on.
+    client.post("/api/peers", json={"url": "http://127.0.0.1:9", "policy": "shared"})
+    statuses = client.get("/api/peers/status").json()["statuses"]
+    assert len(statuses) == 1
+    s = statuses[0]
+    assert s["url"] == "http://127.0.0.1:9"
+    assert s["reachable"] is False
+    for key in ("name", "node_name", "is_amos", "status", "integrity", "version", "detail"):
+        assert key in s

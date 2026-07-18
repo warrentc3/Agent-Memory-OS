@@ -718,6 +718,10 @@ Object.assign(I18N["zh-TW"], {"Ownership":"擁有權","Refresh owners":"重新�
 Object.assign(I18N["zh-CN"], {"Ownership":"归属","Refresh owners":"刷新所有者","No owners yet.":"暂无所有者。","live":"现存","archived":"已归档","registered":"已注册","not shown while acting as":"以此身份浏览时不显示:","Reassign…":"重新指派…","Delete":"删除","Reassign every memory owned by":"将该所有者的所有记忆重新指派","to which owner? (the target may already exist — its memories are kept and these are folded in)":"到哪个所有者?(目标可已存在——保留其记忆并将这些并入)","Enter a target owner.":"请输入目标所有者。","Source and target are the same.":"来源与目标相同。","moved":"条已迁移","registered so it's recognized":"已注册,系统可识别","This permanently deletes ALL memories, links and the recall profile of":"这将永久删除以下所有者的全部记忆、关联与召回配置:","Type the owner id again to confirm:":"再次输入所有者 ID 以确认:","Confirmation did not match — nothing was deleted.":"确认不符——未删除任何内容。","Owner":"所有者","forgotten":"已遗忘","Working…":"处理中…"});
 Object.assign(I18N["ja"], {"Ownership":"所有権","Refresh owners":"所有者を更新","No owners yet.":"所有者はまだいません。","live":"現存","archived":"アーカイブ済み","registered":"登録済み","not shown while acting as":"この識別子で閲覧中は非表示:","Reassign…":"再割り当て…","Delete":"削除","Reassign every memory owned by":"次の所有者のすべての記憶を再割り当て","to which owner? (the target may already exist — its memories are kept and these are folded in)":"どの所有者へ?(既存でも可——その記憶は保持され、これらが統合されます)","Enter a target owner.":"対象の所有者を入力してください。","Source and target are the same.":"元と先が同じです。","moved":"件を移動","registered so it's recognized":"登録済み・認識可能に","This permanently deletes ALL memories, links and the recall profile of":"次の所有者のすべての記憶・リンク・想起プロファイルを完全に削除します:","Type the owner id again to confirm:":"確認のため所有者IDを再入力:","Confirmation did not match — nothing was deleted.":"確認が一致しません——何も削除されていません。","Owner":"所有者","forgotten":"忘却しました","Working…":"処理中…"});
 Object.assign(I18N["ko"], {"Ownership":"소유권","Refresh owners":"소유자 새로고침","No owners yet.":"아직 소유자가 없습니다.","live":"현존","archived":"보관됨","registered":"등록됨","not shown while acting as":"이 신원으로 탐색 중에는 표시 안 됨:","Reassign…":"재할당…","Delete":"삭제","Reassign every memory owned by":"다음 소유자의 모든 기억을 재할당","to which owner? (the target may already exist — its memories are kept and these are folded in)":"어느 소유자로? (대상이 이미 있어도 됨 — 그 기억은 유지되고 이것들이 병합됩니다)","Enter a target owner.":"대상 소유자를 입력하세요.","Source and target are the same.":"원본과 대상이 같습니다.","moved":"개 이동됨","registered so it's recognized":"등록되어 인식됨","This permanently deletes ALL memories, links and the recall profile of":"다음 소유자의 모든 기억·링크·회상 프로필을 영구 삭제합니다:","Type the owner id again to confirm:":"확인을 위해 소유자 ID를 다시 입력:","Confirmation did not match — nothing was deleted.":"확인이 일치하지 않음 — 아무것도 삭제되지 않았습니다.","Owner":"소유자","forgotten":"잊음","Working…":"처리 중…"});
+Object.assign(I18N["zh-TW"], {"connected":"已連線","disconnected":"已斷線","reachable but degraded":"可連線但狀態異常","local (no peer)":"本機(無 peer)"});
+Object.assign(I18N["zh-CN"], {"connected":"已连接","disconnected":"已断开","reachable but degraded":"可连接但状态异常","local (no peer)":"本机(无 peer)"});
+Object.assign(I18N["ja"], {"connected":"接続済み","disconnected":"切断","reachable but degraded":"到達可能だが劣化","local (no peer)":"ローカル(peer なし)"});
+Object.assign(I18N["ko"], {"connected":"연결됨","disconnected":"연결 끊김","reachable but degraded":"도달 가능하나 저하됨","local (no peer)":"로컬(피어 없음)"});
 
 let locale = localStorage.getItem("amos.locale") || (() => {
   const nav = (navigator.language || "en");
@@ -835,6 +839,45 @@ function el(tag, className, text) {
   if (className) node.className = className;
   if (text !== undefined && text !== null) node.textContent = text;
   return node;
+}
+
+/* ---------- peer connection status (color dot) ---------- */
+let peerStatusCache = {};
+async function fetchPeerStatus() {
+  try {
+    const data = await api("/api/peers/status");
+    const byKey = {};
+    for (const s of data.statuses) {
+      let state = "down", title = t("disconnected");
+      if (s.reachable && s.is_amos && s.status === "ok" && s.integrity !== false) {
+        state = "ok"; title = t("connected") + (s.version ? " · v" + s.version : "");
+      } else if (s.reachable && s.is_amos) {
+        state = "warn"; title = t("reachable but degraded") + (s.detail ? " · " + s.detail : "");
+      } else if (s.detail) {
+        title = t("disconnected") + " · " + s.detail;
+      }
+      const entry = { state: state, title: title };
+      for (const k of [s.url, s.name, s.node_name]) if (k) byKey[k] = entry;
+    }
+    peerStatusCache = byKey;
+  } catch (e) { /* keep last-known cache */ }
+  return peerStatusCache;
+}
+// A small colored dot; entry is undefined for identities with no known peer
+// (purely local — rendered as a neutral grey dot so layout stays aligned).
+function statusDot(entry) {
+  const colors = { ok: "#3fb950", warn: "#d29922", down: "#e0555f" };
+  const dot = el("span");
+  const color = entry ? (colors[entry.state] || "#8b93b0") : "#8b93b0";
+  dot.style.cssText = "display:inline-block;width:9px;height:9px;border-radius:50%;"
+    + "margin-right:6px;vertical-align:middle;flex:0 0 auto;background:" + color;
+  dot.title = entry ? entry.title : t("local (no peer)");
+  return dot;
+}
+// Match an identity (agent id / display name / member id) to a probed peer.
+function statusFor(...keys) {
+  for (const k of keys) if (k && peerStatusCache[k]) return peerStatusCache[k];
+  return null;
 }
 
 async function loadStats() {
@@ -1123,7 +1166,7 @@ async function loadDashboard() {
 async function refreshTeams() {
   const box = $("teams-list");
   try {
-    const [teamsData, agentsData] = await Promise.all([api("/api/teams"), api("/api/agents")]);
+    const [teamsData, agentsData] = await Promise.all([api("/api/teams"), api("/api/agents"), fetchPeerStatus()]);
     const allAgents = agentsData.agents.map((a) => a.id);
     box.innerHTML = "";
     if (!teamsData.teams.length) {
@@ -1137,8 +1180,9 @@ async function refreshTeams() {
   } catch (e) { /* pre-auth */ }
 }
 
-function chipRemove(label, onRemove) {
+function chipRemove(label, onRemove, statusEntry) {
   const chip = el("span", "tag");
+  if (statusEntry) chip.appendChild(statusDot(statusEntry));
   chip.appendChild(document.createTextNode(label));
   const x = el("button", null, "×");
   x.style.cssText = "margin-left:6px;border:none;background:none;cursor:pointer;color:var(--muted);font-size:14px";
@@ -1185,7 +1229,7 @@ function renderTeam(team, allAgents) {
   const mchips = el("div", "tags");
   for (const m of team.members) mchips.appendChild(chipRemove(m, async () => {
     await api("/api/teams/" + encodeURIComponent(team.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams(); warnOrphans();
-  }));
+  }, statusFor(m)));
   if (!team.members.length) mchips.appendChild(el("span", "sm", t("no members")));
   panel.appendChild(mchips);
   panel.appendChild(memberPicker(allAgents.filter((a) => !team.members.includes(a)), async (id) => {
@@ -1238,7 +1282,7 @@ async function loadProjects(team, projList) {
 async function refreshAgents() {
   const list = $("agents-list");
   try {
-    const data = await api("/api/agents");
+    const [data] = await Promise.all([api("/api/agents"), fetchPeerStatus()]);
     const datalist = $("agent-ids");
     datalist.innerHTML = "";
     list.innerHTML = "";
@@ -1255,6 +1299,10 @@ async function refreshAgents() {
       const top = el("div", "top");
       top.appendChild(el("span", "badge kind-" + agent.kind, agent.kind));
       const name = el("span", "owner");
+      // Only remote/peer identities carry a connection dot; a purely local
+      // agent has no peer to probe, so it stays dotless (no false "offline").
+      const agentStatus = statusFor(agent.id, agent.display_name);
+      if (agentStatus) name.appendChild(statusDot(agentStatus));
       name.appendChild(el("b", null, agent.id));
       if (agent.display_name) name.appendChild(document.createTextNode(" · " + agent.display_name));
       top.appendChild(name);
@@ -1931,12 +1979,14 @@ $("btn-bundle-import").addEventListener("click", async () => {
 async function refreshPeers() {
   const list = $("peer-list");
   try {
-    const data = await api("/api/peers");
+    const [data] = await Promise.all([api("/api/peers"), fetchPeerStatus()]);
     list.innerHTML = "";
     if (!data.peers.length) { list.appendChild(el("span", "sm", t("No peers registered — this host syncs alone."))); return; }
     for (const peer of data.peers) {
       const row = el("div", "toprow");
-      const label = el("span", "sm", (peer.name ? peer.name + " · " : "") + peer.url + (peer.last_synced_at ? " · last: " + peer.last_result : " · never synced"));
+      const label = el("span", "sm");
+      label.appendChild(statusDot(statusFor(peer.url, peer.name)));
+      label.appendChild(document.createTextNode((peer.name ? peer.name + " · " : "") + peer.url + (peer.last_synced_at ? " · last: " + peer.last_result : " · never synced")));
       const badge = el("span", "pill", peer.policy || "shared");
       badge.style.cssText = "margin-left:6px;font-size:10px;padding:1px 7px;border-radius:8px;background:var(--chip);color:var(--muted)";
       if ((peer.policy || "shared") === "full") badge.title = t("full policy shares private memories — use only for your own trusted nodes");

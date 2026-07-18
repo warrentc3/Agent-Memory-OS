@@ -140,6 +140,22 @@ def test_join_full_exchange(inviter, tmp_path, monkeypatch):
     got_joiner_token = inviter["client"].store.peer_token("http://127.0.0.1:8010")
     assert got_joiner_token == tokens.load_token(joiner_home, tier="sync")
 
+    # Inviter registers the joiner as an AGENT (not just a team member), so it
+    # shows in the Agents tab instead of being an invisible member id.
+    inviter_agents = {a["id"] for a in inviter["client"].store.list_agents()}
+    assert "account-b" in inviter_agents
+
+    # Joiner records the team + its OWN membership locally (immediately visible
+    # in the Teams tab, not only after sync converges).
+    joined_team = joiner.store.get_team("apollo")
+    assert joined_team is not None
+    assert "account-b" in (joined_team.get("members") or [])
+    # ...and registers the inviter as a team member/agent from the response id.
+    joiner_agents = {a["id"] for a in joiner.store.list_agents()}
+    inviter_self = inviter["client"].node_name
+    assert inviter_self in joiner_agents
+    assert inviter_self in (joined_team.get("members") or [])
+
     # The code died with the exchange.
     with pytest.raises(ValueError, match="refused"):
         pairing.join_with_code(

@@ -130,7 +130,7 @@ and auditors.
 | `POST /api/memories/{id}/share\|revoke`, `GET /api/memories/{id}/audit` | Owner-only sharing / de-identified copies / audit trail. |
 | `POST /api/consolidate`, `POST /api/retention`, `GET /api/archive`, `POST /api/archive/{id}/restore` | Hygiene & lifecycle. |
 | `GET/POST/DELETE /api/agents[…]` | Agent registry. |
-| `GET/POST/DELETE /api/peers`, `POST /api/sync/run`, `GET /api/sync/export`, `POST /api/sync/import` | Federation. |
+| `GET/POST/DELETE /api/peers`, `GET /api/peers/status`, `POST /api/sync/run`, `GET /api/sync/export`, `POST /api/sync/import` | Federation. `/peers/status` probes each peer's health for the console's connection dot. |
 | `GET /api/owners`, `POST /api/owners/reassign` | List owners with counts; re-attribute one owner's memories to another (merge-capable). |
 | `DELETE /api/owners/{owner}/memories?confirm=<owner>` | Forget an agent entirely (double confirmation). |
 

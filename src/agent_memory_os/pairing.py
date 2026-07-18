@@ -69,13 +69,17 @@ def redeem_invite(
     *,
     home: str | None = None,
     self_node_name: str = "",
+    self_agent_id: str = "",
 ) -> dict:
     """Validate + consume an invite and swap credentials with the joiner.
 
     `envelope` is the joiner's request payload encrypted under the code:
       {node_name, agent_id, url, sync_token}   (their token, for us)
     Returns the response payload (NOT yet encrypted):
-      {team_id, node_name, sync_token, sync_key?}  (our token/key, for them)
+      {team_id, node_name, agent_id, sync_token, sync_key?}  (our creds, for them)
+
+    `agent_id` in the response is OUR identity, so the joiner can register us
+    as a team member/agent locally instead of waiting for sync to converge.
 
     Raises ValueError on any invalid/expired/used code or undecryptable
     envelope — callers map that to a single opaque 403.
@@ -119,6 +123,7 @@ def redeem_invite(
     response: dict[str, Any] = {
         "team_id": team_id,
         "node_name": self_node_name,
+        "agent_id": self_agent_id or self_node_name,
         "sync_token": own_sync_token,
     }
     sync_key = crypto.load_sync_secret(home)
@@ -217,11 +222,21 @@ def join_with_code(
     team_id = str(payload["team_id"])
     their_token = str(payload.get("sync_token") or "") or None
     their_name = str(payload.get("node_name") or "")
+    their_agent_id = str(payload.get("agent_id") or "").strip()
 
     client.store.touch_agent(agent_id)
     client.store.add_peer(
         url, token=their_token, policy=f"team:{team_id}", name=their_name,
     )
+    # Record the joined team locally so it is visible immediately (Teams tab,
+    # ACL) instead of only after org structure converges over sync: create the
+    # team, add ourselves, and register the inviter as a team member/agent.
+    client.store.create_team(team_id)
+    client.store.add_team_member(team_id, agent_id, actor="pairing-join")
+    if their_agent_id and their_agent_id != agent_id:
+        client.store.register_agent(
+            their_agent_id, display_name=their_name or their_agent_id, kind="custom")
+        client.store.add_team_member(team_id, their_agent_id, actor="pairing-join")
 
     key_installed = False
     their_key = str(payload.get("sync_key") or "")
