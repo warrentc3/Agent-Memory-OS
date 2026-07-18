@@ -1190,6 +1190,12 @@ async function refreshTeams() {
   try {
     const [teamsData, agentsData] = await Promise.all([api("/api/teams"), api("/api/agents"), fetchPeerStatus()]);
     const allAgents = agentsData.agents.map((a) => a.id);
+    // Agent id is IDENTITY, node/peer name is DISPLAY — they need not match.
+    // Correlate member chips to peer status through the registry's
+    // display_name too, so a member whose node is named differently from its
+    // agent id still gets a connection dot.
+    const displayNames = {};
+    for (const a of agentsData.agents) displayNames[a.id] = a.display_name || "";
     box.innerHTML = "";
     if (!teamsData.teams.length) {
       const empty = el("div", "empty");
@@ -1198,7 +1204,7 @@ async function refreshTeams() {
       box.appendChild(empty);
       return;
     }
-    for (const team of teamsData.teams) box.appendChild(renderTeam(team, allAgents));
+    for (const team of teamsData.teams) box.appendChild(renderTeam(team, allAgents, displayNames));
   } catch (e) { /* pre-auth */ }
 }
 
@@ -1233,7 +1239,7 @@ function memberPicker(candidates, onAdd) {
   return row;
 }
 
-function renderTeam(team, allAgents) {
+function renderTeam(team, allAgents, displayNames) {
   const panel = el("div", "panel"); panel.style.marginBottom = "12px";
   const head = el("div", "top");
   const title = el("span", "owner"); title.appendChild(el("b", null, "\u{1F465} " + team.id));
@@ -1251,7 +1257,7 @@ function renderTeam(team, allAgents) {
   const mchips = el("div", "tags");
   for (const m of team.members) mchips.appendChild(chipRemove(m, async () => {
     await api("/api/teams/" + encodeURIComponent(team.id) + "/members?agent_id=" + encodeURIComponent(m), { method: "DELETE" }); refreshTeams(); warnOrphans();
-  }, statusFor(m)));
+  }, statusFor(m, (displayNames || {})[m])));
   if (!team.members.length) mchips.appendChild(el("span", "sm", t("no members")));
   panel.appendChild(mchips);
   panel.appendChild(memberPicker(allAgents.filter((a) => !team.members.includes(a)), async (id) => {
