@@ -149,3 +149,51 @@ def test_path_show_and_install(tmp_path, monkeypatch, capsys):
     # idempotent
     cli.main(["path", "install"])
     assert zshrc.read_text().count("/nonexistent/scripts-dir") == 1
+
+
+def test_redeemed_by_records_the_actual_agent(tmp_path, monkeypatch):
+    """The audit column stores the joiner's agent id, not a 'pending' stub."""
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient as HttpClient
+
+    from agent_memory_os import pairing
+    from agent_memory_os.web_app import create_app
+
+    home = tmp_path / "inv"
+    app = create_app(home)
+    with HttpClient(app) as http:
+        c = MemoryClient(home=home)
+        c.store.create_team("apollo")
+        invite = pairing.issue_invite(c, "apollo")
+
+        def bridge(url, body, *, timeout=15):
+            r = http.post(pairing.REDEEM_PATH, json=body)
+            assert r.status_code == 200, r.text
+            return r.json()
+
+        monkeypatch.setattr(pairing, "_post_redeem", bridge)
+        j = MemoryClient(home=tmp_path / "joiner")
+        pairing.join_with_code(j, invite["code"], "http://127.0.0.1:9",
+                               agent_id="account-z", home=str(tmp_path / "joiner"))
+        row = c.store.conn.execute(
+            "SELECT redeemed_by FROM pairing_invites").fetchone()
+        assert row["redeemed_by"] == "account-z"
+        c.close(); j.close()
+
+
+def test_path_install_replaces_stale_line(tmp_path, monkeypatch, capsys):
+    from agent_memory_os import cli
+
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    zshrc = tmp_path / ".zshrc"
+
+    monkeypatch.setattr(cli, "_scripts_dir", lambda: "/old/py3.11/bin")
+    cli.main(["path", "install"])
+    monkeypatch.setattr(cli, "_scripts_dir", lambda: "/new/py3.12/bin")
+    cli.main(["path", "install"])
+
+    text = zshrc.read_text()
+    assert "/new/py3.12/bin" in text
+    assert "/old/py3.11/bin" not in text  # stale entry removed, not accumulated
+    assert text.count("added by agent-memory") == 1

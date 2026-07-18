@@ -720,14 +720,26 @@ def pull_from_peer(client, base_url: str, *, since: str | None = None,
                 f"peer {base_url} returned an encrypted bundle but no "
                 "AGENT_MEMORY_SYNC_KEY is configured on this node")
         body = crypto.decrypt_bundle(body, secret)
+    # The bundle header (first line) carries the peer's node_name; capture it
+    # so sync_with_peer can refresh the display name without a second request.
+    peer_node_name = ""
+    try:
+        first_nl = body.find("\n")
+        header = json.loads(body[:first_nl] if first_nl >= 0 else body)
+        peer_node_name = str(header.get("node_name") or "").strip()
+    except Exception:  # noqa: BLE001 - header parse is best-effort
+        pass
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
         handle.write(body)
     try:
         with _guard(lock):
-            return client.import_bundle(
+            counts = client.import_bundle(
                 handle.name, source_peer=base_url.rstrip("/"),
                 trusted=trusted, org_scope=org_scope,
             )
+        if peer_node_name:
+            counts["_peer_node_name"] = peer_node_name
+        return counts
     finally:
         Path(handle.name).unlink(missing_ok=True)
 
@@ -769,15 +781,13 @@ def sync_with_peer(client, url: str, *, peer_token: str | None = None,
         org_scope=_org_scope_for_policy(policy), lock=lock,
     )
     pushed = push_to_peer(client, url, peer_token=peer_token, policy=policy, lock=lock)
-    # Refresh the peer's display name from its advertised identity: node
+    # Refresh the peer's display name from the node_name already carried in the
+    # bundle header we just pulled — no extra /api/node round-trip. Node
     # renames otherwise never reach the peers that registered the old name.
-    try:
-        advertised = fetch_peer_node_name(url, token=peer_token)
-        if advertised:
-            with _guard(lock):
-                client.store.update_peer_name(url, advertised)
-    except Exception:  # noqa: BLE001 - cosmetic; sync result matters more
-        pass
+    advertised = str(pulled.pop("_peer_node_name", "") or "")
+    if advertised:
+        with _guard(lock):
+            client.store.update_peer_name(url, advertised)
     # Record on the registered peer (if any) so `agent-memory status` and the
     # console show real last_synced/last_result for EVERY sync path — direct
     # pull/push, join's first sync, and the mesh loop alike.

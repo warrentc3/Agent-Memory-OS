@@ -176,6 +176,9 @@ def build_parser() -> argparse.ArgumentParser:
     join.add_argument("--my-url", default=None,
                       help="URL the inviter should sync back to (default: this node's host:port)")
     join.add_argument("--no-sync", action="store_true", help="Skip the initial sync after joining")
+    join.add_argument("--insecure", action="store_true",
+                      help="Allow sending the pairing code over plain HTTP to a non-local host "
+                           "(only on a trusted network; prefer https)")
 
     status = sub.add_parser(
         "status",
@@ -283,6 +286,7 @@ def _cmd_status(client, args) -> int:
     from .discovery import probe_node
     from .pidfile import read_web_pidfile
     from .settings import load_instance_settings
+    from .tokens import resolve_home
 
     settings = load_instance_settings(args.home)
     console_url = f"http://{settings.host}:{settings.port}"
@@ -290,7 +294,7 @@ def _cmd_status(client, args) -> int:
     local: dict = {
         "node_name": client.node_name,
         "version": _md.version("agent-memory-os"),
-        "home": str(Path(args.home).expanduser()) if args.home else None,
+        "home": str(resolve_home(args.home)),
         "console_url": console_url,
         "service": svc.status_info(),
         "web": None,
@@ -304,15 +308,21 @@ def _cmd_status(client, args) -> int:
         local["web"] = probe_node(console_url).as_dict()
 
     peers = client.store.list_peers()
-    peer_rows = []
-    for peer in peers:
-        row = dict(peer)
-        if not args.no_probe:
-            probe = probe_node(str(peer["url"]))
+    peer_rows = [dict(peer) for peer in peers]
+    if not args.no_probe and peer_rows:
+        # Probe peers concurrently — a serial loop blocks ~2s per unreachable
+        # peer, so a few dead nodes made `status` feel hung.
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _probe(row):
+            probe = probe_node(str(row["url"]))
             row["online"] = probe.is_amos
             row["remote_node"] = probe.node_name
             row["remote_status"] = probe.status
-        peer_rows.append(row)
+            return row
+
+        with ThreadPoolExecutor(max_workers=min(8, len(peer_rows))) as pool:
+            list(pool.map(_probe, peer_rows))
 
     report = {"local": local, "peers": peer_rows}
     if args.json:
@@ -373,6 +383,7 @@ def _cmd_join(client, args) -> int:
             client, args.code, args.url,
             agent_id=agent_id, my_url=my_url,
             node_name=settings.node_name, home=args.home,
+            allow_insecure=args.insecure,
         )
     except ValueError as exc:
         print(f"error: {exc}")
@@ -435,10 +446,18 @@ def _cmd_path(args) -> int:
     if line in existing:
         print(f"{rc} already contains the export line — open a new terminal.")
         return 0
+    # Replace any previous managed line (e.g. a stale scripts dir after a venv
+    # move) rather than appending a second one, so PATH never accumulates dead
+    # entries. The marker comment + the line after it are our managed block.
+    import re
+
+    block = f"{marker}\n{line}"
+    if marker in existing:
+        existing = re.sub(rf"\n?{re.escape(marker)}\n[^\n]*\n?", "\n", existing)
     rc.parent.mkdir(parents=True, exist_ok=True)
-    with rc.open("a", encoding="utf-8") as handle:
-        handle.write(f"\n{marker}\n{line}\n")
-    print(f"appended to {rc} — open a new terminal (or: source {rc})")
+    rc.write_text(existing.rstrip("\n") + f"\n\n{block}\n" if existing.strip()
+                  else f"{block}\n", encoding="utf-8")
+    print(f"updated {rc} — open a new terminal (or: source {rc})")
     return 0
 
 

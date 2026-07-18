@@ -14,12 +14,17 @@ one explicit consent exchange:
 
 Security model:
 - Only the SHA-256 hash of the code is stored; the code itself is shown once.
-- The redeem HTTP exchange is end-to-end encrypted UNDER THE CODE using the
-  same authenticated Fernet construction as sync bundles (crypto.py), so the
-  tokens/sync-key crossing the wire are unreadable without the code — even
-  over plain loopback HTTP, and even by the web tier's other middleware.
 - Redemption is atomic and single-use (db.consume_pairing_invite); expired,
-  used, and unknown codes are indistinguishable to the caller.
+  used, and unknown codes are indistinguishable to the caller. The code is
+  validated and the envelope decrypted BEFORE the invite is consumed, and the
+  membership + peer writes happen in one DB transaction, so a malformed
+  request neither burns the code nor leaves half-joined state.
+- The redeem bodies are Fernet-encrypted UNDER THE CODE (crypto.py), which
+  keeps the tokens/sync-key out of URL/header access logs. NOTE: the code
+  travels in the same POST body (the server needs it to decrypt), so this is
+  NOT confidentiality against a full-body network observer — for a join
+  beyond loopback, use TLS. `join_with_code` refuses a non-loopback http://
+  target unless `allow_insecure=True`.
 - Joining is never automatic: discovery (discovery.py) only *finds* nodes;
   membership always requires a code issued by the other node's operator.
 """
@@ -75,13 +80,11 @@ def redeem_invite(
     Raises ValueError on any invalid/expired/used code or undecryptable
     envelope — callers map that to a single opaque 403.
     """
-    invite = client.store.consume_pairing_invite(
-        _hash_code(code), redeemed_by="pending",
-    )
-    if invite is None:
-        raise ValueError("invalid, expired, or already-used pairing code")
-    team_id = str(invite["team_id"])
-
+    # Decrypt and validate BEFORE consuming, so a malformed request cannot
+    # burn a still-valid code. Require a real AMOSENC1 envelope — a plaintext
+    # body is rejected so the confidentiality control is not silently optional.
+    if not crypto.is_encrypted(envelope):
+        raise ValueError("pairing envelope must be encrypted")
     try:
         request = json.loads(crypto.decrypt_bundle(envelope, code))
     except Exception as exc:  # noqa: BLE001 - opaque failure to caller
@@ -94,18 +97,21 @@ def redeem_invite(
     if not agent_id:
         raise ValueError("pairing request missing agent_id")
 
-    # 1. Team membership for the joining agent (registry + ACL authority).
-    client.store.touch_agent(agent_id)
-    client.store.add_team_member(team_id, agent_id, actor="pairing-invite")
+    # Now consume the invite atomically. Only after a wrong/expired/used code
+    # is ruled out (and the envelope proven well-formed) does the code burn.
+    invite = client.store.consume_pairing_invite(_hash_code(code), redeemed_by=agent_id)
+    if invite is None:
+        raise ValueError("invalid, expired, or already-used pairing code")
+    team_id = str(invite["team_id"])
 
-    # 2. Register the joiner as OUR peer, scoped to the invited team only.
-    if joiner_url:
-        client.store.add_peer(
-            joiner_url, token=joiner_token,
-            policy=f"team:{team_id}", name=joiner_name,
-        )
+    # Membership + peer registration in ONE transaction: either the joiner is
+    # fully wired up (team member + peer) or nothing changed.
+    client.store.join_team_and_register_peer(
+        team_id, agent_id,
+        peer_url=joiner_url, peer_token=joiner_token, peer_name=joiner_name,
+    )
 
-    # 3. Hand back OUR credentials: a sync-scoped token (mint on first use —
+    # Hand back OUR credentials: a sync-scoped token (mint on first use —
     #    never the admin token) and the mesh key so encryption engages.
     own_sync_token = tokens.load_token(home, tier="sync")
     if not own_sync_token:
@@ -145,6 +151,13 @@ def _post_redeem(url: str, body: dict, *, timeout: int = 15) -> dict:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _is_loopback(url: str) -> bool:
+    from urllib.parse import urlparse
+
+    host = (urlparse(url).hostname or "").lower()
+    return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or host.endswith(".localhost")
+
+
 def join_with_code(
     client: Any,
     code: str,
@@ -154,16 +167,28 @@ def join_with_code(
     my_url: str = "",
     node_name: str = "",
     home: str | None = None,
+    allow_insecure: bool = False,
 ) -> dict:
     """Redeem `code` against the inviter at `url` and wire up sharing locally.
 
     On success both sides hold a team-scoped peer entry for each other and
     this node has the inviter's sync token (and mesh key, when the inviter
     uses one). Returns a report dict; raises ValueError on refusal.
+
+    For a non-loopback target the URL must be https:// (the code and the
+    credential-bearing envelope share one HTTP body, so plain HTTP exposes
+    them to any on-path observer) unless `allow_insecure=True`.
     """
     code = code.strip()
     if not code.startswith(CODE_PREFIX):
         raise ValueError(f"pairing codes start with {CODE_PREFIX!r}")
+    if (url.startswith("http://") and not _is_loopback(url)
+            and not allow_insecure):
+        raise ValueError(
+            "refusing to send a pairing code over plain HTTP to a non-local "
+            f"host ({url}) — the code and credentials share one request body. "
+            "Use an https:// URL, or pass --insecure to override on a trusted "
+            "network.")
 
     own_sync_token = tokens.load_token(home, tier="sync")
     if not own_sync_token:

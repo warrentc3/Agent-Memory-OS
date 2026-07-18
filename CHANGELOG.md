@@ -35,6 +35,20 @@ first-run loop closure, PATH ergonomics, and fleet-wide updates.
   gains no other authority from the opt-in. `status` shows version drift.
 - **`docs/DEPLOYMENT.md`**: the four topologies (single/multi account ×
   single/multi machine) with a recipe each.
+- **Post-review hardening (code + security review of the multi-account work):**
+  pairing redemption now decrypts and validates the envelope BEFORE consuming
+  the one-time code and does the team-member + peer writes in one transaction
+  (a malformed request no longer burns the code or leaves a ghost member); a
+  plaintext (non-`AMOSENC1`) envelope is rejected; `agent-memory join` refuses
+  a non-loopback `http://` target unless `--insecure` (the code shares the
+  request body with the credentials it protects, so plain HTTP exposes them —
+  SECURITY.md corrected accordingly); the redeem audit records the real joiner
+  id. Also: `status` probes peers concurrently (no more ~2s-per-dead-peer
+  hang), `sync_with_peer` reads the peer's name from the bundle header it
+  already pulled (no extra `/api/node` round-trip), default node names include
+  the username unless it equals the host exactly, `path install` replaces a
+  stale managed line instead of accumulating dead PATH entries, and `status`
+  reports the resolved home.
 
 ## [1.3.0] — 2026-07-18
 

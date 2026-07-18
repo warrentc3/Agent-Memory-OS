@@ -1121,6 +1121,44 @@ class MemoryStore:
             ).rowcount
         return counts
 
+    def join_team_and_register_peer(
+        self, team_id: str, agent_id: str, *,
+        peer_url: str = "", peer_token: str | None = None, peer_name: str = "",
+    ) -> None:
+        """Add an agent to a team AND register the joining node as a peer in
+        ONE transaction (used by pairing redemption).
+
+        The individual add_* helpers each commit, so calling them in sequence
+        is not atomic — a failure between them leaves a ghost team member.
+        This does all writes under a single commit: either the joiner is fully
+        wired up or nothing changed.
+        """
+        if self.get_team(team_id) is None:
+            raise KeyError(f"team not found: {team_id}")
+        url = ""
+        if peer_url:
+            url = peer_url.strip().rstrip("/")
+            if not url.startswith(("http://", "https://")):
+                raise ValueError("peer URL must start with http:// or https://")
+        with self.conn:  # single atomic transaction (no inner commits below)
+            now = utc_now()
+            self.conn.execute(
+                "UPDATE agents SET last_seen_at = ? WHERE id = ?", (now, agent_id))
+            self.conn.execute(
+                "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
+                (team_id, agent_id))
+            self._touch_team(team_id)
+            self._org_audit("add_team_member",
+                            f"{agent_id} -> team:{team_id}", "pairing-invite")
+            if url:
+                self.conn.execute(
+                    "INSERT INTO sync_peers(url, token, added_at, policy, name)"
+                    " VALUES (?, ?, ?, ?, ?)"
+                    " ON CONFLICT(url) DO UPDATE SET token=excluded.token,"
+                    " policy=excluded.policy, name=excluded.name",
+                    (url, peer_token, now, f"team:{team_id}", peer_name or agent_id))
+        self._invalidate_membership_caches()
+
     def update_peer_name(self, url: str, name: str) -> bool:
         """Refresh a peer's display name (from its advertised node identity)."""
         name = (name or "").strip()

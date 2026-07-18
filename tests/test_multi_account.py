@@ -330,3 +330,60 @@ def test_neighbors_cli_lists_fake_node(tmp_path, capsys, fake_amos_server):
     assert rc == 0
     nodes = json.loads(capsys.readouterr().out)
     assert nodes and nodes[0]["node_name"] == "other-account"
+
+
+def test_redeem_rejects_plaintext_envelope(inviter):
+    """Envelope must be a real AMOSENC1 blob; plaintext JSON is refused."""
+    invite = pairing.issue_invite(inviter["client"], "apollo")
+    r = inviter["http"].post(
+        pairing.REDEEM_PATH,
+        json={"code": invite["code"],
+              "envelope": json.dumps({"agent_id": "x"})})  # not encrypted
+    assert r.status_code == 403
+    # the invite was NOT burned by the malformed attempt — a real join still works
+    import agent_memory_os.pairing as hp
+    hp._post_redeem = _bridge_post(inviter["http"])
+    b = MemoryClient(home=inviter["home"].parent / "joiner-after-reject")
+    rep = pairing.join_with_code(b, invite["code"], "http://127.0.0.1:9",
+                                 agent_id="acct-late", home=str(b.store.path.parent))
+    assert rep["team_id"] == "apollo"
+    b.close()
+
+
+def test_bad_code_does_not_burn_a_valid_invite(inviter, monkeypatch):
+    """A wrong code must not consume anyone else's invite (decrypt/validate
+    happens before consume, and consume is keyed on the code's own hash)."""
+    invite = pairing.issue_invite(inviter["client"], "apollo")
+    r = inviter["http"].post(
+        pairing.REDEEM_PATH,
+        json={"code": "amos_join_wrong",
+              "envelope": pairing.encrypt_payload({"agent_id": "x"}, "amos_join_wrong")})
+    assert r.status_code == 403
+    # original invite still redeemable
+    monkeypatch.setattr(pairing, "_post_redeem", _bridge_post(inviter["http"]))
+    b = MemoryClient(home=inviter["home"].parent / "joiner-valid")
+    rep = pairing.join_with_code(b, invite["code"], "http://127.0.0.1:9",
+                                 agent_id="acct-ok", home=str(b.store.path.parent))
+    assert rep["team_id"] == "apollo"
+    b.close()
+
+
+def test_join_refuses_plain_http_to_remote_host():
+    """Non-loopback http:// is refused unless allow_insecure."""
+    from agent_memory_os import pairing as p
+    client = MemoryClient(home="/tmp/amos-join-guard")
+    with pytest.raises(ValueError, match="plain HTTP"):
+        p.join_with_code(client, "amos_join_x", "http://10.0.0.5:8000",
+                         agent_id="a", home="/tmp/amos-join-guard")
+    client.close()
+
+
+def test_join_and_register_peer_is_atomic(tmp_path):
+    """A bad peer URL rolls back the whole join (no ghost team member)."""
+    client = MemoryClient(home=tmp_path)
+    client.store.create_team("apollo")
+    with pytest.raises(ValueError, match="peer URL"):
+        client.store.join_team_and_register_peer(
+            "apollo", "ghost", peer_url="not-a-url")
+    assert "ghost" not in (client.store.get_team("apollo").get("members") or [])
+    client.close()

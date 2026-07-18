@@ -52,12 +52,18 @@ for the full model. The load-bearing points:
   grant `full` to nodes you own.
 
 - **Pairing codes are bearer credentials for one join.** `team invite` codes
-  are single-use with a short TTL, stored hash-only, and the redeem exchange is
-  encrypted under the code — but anyone holding an unexpired code can join
-  that one team and receive a sync token and the mesh key. Share codes over a
-  channel you trust and mint them just-in-time. The redeem endpoint
-  (`POST /api/pairing/redeem`) is the only API route exempt from bearer auth
-  and grants nothing without a valid code.
+  are single-use with a short TTL, stored hash-only, and grant nothing without
+  a valid code. Anyone holding an unexpired code can join that one team and
+  receive a sync token and the mesh key, so share codes over a channel you
+  trust and mint them just-in-time. The redeem endpoint
+  (`POST /api/pairing/redeem`) is the only API route exempt from bearer auth.
+  The redeem bodies are Fernet-encrypted under the code, which keeps the
+  tokens/mesh key out of URL/header access logs — but the code rides in the
+  same POST body (the server needs it to decrypt), so this is **not**
+  confidentiality against a full-body network observer. For a join beyond
+  loopback use TLS: `agent-memory join` refuses a non-local `http://` target
+  unless you pass `--insecure`. (A future asymmetric handshake would remove
+  the need to transmit the code at all.)
 
 - **Peer transport: content encryption is available; protect the token with
   TLS.** Set a shared mesh key (`agent-memory sync genkey`, distributed as

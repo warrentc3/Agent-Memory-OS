@@ -52,7 +52,10 @@ def default_node_name(home: str | Path | None) -> str:
         user = ""
     base = resolve_home(home).name.lstrip(".") or "amos"
     parts = [host]
-    if user and user.lower() not in host.lower():
+    # Always include the username (unless it IS the host) so two accounts on
+    # one machine never collide. A mere substring match is not enough — hosts
+    # "workstation" with users "work"/"station" would both drop to "workstation".
+    if user and user.lower() != host.lower():
         parts.append(user)
     if base != "agent-memory":
         parts.append(base)
