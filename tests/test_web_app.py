@@ -356,3 +356,20 @@ def test_web_api_purge_owner_requires_exact_confirmation(tmp_path):
     assert stats["total"] == 1 and stats["links"] == 0
     assert client.get(f"/api/memories/{kept['id']}").status_code == 200
     assert client.get(f"/api/memories/{doomed_a['id']}").status_code == 404
+
+
+def test_webui_toplevel_handlers_reference_existing_ids():
+    """Guard against the class of bug where a top-level $("id").addEventListener
+    targets an element that isn't in the HTML — one such orphan throws at script
+    load and takes down the ENTIRE dashboard (version badge, counts, cards,
+    browse). Every id wired at the top level must exist in the page markup.
+    """
+    import re
+
+    from agent_memory_os.web_ui import PAGE
+
+    handler_ids = set(re.findall(r'\$\("([a-zA-Z][\w-]+)"\)\.addEventListener', PAGE))
+    assert handler_ids, "expected some top-level handlers"
+    present_ids = set(re.findall(r'id="([\w-]+)"', PAGE))
+    missing = sorted(handler_ids - present_ids)
+    assert not missing, f"handlers reference ids with no HTML element: {missing}"

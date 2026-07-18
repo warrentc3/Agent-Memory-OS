@@ -524,6 +524,11 @@ PAGE = r"""<!doctype html>
           <button class="ghost" id="btn-maint-vacuum">Vacuum</button>
           <button class="ghost" id="btn-maint-update">Check for updates</button>
         </div>
+        <div class="row" style="margin-top:8px">
+          <input id="node-name-input" placeholder="node name" style="font-size:12px;padding:3px 8px;min-width:200px">
+          <button class="ghost" id="btn-node-rename">Rename node</button>
+        </div>
+        <p class="hint" style="font-size:11.5px">The node name is what peers see for this instance; peers refresh it automatically on their next sync. Agent IDs are identities and are not affected.</p>
         <div id="maint-out" style="margin:6px 0;font-size:13px;color:var(--muted)"></div>
       </div>
       <div class="tool" style="grid-column: 1 / -1;">

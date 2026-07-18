@@ -4,6 +4,17 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.4.1] — 2026-07-18
+
+- **Fix: Web console dashboard was blank on 1.4.0.** The node-rename control's
+  JavaScript handler shipped without its HTML button (a botched edit landed the
+  `$("btn-node-rename")` listener but not the element), so a `TypeError` at
+  script load aborted the entire dashboard init — version badge, memory/link
+  counts, stat cards, charts, and browse all went dark. The button markup is
+  restored, and a new test asserts every top-level `$("id").addEventListener`
+  targets an element that exists in the page (this class of bug is invisible to
+  the API-level tests). No API or data change.
+
 ## [1.4.0] — 2026-07-18
 
 Field-reported gaps from real multi-account use: identity vs display cleanup,
