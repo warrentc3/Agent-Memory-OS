@@ -90,8 +90,16 @@ def test_negative_feedback_weakens_links_and_confidence(tmp_path):
 
 def test_context_pack_auto_reinforce_closes_the_loop(tmp_path):
     client = MemoryClient(home=tmp_path)
-    a = client.add("Deploy checklist for staging releases.", visibility=["global"])
-    b = client.add("Deploy rollback snapshot rule.", visibility=["global"])
+    a = client.add(
+        "Deploy checklist for staging releases.",
+        owner="neo",
+        visibility=["global"],
+    )
+    b = client.add(
+        "Deploy rollback snapshot rule.",
+        owner="neo",
+        visibility=["global"],
+    )
     client.link(a.id, b.id, weight=0.3)
 
     report = client.context_pack_report(

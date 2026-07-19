@@ -60,6 +60,20 @@ class MemoryClient:
         self.profile = profile
         self.cache: LRUCache[tuple, object] = LRUCache(max_items=cache_items)
         self._profile_cache: dict[str, RecallProfile | None] = {}
+        self._data_version = self._read_data_version()
+
+    def _read_data_version(self) -> int:
+        return int(self.store.conn.execute("PRAGMA data_version").fetchone()[0])
+
+    def _refresh_external_state(self) -> None:
+        """Invalidate process-local caches after another connection commits."""
+        current = self._read_data_version()
+        if current == self._data_version:
+            return
+        self._data_version = current
+        self.cache.clear()
+        self._profile_cache.clear()
+        self.store._invalidate_membership_caches()
 
     def add(self, content: str, *, auto_link: bool = False, **kwargs) -> MemoryRecord:
         record = MemoryRecord(content=content, **kwargs)
@@ -92,8 +106,18 @@ class MemoryClient:
             self.cache.clear()
         return removed
 
-    def update(self, memory_id: str, **fields) -> MemoryRecord:
-        updated = self.store.update_memory(memory_id, **fields)
+    def update(
+        self,
+        memory_id: str,
+        *,
+        requester_agent_id: str | None = None,
+        **fields,
+    ) -> MemoryRecord:
+        updated = self.store.update_memory(
+            memory_id,
+            requester_agent_id=requester_agent_id,
+            **fields,
+        )
         self.cache.clear()
         return updated
 
@@ -298,13 +322,22 @@ class MemoryClient:
         self.cache.clear()
         return stats
 
-    def snapshot_diff(self, session_id: str) -> dict:
+    def snapshot_diff(
+        self,
+        session_id: str,
+        *,
+        requester_agent_id: str | None = None,
+    ) -> dict:
         """Diff the two most recent context snapshots of a session.
 
         Answers "what changed since I last parked this work?" — top-level keys
         added, removed, and changed between the previous and latest snapshot.
         """
-        records = self.store.recent_snapshot_records(session_id, limit=2)
+        records = self.store.recent_snapshot_records(
+            session_id,
+            owner=requester_agent_id,
+            limit=2,
+        )
         if not records:
             raise ValueError(f"no snapshots for session {session_id}")
 
@@ -405,7 +438,15 @@ class MemoryClient:
         relation: str = "related_to",
         weight: float = 0.5,
         source: dict | None = None,
+        requester_agent_id: str | None = None,
     ) -> MemoryLink:
+        if requester_agent_id is not None:
+            for memory_id in (src_id, dst_id):
+                record = self.store.get(memory_id)
+                if record is None:
+                    raise KeyError(memory_id)
+                if record.owner != requester_agent_id:
+                    raise PermissionError("only the owner may link a memory")
         saved = self.store.add_link(
             MemoryLink(src_id=src_id, dst_id=dst_id, relation=relation, weight=weight, source=source or {})
         )
@@ -429,6 +470,7 @@ class MemoryClient:
         helpful: bool = True,
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
+        owner: str | None = None,
     ) -> dict[str, int]:
         """Report that these memories were recalled together.
 
@@ -446,6 +488,7 @@ class MemoryClient:
             helpful=helpful,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            owner=owner,
         )
         self.cache.clear()
         return result
@@ -491,6 +534,7 @@ class MemoryClient:
     def load_profile(self, agent_id: str) -> RecallProfile | None:
         # Only cache hits: caching a miss forever would blind a long-running
         # server to profiles saved later by another process.
+        self._refresh_external_state()
         cached = self._profile_cache.get(agent_id)
         if cached is not None:
             return cached
@@ -506,6 +550,7 @@ class MemoryClient:
         scope: str | None = None,
         derive_links: bool = False,
         link_extractor=None,
+        requester_agent_id: str | None = None,
     ) -> dict[str, int]:
         """Run the write-side hygiene pass: merge duplicates, synthesize concepts.
 
@@ -515,13 +560,17 @@ class MemoryClient:
         `list[MemoryRecord]` and returning `(src_id, dst_id, weight)` tuples —
         the plug point for an LLM-backed triplet extractor.
         """
+        if requester_agent_id is not None:
+            if owner is not None and owner != requester_agent_id:
+                raise PermissionError("only the owner may consolidate memories")
+            owner = requester_agent_id
         result = self.store.consolidate(owner=owner, scope=scope)
         links_derived = 0
         if link_extractor is not None or derive_links:
-            records = self.list_recent(limit=100, offset=0)
+            records = self.list_recent(owner=owner, limit=100, offset=0)
             offset = 100
             while True:
-                batch = self.list_recent(limit=100, offset=offset)
+                batch = self.list_recent(owner=owner, limit=100, offset=offset)
                 if not batch:
                     break
                 records.extend(batch)
@@ -561,6 +610,7 @@ class MemoryClient:
         limit: int = 10,
         profile: RecallProfile | None = None,
     ) -> list[SearchResult]:
+        self._refresh_external_state()
         active_profile = self._resolve_profile(profile, requester_agent_id)
         profile_key = active_profile.signature() if active_profile else None
         key = ("search", query, owner, scope, requester_agent_id, requester_team_id, limit, profile_key)
@@ -592,6 +642,7 @@ class MemoryClient:
         profile: RecallProfile | None = None,
         auto_reinforce: bool = False,
     ) -> str:
+        self._refresh_external_state()
         if auto_reinforce:
             return self.context_pack_report(
                 query,
@@ -636,6 +687,7 @@ class MemoryClient:
         profile: RecallProfile | None = None,
         auto_reinforce: bool = False,
     ) -> ContextPackReport:
+        self._refresh_external_state()
         active_profile = self._resolve_profile(profile, requester_agent_id)
         profile_key = active_profile.signature() if active_profile else None
         key = (
@@ -661,7 +713,12 @@ class MemoryClient:
             # so callers (especially MCP clients) don't have to remember to.
             selected = [decision.memory_id for decision in report.decisions if decision.selected]
             if selected:
-                self.store.record_recall(selected)
+                self.store.record_recall(
+                    selected,
+                    requester_agent_id=requester_agent_id,
+                    requester_team_id=requester_team_id,
+                    owner=requester_agent_id,
+                )
                 self.cache.clear()
             return report
         self.cache.set(key, report)
@@ -683,44 +740,63 @@ class MemoryClient:
         snapshot_data: dict[str, Any],
         session_id: str,
         trigger: str = "manual",
+        owner: str = "default",
     ) -> str:
         """
         Saves the current agent state as a ContextSnapshot memory record.
         """
         from .schema import ContextSnapshot
-        snapshot = ContextSnapshot(
-            session_id=session_id,
-            snapshot_data=snapshot_data,
-            trigger=trigger,
-        )
-        record = snapshot.to_record()
-        # Ensure the session_id is in the content for FTS searchability
-        # ContextSnapshot.to_record currently only puts session_id in source.
-        # We add it to the content to ensure reload_context search works.
-        record.content = f"session_id:{session_id}\n{record.content}"
-        
-        from dataclasses import asdict
-        record_dict = asdict(record)
-        content = record_dict.pop("content")
-        saved = self.add(content, **record_dict)
+        self.store.conn.execute("BEGIN IMMEDIATE")
+        try:
+            snapshot = ContextSnapshot(
+                session_id=session_id,
+                snapshot_data=snapshot_data,
+                owner=owner,
+                trigger=trigger,
+                snapshot_index=self.store.next_snapshot_index(
+                    session_id,
+                    owner=owner,
+                ),
+            )
+            record = snapshot.to_record()
+            # Keep session ids searchable without making FTS authoritative for
+            # reload ordering or isolation.
+            record.content = f"session_id:{session_id}\n{record.content}"
+            saved = self.store.add(record)
+        except Exception:
+            self.store.conn.rollback()
+            raise
+        self.cache.clear()
         return saved.id
 
     def reload_context(
         self,
         session_id: str,
         snapshot_id: str | None = None,
+        requester_agent_id: str | None = None,
     ) -> dict[str, Any]:
         """
         Retrieves the specified or most recent snapshot for the given session.
         """
         if snapshot_id:
             record = self.get(snapshot_id)
-            if not record:
+            if (
+                record is None
+                or record.type != "snapshot"
+                or record.source.get("session_id") != session_id
+                or (
+                    requester_agent_id is not None
+                    and record.owner != requester_agent_id
+                )
+            ):
                 raise ValueError(f"Snapshot {snapshot_id} not found")
         else:
             # Latest is a recency question, not a relevance question: FTS
             # ranking picks an arbitrary snapshot when timestamps tie.
-            record = self.store.latest_snapshot_record(session_id)
+            record = self.store.latest_snapshot_record(
+                session_id,
+                owner=requester_agent_id,
+            )
             if not record:
                 raise ValueError(f"No snapshots found for session {session_id}")
 

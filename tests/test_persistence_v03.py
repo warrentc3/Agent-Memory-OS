@@ -4,7 +4,12 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_memory_os import MemoryClient
-from agent_memory_os.db import MIGRATIONS, MemoryStore, _validate_migration_plan
+from agent_memory_os.db import (
+    MIGRATIONS,
+    MemoryStore,
+    _migration_session_recall_owner,
+    _validate_migration_plan,
+)
 from agent_memory_os.embedding import HashingEmbedder
 from agent_memory_os.web_app import create_app
 
@@ -76,6 +81,36 @@ def test_legacy_database_upgrades_in_place(tmp_path):
     record = store.get("mem_legacy")
     assert record.content == "old row" and record.pinned is False
     store.close()
+
+
+def test_session_recall_owner_migration_preserves_legacy_rows_and_is_idempotent():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE session_recall_log (
+          session_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          delivered_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, memory_id)
+        );
+        INSERT INTO session_recall_log VALUES ('session-1', 'mem_1', '2026-01-01');
+        """
+    )
+
+    _migration_session_recall_owner(conn)
+    _migration_session_recall_owner(conn)
+
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(session_recall_log)").fetchall()
+    }
+    row = conn.execute(
+        "SELECT owner, session_id, memory_id FROM session_recall_log"
+    ).fetchone()
+    assert "owner" in columns
+    assert tuple(row) == ("", "session-1", "mem_1")
+    conn.close()
 
 
 def test_integrity_check_detects_fts_drift(tmp_path):

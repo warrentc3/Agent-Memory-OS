@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from typing import DefaultDict, Sequence
@@ -191,6 +192,49 @@ def _migration_session_recall_log(conn: sqlite3.Connection) -> None:
         )
         """
     )
+
+
+def _migration_session_recall_owner(conn: sqlite3.Connection) -> None:
+    """Scope iterative-delivery state by requester identity.
+
+    Existing rows predate requester-aware orchestration and remain under the
+    empty owner, which preserves the legacy/admin SDK view.
+    """
+    tables = {
+        row["name"]
+        for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table'"
+        ).fetchall()
+    }
+    if "session_recall_log" not in tables and "session_recall_log_v2" in tables:
+        conn.execute("ALTER TABLE session_recall_log_v2 RENAME TO session_recall_log")
+        return
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(session_recall_log)").fetchall()
+    }
+    if "owner" in columns:
+        return
+    conn.execute("DROP TABLE IF EXISTS session_recall_log_v2")
+    conn.execute(
+        """
+        CREATE TABLE session_recall_log_v2 (
+          owner TEXT NOT NULL DEFAULT '',
+          session_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          delivered_at TEXT NOT NULL,
+          PRIMARY KEY (owner, session_id, memory_id)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO session_recall_log_v2(owner, session_id, memory_id, delivered_at)
+        SELECT '', session_id, memory_id, delivered_at FROM session_recall_log
+        """
+    )
+    conn.execute("DROP TABLE session_recall_log")
+    conn.execute("ALTER TABLE session_recall_log_v2 RENAME TO session_recall_log")
 
 
 def _migration_memory_audit(conn: sqlite3.Connection) -> None:
@@ -498,6 +542,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (15, "acl clock so share/revoke propagate over sync", _migration_acl_clock),
     (16, "one-time pairing invites for team join", _migration_pairing_invites),
     (17, "fleet admin trust anchors + signature replay guard", _migration_fleet_admins),
+    (18, "requester-scoped session recall delivery log", _migration_session_recall_owner),
 ]
 
 
@@ -666,7 +711,13 @@ class MemoryStore:
         "decay_policy", "decay_half_life_days",
     }
 
-    def update_memory(self, memory_id: str, **fields) -> MemoryRecord:
+    def update_memory(
+        self,
+        memory_id: str,
+        *,
+        requester_agent_id: str | None = None,
+        **fields,
+    ) -> MemoryRecord:
         """Update selected fields of a memory; validation runs through MemoryRecord.
 
         The updated_at bump is intentional here (unlike recall feedback):
@@ -678,20 +729,17 @@ class MemoryStore:
         existing = self.get(memory_id)
         if existing is None:
             raise KeyError(memory_id)
+        if requester_agent_id is not None and existing.owner != requester_agent_id:
+            raise PermissionError("only the memory owner may update it")
         for name, value in fields.items():
             setattr(existing, name, value)
         if "content" in fields and "summary" not in fields:
             existing.summary = None
         existing.summary = existing.normalized_summary()
-        existing.updated_at = utc_now()
-        # Re-run dataclass validation on the mutated record
-        MemoryRecord(**{
-            "content": existing.content, "owner": existing.owner, "scope": existing.scope,
-            "type": existing.type, "confidence": existing.confidence,
-            "importance": existing.importance, "decay_policy": existing.decay_policy,
-            "decay_half_life_days": existing.decay_half_life_days,
-            "access_count": existing.access_count,
-        })
+        # Re-run the complete canonical validation and retain normalized values
+        # such as UTC expiry timestamps.
+        existing = replace(existing)
+        existing.updated_at = utc_now_micro()
         self.conn.execute(
             """
             UPDATE memories SET content=?, summary=?, tags=?, visibility=?, source=?,
@@ -727,13 +775,13 @@ class MemoryStore:
         return existing
 
     def update_content(self, memory_id: str, content: str, *, summary: str | None = None) -> MemoryRecord:
-        now = utc_now()
         existing = self.get(memory_id)
         if not existing:
             raise KeyError(memory_id)
         existing.content = content
         existing.summary = summary or MemoryRecord(content=content).normalized_summary()
-        existing.updated_at = now
+        existing = replace(existing)
+        existing.updated_at = utc_now_micro()
         self.conn.execute(
             "UPDATE memories SET content=?, summary=?, updated_at=? WHERE id=?",
             (existing.content, existing.summary, existing.updated_at, memory_id),
@@ -962,7 +1010,10 @@ class MemoryStore:
         limit: int = 4,
     ) -> list[MemoryRecord]:
         """Proactive recall source: the most important live records of a type."""
-        where = ["type = ?", "(expires_at IS NULL OR expires_at > ?)"]
+        where = [
+            "type = ?",
+            "(expires_at IS NULL OR julianday(expires_at) > julianday(?))",
+        ]
         params: list[object] = [memory_type, utc_now()]
         self._append_acl_filter(
             where,
@@ -982,17 +1033,25 @@ class MemoryStore:
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
-    def delivered_ids(self, session_id: str) -> set[str]:
+    def delivered_ids(self, session_id: str, *, owner: str | None = None) -> set[str]:
         rows = self.conn.execute(
-            "SELECT memory_id FROM session_recall_log WHERE session_id = ?", (session_id,)
+            "SELECT memory_id FROM session_recall_log WHERE owner = ? AND session_id = ?",
+            (owner or "", session_id),
         ).fetchall()
         return {row["memory_id"] for row in rows}
 
-    def record_delivery(self, session_id: str, memory_ids: Sequence[str]) -> None:
+    def record_delivery(
+        self,
+        session_id: str,
+        memory_ids: Sequence[str],
+        *,
+        owner: str | None = None,
+    ) -> None:
         now = utc_now()
         self.conn.executemany(
-            "INSERT OR IGNORE INTO session_recall_log(session_id, memory_id, delivered_at) VALUES (?, ?, ?)",
-            [(session_id, memory_id, now) for memory_id in memory_ids],
+            "INSERT OR IGNORE INTO session_recall_log"
+            "(owner, session_id, memory_id, delivered_at) VALUES (?, ?, ?, ?)",
+            [(owner or "", session_id, memory_id, now) for memory_id in memory_ids],
         )
         self.conn.commit()
 
@@ -1006,7 +1065,7 @@ class MemoryStore:
             """
             SELECT id FROM (
               SELECT id, ROW_NUMBER() OVER (
-                PARTITION BY json_extract(source, '$.session_id')
+                PARTITION BY owner, json_extract(source, '$.session_id')
                 ORDER BY created_at DESC, rowid DESC
               ) AS rank
               FROM memories
@@ -1858,11 +1917,9 @@ class MemoryStore:
     def semantic_signature(self) -> tuple:
         """Cheap change signature used to decide when the auto index rebuilds.
 
-        Includes a content/summary length sum so an in-place edit whose
-        updated_at lands in the same second as the current max (second
-        granularity) still changes the signature; reinforcement writes, which
-        never touch content or summary, leave it unchanged (no spurious
-        rebuild).
+        Content updates use a microsecond clock. Aggregate content/summary
+        lengths remain a backstop for older/imported rows; reinforcement
+        writes never touch either signal and do not trigger a rebuild.
         """
         row = self.conn.execute(
             "SELECT COUNT(*), COALESCE(MAX(rowid), 0), COALESCE(MAX(updated_at), ''), "
@@ -1929,34 +1986,73 @@ class MemoryStore:
             ],
         }
 
-    def recent_snapshot_records(self, session_id: str, *, limit: int = 2) -> list[MemoryRecord]:
+    def recent_snapshot_records(
+        self,
+        session_id: str,
+        *,
+        owner: str | None = None,
+        limit: int = 2,
+    ) -> list[MemoryRecord]:
         """Newest-first context snapshots for a session."""
+        where = ["type = 'snapshot'", "json_extract(source, '$.session_id') = ?"]
+        params: list[object] = [session_id]
+        if owner is not None:
+            where.append("owner = ?")
+            params.append(owner)
+        params.append(max(1, limit))
         rows = self.conn.execute(
-            """
+            f"""
             SELECT * FROM memories
-            WHERE type = 'snapshot' AND json_extract(source, '$.session_id') = ?
+            WHERE {' AND '.join(where)}
             ORDER BY json_extract(source, '$.snapshot_index') DESC, created_at DESC, rowid DESC
             LIMIT ?
             """,
-            (session_id, max(1, limit)),
+            params,
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
-    def latest_snapshot_record(self, session_id: str) -> MemoryRecord | None:
+    def next_snapshot_index(self, session_id: str, *, owner: str) -> int:
+        """Return the next active snapshot sequence for one owner/session.
+
+        Call while holding a write transaction so concurrent offloads cannot
+        claim the same index.
+        """
+        row = self.conn.execute(
+            """
+            SELECT COALESCE(MAX(CAST(json_extract(source, '$.snapshot_index') AS INTEGER)), -1)
+            FROM memories
+            WHERE type = 'snapshot' AND owner = ?
+              AND json_extract(source, '$.session_id') = ?
+            """,
+            (owner, session_id),
+        ).fetchone()
+        return int(row[0]) + 1
+
+    def latest_snapshot_record(
+        self,
+        session_id: str,
+        *,
+        owner: str | None = None,
+    ) -> MemoryRecord | None:
         """Return the most recent context snapshot for a session.
 
         Recency is determined by snapshot metadata and insertion order, never
         by FTS relevance — same-second snapshots must still resolve to the
         latest one deterministically.
         """
+        where = ["type = 'snapshot'", "json_extract(source, '$.session_id') = ?"]
+        params: list[object] = [session_id]
+        if owner is not None:
+            where.append("owner = ?")
+            params.append(owner)
         row = self.conn.execute(
-            """
+            f"""
             SELECT * FROM memories
-            WHERE type = 'snapshot' AND json_extract(source, '$.session_id') = ?
+            WHERE {' AND '.join(where)}
             ORDER BY json_extract(source, '$.snapshot_index') DESC, created_at DESC, rowid DESC
             LIMIT 1
             """,
-            (session_id,),
+            params,
         ).fetchone()
         return self._row_to_record(row) if row else None
 
@@ -1983,6 +2079,7 @@ class MemoryStore:
         helpful: bool = True,
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
+        owner: str | None = None,
     ) -> dict[str, int]:
         """Reinforce or weaken memories recalled together.
 
@@ -2007,6 +2104,7 @@ class MemoryStore:
             memory_ids,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            owner=owner,
         )
         now = utc_now()
         reinforced_links = 0
@@ -2094,6 +2192,7 @@ class MemoryStore:
         *,
         requester_agent_id: str | None,
         requester_team_id: str | None,
+        owner: str | None,
     ) -> list[str]:
         ordered = [memory_id for memory_id in dict.fromkeys(memory_ids) if memory_id]
         if not ordered:
@@ -2101,6 +2200,9 @@ class MemoryStore:
         placeholders = ",".join("?" for _ in ordered)
         where = [f"id IN ({placeholders})"]
         params: list[object] = [*ordered]
+        if owner is not None:
+            where.append("owner = ?")
+            params.append(owner)
         self._append_acl_filter(
             where,
             params,
@@ -2279,7 +2381,9 @@ class MemoryStore:
         now = utc_now()
         tuned = self.tune_decay_from_feedback()
         expired = self._archive_where(
-            "expires_at IS NOT NULL AND expires_at <= ?", [now], reason="expired"
+            "expires_at IS NOT NULL AND julianday(expires_at) <= julianday(?)",
+            [now],
+            reason="expired",
         )
         rotated = self.rotate_snapshots()
         decayed = 0
@@ -3078,7 +3182,10 @@ class MemoryStore:
         now: str,
     ) -> list[sqlite3.Row]:
         fts_query = self._fts_query(query)
-        where = ["memories_fts MATCH ?", "(m.expires_at IS NULL OR m.expires_at > ?)"]
+        where = [
+            "memories_fts MATCH ?",
+            "(m.expires_at IS NULL OR julianday(m.expires_at) > julianday(?))",
+        ]
         params: list[object] = [fts_query, now]
         if owner:
             where.append("m.owner = ?")
@@ -3117,7 +3224,7 @@ class MemoryStore:
         now: str,
     ) -> list[sqlite3.Row]:
         where = [
-            "(expires_at IS NULL OR expires_at > ?)",
+            "(expires_at IS NULL OR julianday(expires_at) > julianday(?))",
             "(json_extract(source, '$.permanence') = 1 AND json_extract(source, '$.weight') >= 10)",
         ]
         params: list[object] = [now]
@@ -3238,7 +3345,10 @@ class MemoryStore:
         if not ids:
             return []
         placeholders = ",".join("?" for _ in ids)
-        where = [f"id IN ({placeholders})", "(expires_at IS NULL OR expires_at > ?)"]
+        where = [
+            f"id IN ({placeholders})",
+            "(expires_at IS NULL OR julianday(expires_at) > julianday(?))",
+        ]
         params: list[object] = [*ids, now]
         if owner:
             where.append("owner = ?")
@@ -3415,7 +3525,7 @@ class MemoryStore:
         requester_team_id: str | None,
         limit: int,
     ) -> list[SearchResult]:
-        where = ["(expires_at IS NULL OR expires_at > ?)"]
+        where = ["(expires_at IS NULL OR julianday(expires_at) > julianday(?))"]
         params: list[object] = [utc_now()]
         if owner:
             where.append("owner = ?")
@@ -3476,7 +3586,9 @@ class MemoryStore:
         base = self.stats()
         pinned = self.conn.execute("SELECT COUNT(*) FROM memories WHERE pinned = 1").fetchone()[0]
         expired = self.conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL AND expires_at <= ?", (now,)
+            "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL "
+            "AND julianday(expires_at) <= julianday(?)",
+            (now,),
         ).fetchone()[0]
         by_owner = dict(
             self.conn.execute(
