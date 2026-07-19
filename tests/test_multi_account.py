@@ -384,13 +384,14 @@ def test_bad_code_does_not_burn_a_valid_invite(inviter, monkeypatch):
     b.close()
 
 
-def test_join_refuses_plain_http_to_remote_host():
+def test_join_refuses_plain_http_to_remote_host(tmp_path):
     """Non-loopback http:// is refused unless allow_insecure."""
     from agent_memory_os import pairing as p
-    client = MemoryClient(home="/tmp/amos-join-guard")
+    home = tmp_path / "amos-join-guard"
+    client = MemoryClient(home=home)
     with pytest.raises(ValueError, match="plain HTTP"):
         p.join_with_code(client, "amos_join_x", "http://10.0.0.5:8000",
-                         agent_id="a", home="/tmp/amos-join-guard")
+                         agent_id="a", home=str(home))
     client.close()
 
 

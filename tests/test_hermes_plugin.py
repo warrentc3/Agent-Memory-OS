@@ -113,7 +113,8 @@ def test_invalid_share_is_reported_not_raised(provider):
     assert "error" in out
 
 
-def test_readonly_context_blocks_writes(hermes_plugin, tmp_path):
+def test_readonly_context_blocks_writes(hermes_plugin, tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENT_MEMORY_HOME", str(tmp_path / "amos"))
     p = hermes_plugin.AgentMemoryOSProvider()
     p.initialize(
         "sess-cron",
