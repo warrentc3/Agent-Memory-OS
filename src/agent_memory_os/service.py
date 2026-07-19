@@ -124,6 +124,17 @@ def _run(command: list[str]) -> subprocess.CompletedProcess:
     return subprocess.run(command, capture_output=True, text=True)
 
 
+def _run_required(command: list[str]) -> subprocess.CompletedProcess:
+    result = _run(command)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise RuntimeError(
+            f"service command failed ({result.returncode}): {' '.join(command)}{suffix}"
+        )
+    return result
+
+
 def install(config: ServiceConfig, *, platform: str = sys.platform, dry_run: bool = False) -> list[str]:
     """Install and start the login service; returns the actions performed."""
     actions: list[str] = []
@@ -138,10 +149,13 @@ def install(config: ServiceConfig, *, platform: str = sys.platform, dry_run: boo
         if not dry_run:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(render_launchd_plist(config))
-        for command in commands:
+        for index, command in enumerate(commands):
             actions.append(" ".join(command))
             if not dry_run:
-                _run(command)
+                if index == 0:
+                    _run(command)  # replacing an absent unit may fail harmlessly
+                else:
+                    _run_required(command)
     elif platform.startswith("linux"):
         path = _unit_path(platform)
         actions.append(f"write {path}")
@@ -155,7 +169,7 @@ def install(config: ServiceConfig, *, platform: str = sys.platform, dry_run: boo
         for command in commands:
             actions.append(" ".join(command))
             if not dry_run:
-                _run(command)
+                _run_required(command)
         actions.append("hint: loginctl enable-linger $USER  # start at boot without login")
     elif platform == "win32":
         create = build_schtasks_create(config)
@@ -163,7 +177,7 @@ def install(config: ServiceConfig, *, platform: str = sys.platform, dry_run: boo
         for command in (create, run_now):
             actions.append(" ".join(command))
             if not dry_run:
-                _run(command)
+                _run_required(command)
     else:
         raise RuntimeError(f"unsupported platform: {platform}")
     return actions
