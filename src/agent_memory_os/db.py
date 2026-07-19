@@ -551,10 +551,18 @@ class MemoryStore:
             """
         )
         applied = {
-            row["version"] for row in self.conn.execute("SELECT version FROM schema_migrations")
+            row["version"]: row["description"]
+            for row in self.conn.execute(
+                "SELECT version, description FROM schema_migrations"
+            )
         }
         for version, description, migrate in MIGRATIONS:
             if version in applied:
+                if applied[version] != description:
+                    raise RuntimeError(
+                        f"migration {version} history mismatch: database recorded "
+                        f"{applied[version]!r}, code expects {description!r}"
+                    )
                 continue
             migrate(self.conn)
             self.conn.execute(
