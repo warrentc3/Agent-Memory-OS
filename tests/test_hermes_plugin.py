@@ -9,6 +9,7 @@ against a real (tmp) AgentMemoryOS store.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import sys
 import types
 
@@ -291,7 +292,7 @@ def test_cli_hermes_install_roundtrip(hermes_plugin, tmp_path, capsys):
     rc = main(["hermes", "install", "--hermes-home", str(tmp_path), "--json"])
     assert rc == 0
     report = json.loads(capsys.readouterr().out)
-    assert report["installed"].endswith("plugins/agent-memory-os")
+    assert Path(report["installed"]).parts[-2:] == ("plugins", "agent-memory-os")
 
     rc = main(["hermes", "uninstall", "--hermes-home", str(tmp_path), "--json"])
     assert rc == 0

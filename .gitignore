@@ -1,19 +1,41 @@
+# Python bytecode
 __pycache__/
 *.py[cod]
+*$py.class
+
+# Test, coverage, lint, and type-checker data
 .pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# Local Python environments
 .venv/
-dist/
+
+# Packaging outputs
 build/
+dist/
 *.egg-info/
+
+# Agent Memory OS runtime data
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
 .env
-.DS_Store
 .hermes/
 shadow_recall*.jsonl
-*.pyc
+
+# Local harness and operating-system data
 .claude/launch.json
-dist/
+.DS_Store
+
+# Repository dependency-resolution policy; this is not transient Python data.
 uv.lock

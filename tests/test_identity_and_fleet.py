@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
+import sys
 
 import pytest
 
@@ -118,6 +120,11 @@ def test_team_update_authorization_gate(tmp_path, monkeypatch):
     tokens.create_token(tmp_path)
     sync_token = tokens.create_token(tmp_path, tier="sync")
     headers = {"Authorization": f"Bearer {sync_token}"}
+    started = []
+    monkeypatch.setattr(
+        "subprocess.Popen",
+        lambda *args, **kwargs: started.append((args, kwargs)),
+    )
 
     monkeypatch.delenv("AGENT_MEMORY_ALLOW_TEAM_UPDATE", raising=False)
     with HttpClient(create_app(tmp_path)) as http:
@@ -127,7 +134,8 @@ def test_team_update_authorization_gate(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_MEMORY_ALLOW_TEAM_UPDATE", "1")
     with HttpClient(create_app(tmp_path)) as http:
         r = http.post("/api/maintenance/update-run?confirm=update", headers=headers)
-        assert r.status_code != 403  # authorized (may 400 in docker-less test env)
+        assert r.status_code == 200
+        assert started
         # and the opt-in does NOT widen anything else for the sync tier
         assert http.get("/api/memories", headers=headers).status_code in (401, 403)
 
@@ -135,9 +143,12 @@ def test_team_update_authorization_gate(tmp_path, monkeypatch):
 def test_path_show_and_install(tmp_path, monkeypatch, capsys):
     from agent_memory_os import cli
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(cli, "_scripts_dir", lambda: "/nonexistent/scripts-dir")
     monkeypatch.setenv("SHELL", "/bin/zsh")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+    assert Path("~/.zshrc").expanduser() == tmp_path / ".zshrc"
     rc = cli.main(["path", "show"])
     assert rc == 1 and "NO" in capsys.readouterr().out
 
@@ -184,9 +195,12 @@ def test_redeemed_by_records_the_actual_agent(tmp_path, monkeypatch):
 def test_path_install_replaces_stale_line(tmp_path, monkeypatch, capsys):
     from agent_memory_os import cli
 
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setenv("SHELL", "/bin/zsh")
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
     zshrc = tmp_path / ".zshrc"
+    assert Path("~/.zshrc").expanduser() == zshrc
 
     monkeypatch.setattr(cli, "_scripts_dir", lambda: "/old/py3.11/bin")
     cli.main(["path", "install"])
