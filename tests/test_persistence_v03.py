@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_memory_os import MemoryClient
-from agent_memory_os.db import MIGRATIONS, MemoryStore
+from agent_memory_os.db import MIGRATIONS, MemoryStore, _validate_migration_plan
 from agent_memory_os.embedding import HashingEmbedder
 from agent_memory_os.web_app import create_app
 
@@ -20,20 +20,31 @@ def test_migrations_recorded_and_versioned(tmp_path):
     assert [row["version"] for row in rows] == [version for version, _, _ in MIGRATIONS]
 
 
+def test_migration_plan_rejects_duplicate_versions():
+    with pytest.raises(RuntimeError, match="duplicate migration versions"):
+        _validate_migration_plan([(1, "first", object()), (1, "second", object())])
+
+
+def test_migration_plan_rejects_out_of_order_versions():
+    with pytest.raises(RuntimeError, match="strictly increasing"):
+        _validate_migration_plan([(2, "second", object()), (1, "first", object())])
+
+
 def test_migration_version_description_mismatch_fails_closed(tmp_path):
     client = MemoryClient(home=tmp_path)
     client.close()
 
     db_path = tmp_path / "memories.db"
+    version, _, _ = MIGRATIONS[-1]
     conn = sqlite3.connect(db_path)
     conn.execute(
-        "UPDATE schema_migrations SET description = ? WHERE version = 17",
-        ("requester-scoped session recall delivery log",),
+        "UPDATE schema_migrations SET description = ? WHERE version = ?",
+        ("a different migration", version),
     )
     conn.commit()
     conn.close()
 
-    with pytest.raises(RuntimeError, match="migration 17 history mismatch"):
+    with pytest.raises(RuntimeError, match=rf"migration {version} history mismatch"):
         MemoryStore(db_path)
 
 
