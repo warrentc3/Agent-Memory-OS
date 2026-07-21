@@ -290,8 +290,7 @@ PAGE = r"""<!doctype html>
     </div>
     <div class="acting">
       <span title="Requester identity used for search, context packs and feedback. Empty = unrestricted admin view.">Acting as</span>
-      <input id="acting-as" type="text" placeholder="admin (all)" autocomplete="off" list="agent-ids">
-      <datalist id="agent-ids"></datalist>
+      <select id="acting-as"><option value="">admin (all)</option></select>
     </div>
   </div>
   <nav class="tabs">
@@ -428,6 +427,17 @@ PAGE = r"""<!doctype html>
     </div>
     <div class="toplist" id="fleet-nodes" style="margin-top:12px"></div>
     <div id="fleet-out" style="margin-top:8px;font-size:13px;color:var(--muted)"></div>
+    <div class="panel" id="fleet-browse" style="display:none;margin-top:12px">
+      <h3 id="fleet-browse-title">Remote memories</h3>
+      <p class="hint" style="font-size:11.5px">Read live from the node over a signed request — nothing is copied here. The node checks the read-private capability and records this read in its own audit log.</p>
+      <div class="row">
+        <input id="fleet-browse-owner" type="text" placeholder="owner…" style="font-size:12px;padding:3px 8px;max-width:160px">
+        <button class="ghost" id="btn-fleet-browse-apply">Apply</button>
+        <button class="ghost" id="btn-fleet-browse-more">Load more</button>
+        <button class="ghost" id="btn-fleet-browse-close">Close</button>
+      </div>
+      <div class="toplist" id="fleet-browse-list" style="margin-top:8px"></div>
+    </div>
   </section>
 
   <section class="tab" id="tab-add">
@@ -743,6 +753,10 @@ Object.assign(I18N["zh-TW"], {"Fleet":"艦隊","Fleet console":"艦隊主控台"
 Object.assign(I18N["zh-CN"], {"Fleet":"舰队","Fleet console":"舰队控制台","Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.":"该控制台管理的所有节点一览:版本、健康、记忆总数、所有者。跨节点操作以本节点的舰队密钥签名,由各节点独立验证、检查能力并审计——没有共享秘密经过网络。","Refresh fleet":"刷新舰队","⇆ Sync all":"⇆ 全部同步","⬆ Update all":"⬆ 全部更新","This node has no fleet key — it is a managed node, not a console. To make it the console, run:":"本节点没有舰队密钥——它是受管节点,不是控制台。要让它成为控制台,请运行:","key":"密钥","⚠ version drift across the fleet:":"⚠ 舰队版本不一致:","No managed nodes — register peers (join / peers add), then run fleet grant on each.":"尚无受管节点——先注册 peer(join / peers add),再到各节点运行 fleet grant。","reachable but not granted":"可连接但未授权","not granted — run fleet grant on this node":"未授权——请在该节点运行 fleet grant","Sync":"同步","Update":"更新","Update this node? It will upgrade itself and restart.":"更新此节点?它会自行升级并重启。","Update ALL nodes? Each will upgrade itself and restart.":"更新「全部」节点?每台都会自行升级并重启。","owners":"位所有者","no managed nodes":"尚无受管节点"});
 Object.assign(I18N["ja"], {"Fleet":"フリート","Fleet console":"フリートコンソール","Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.":"このコンソールが管理する全ノードを一望:バージョン、ヘルス、記憶総数、所有者。ノード間操作は本ノードのフリート鍵で署名され、各ノードが独立に検証・権限確認・監査します——共有シークレットはネットワークを流れません。","Refresh fleet":"フリートを更新","⇆ Sync all":"⇆ すべて同期","⬆ Update all":"⬆ すべて更新","This node has no fleet key — it is a managed node, not a console. To make it the console, run:":"このノードにはフリート鍵がありません——管理対象ノードであり、コンソールではありません。コンソールにするには実行:","key":"鍵","⚠ version drift across the fleet:":"⚠ フリート内でバージョン不一致:","No managed nodes — register peers (join / peers add), then run fleet grant on each.":"管理対象ノードがありません——peer を登録(join / peers add)し、各ノードで fleet grant を実行してください。","reachable but not granted":"到達可能だが未許可","not granted — run fleet grant on this node":"未許可——このノードで fleet grant を実行","Sync":"同期","Update":"更新","Update this node? It will upgrade itself and restart.":"このノードを更新?自己アップグレードして再起動します。","Update ALL nodes? Each will upgrade itself and restart.":"「全」ノードを更新?各ノードが自己アップグレードして再起動します。","owners":"所有者","no managed nodes":"管理対象ノードなし"});
 Object.assign(I18N["ko"], {"Fleet":"플릿","Fleet console":"플릿 콘솔","Every node this console manages, at a glance: version, health, memory totals, owners. Cross-node actions are signed with this node's fleet key and verified, capability-checked, and audited by each node independently — no shared secret crosses the wire.":"이 콘솔이 관리하는 모든 노드 한눈에 보기: 버전, 상태, 기억 총수, 소유자. 노드 간 작업은 이 노드의 플릿 키로 서명되며 각 노드가 독립적으로 검증·권한 확인·감사합니다 — 공유 비밀이 네트워크를 지나지 않습니다.","Refresh fleet":"플릿 새로고침","⇆ Sync all":"⇆ 모두 동기화","⬆ Update all":"⬆ 모두 업데이트","This node has no fleet key — it is a managed node, not a console. To make it the console, run:":"이 노드에는 플릿 키가 없습니다 — 관리 대상 노드이며 콘솔이 아닙니다. 콘솔로 만들려면 실행:","key":"키","⚠ version drift across the fleet:":"⚠ 플릿 버전 불일치:","No managed nodes — register peers (join / peers add), then run fleet grant on each.":"관리 노드 없음 — peer를 등록(join / peers add)한 뒤 각 노드에서 fleet grant를 실행하세요.","reachable but not granted":"도달 가능하나 미승인","not granted — run fleet grant on this node":"미승인 — 이 노드에서 fleet grant 실행","Sync":"동기화","Update":"업데이트","Update this node? It will upgrade itself and restart.":"이 노드를 업데이트할까요? 스스로 업그레이드 후 재시작합니다.","Update ALL nodes? Each will upgrade itself and restart.":"모든 노드를 업데이트할까요? 각 노드가 스스로 업그레이드 후 재시작합니다.","owners":"명의 소유자","no managed nodes":"관리 노드 없음"});
+Object.assign(I18N["zh-TW"], {"Browse":"瀏覽","Remote memories":"遠端記憶","Read live from the node over a signed request — nothing is copied here. The node checks the read-private capability and records this read in its own audit log.":"透過簽章請求即時讀取該節點——不會複製到本機。節點會檢查 read-private 能力,並把這次讀取記進它自己的稽核日誌。","This node has not granted read-private to this console — run fleet grant with --caps manage,read-private on it.":"該節點尚未授予本主控台 read-private——請在該節點執行 fleet grant 並加上 --caps manage,read-private。","No memories on this node.":"該節點沒有記憶。","Close":"關閉","admin (all)":"管理者(全部)"});
+Object.assign(I18N["zh-CN"], {"Browse":"浏览","Remote memories":"远程记忆","Read live from the node over a signed request — nothing is copied here. The node checks the read-private capability and records this read in its own audit log.":"通过签名请求实时读取该节点——不会复制到本机。节点会检查 read-private 能力,并把这次读取记入它自己的审计日志。","This node has not granted read-private to this console — run fleet grant with --caps manage,read-private on it.":"该节点尚未授予本控制台 read-private——请在该节点运行 fleet grant 并加上 --caps manage,read-private。","No memories on this node.":"该节点没有记忆。","Close":"关闭","admin (all)":"管理员(全部)"});
+Object.assign(I18N["ja"], {"Browse":"閲覧","Remote memories":"リモート記憶","Read live from the node over a signed request — nothing is copied here. The node checks the read-private capability and records this read in its own audit log.":"署名リクエストでノードから直接読み取ります——ここへはコピーされません。ノードは read-private 権限を確認し、この読み取りを自身の監査ログに記録します。","This node has not granted read-private to this console — run fleet grant with --caps manage,read-private on it.":"このノードは本コンソールに read-private を許可していません——ノード側で --caps manage,read-private 付きの fleet grant を実行してください。","No memories on this node.":"このノードに記憶はありません。","Close":"閉じる","admin (all)":"管理者(すべて)"});
+Object.assign(I18N["ko"], {"Browse":"탐색","Remote memories":"원격 기억","Read live from the node over a signed request — nothing is copied here. The node checks the read-private capability and records this read in its own audit log.":"서명된 요청으로 노드에서 실시간으로 읽습니다 — 여기로 복사되지 않습니다. 노드가 read-private 권한을 확인하고 이 읽기를 자체 감사 로그에 기록합니다.","This node has not granted read-private to this console — run fleet grant with --caps manage,read-private on it.":"이 노드는 콘솔에 read-private를 승인하지 않았습니다 — 해당 노드에서 --caps manage,read-private로 fleet grant를 실행하세요.","No memories on this node.":"이 노드에 기억이 없습니다.","Close":"닫기","admin (all)":"관리자(전체)"});
 
 let locale = localStorage.getItem("amos.locale") || (() => {
   const nav = (navigator.language || "en");
@@ -803,8 +817,21 @@ function applyLocale() {
 })();
 
 const actingAs = () => $("acting-as").value.trim();
-$("acting-as").value = localStorage.getItem("amos.actingAs") || "";
 $("acting-as").addEventListener("change", () => localStorage.setItem("amos.actingAs", actingAs()));
+function populateActingAs(agents) {
+  // A real <select> instead of a datalist: datalist suggestions filter by the
+  // field's CURRENT value, so once an identity was chosen it looked like the
+  // only option. The select always shows every registered identity.
+  const sel = $("acting-as");
+  const saved = localStorage.getItem("amos.actingAs") || sel.value || "";
+  sel.innerHTML = "";
+  sel.appendChild(Object.assign(document.createElement("option"),
+    { value: "", textContent: t("admin (all)") }));
+  for (const agent of agents)
+    sel.appendChild(Object.assign(document.createElement("option"),
+      { value: agent.id, textContent: agent.id }));
+  if (saved && [...sel.options].some((o) => o.value === saved)) sel.value = saved;
+}
 
 function toast(message, kind) {
   const node = document.createElement("div");
@@ -1311,8 +1338,7 @@ async function refreshAgents() {
   const list = $("agents-list");
   try {
     const [data] = await Promise.all([api("/api/agents"), fetchPeerStatus()]);
-    const datalist = $("agent-ids");
-    datalist.innerHTML = "";
+    populateActingAs(data.agents);
     list.innerHTML = "";
     if (!data.agents.length) {
       const empty = el("div", "empty");
@@ -1322,7 +1348,6 @@ async function refreshAgents() {
       return;
     }
     for (const agent of data.agents) {
-      datalist.appendChild(Object.assign(document.createElement("option"), { value: agent.id }));
       const card = el("article", "card");
       const top = el("div", "top");
       top.appendChild(el("span", "badge kind-" + agent.kind, agent.kind));
@@ -1445,6 +1470,12 @@ async function loadFleet() {
     row.appendChild(label);
     const actions = el("span");
     actions.style.cssText = "display:flex;gap:6px;flex:0 0 auto";
+    if (n.authorized) {
+      const browseBtn = el("button", "ghost", t("Browse"));
+      browseBtn.style.fontSize = "11px";
+      browseBtn.addEventListener("click", () => fleetBrowseOpen(n));
+      actions.appendChild(browseBtn);
+    }
     const syncBtn = el("button", "ghost", t("Sync"));
     syncBtn.style.fontSize = "11px";
     syncBtn.addEventListener("click", () => fleetTrigger("sync", n.url));
@@ -1458,6 +1489,67 @@ async function loadFleet() {
     list.appendChild(row);
   }
 }
+
+/* ---------- fleet remote browse (read-private) ---------- */
+const fleetBrowseState = { url: "", name: "", offset: 0 };
+function fleetBrowseOpen(node) {
+  fleetBrowseState.url = node.url;
+  fleetBrowseState.name = node.name || node.node_name || node.url;
+  fleetBrowseState.offset = 0;
+  $("fleet-browse-owner").value = "";
+  $("fleet-browse-title").textContent = t("Remote memories") + " — " + fleetBrowseState.name;
+  $("fleet-browse").style.display = "";
+  $("fleet-browse-list").innerHTML = "";
+  fleetBrowseLoad();
+}
+async function fleetBrowseLoad() {
+  const list = $("fleet-browse-list");
+  const params = new URLSearchParams({
+    url: fleetBrowseState.url, limit: "20",
+    offset: String(fleetBrowseState.offset),
+  });
+  const owner = $("fleet-browse-owner").value.trim();
+  if (owner) params.set("owner", owner);
+  let data;
+  try { data = await api("/api/fleet/browse?" + params.toString()); }
+  catch (e) {
+    list.appendChild(el("div", "sm",
+      /read-private/.test(e.message)
+        ? t("This node has not granted read-private to this console — run fleet grant with --caps manage,read-private on it.")
+        : String(e.message)));
+    return;
+  }
+  const memories = data.memories || [];
+  if (!memories.length && fleetBrowseState.offset === 0) {
+    list.appendChild(el("div", "sm", t("No memories on this node.")));
+    return;
+  }
+  for (const m of memories) {
+    const row = el("div", "topitem");
+    const left = el("span");
+    const meta = el("div", "sm");
+    meta.appendChild(el("b", null, m.owner || "?"));
+    const bits = [m.type || "", m.scope || "",
+      (m.visibility && m.visibility.length === 0) ? t("🔒 private") : "",
+      (m.updated_at || m.created_at || "").slice(0, 16).replace("T", " ")];
+    meta.appendChild(document.createTextNode(" · " + bits.filter(Boolean).join(" · ")));
+    left.appendChild(meta);
+    const body = el("div", "sm", m.content || "");
+    body.style.cssText = "white-space:pre-wrap;color:var(--text);margin-top:2px";
+    left.appendChild(body);
+    row.appendChild(left);
+    list.appendChild(row);
+  }
+  fleetBrowseState.offset += memories.length;
+  $("btn-fleet-browse-more").disabled = memories.length < 20;
+}
+$("btn-fleet-browse-apply").addEventListener("click", () => {
+  fleetBrowseState.offset = 0; $("fleet-browse-list").innerHTML = ""; fleetBrowseLoad();
+});
+$("btn-fleet-browse-more").addEventListener("click", fleetBrowseLoad);
+$("btn-fleet-browse-close").addEventListener("click", () => {
+  $("fleet-browse").style.display = "none";
+});
 async function fleetTrigger(action, url) {
   const out = $("fleet-out");
   out.textContent = t("Working…");

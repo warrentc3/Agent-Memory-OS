@@ -4,6 +4,26 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.6.1] — 2026-07-21
+
+Console usability fixes from first real fleet use.
+
+- **Fleet remote browse.** The console can now READ memories live off a
+  managed node (Fleet tab → per-node **Browse**; `GET /api/fleet/browse`).
+  Private memories deliberately never sync to the console, so its local
+  Browse cannot show them — this reads them from the owning node over a
+  signed request instead. The node enforces its `read-private` grant and
+  records every such read in its own audit log; a node that granted only
+  `manage` gets a clear "not granted" message, not an empty list.
+- **"Acting as" is a real dropdown now.** The identity switcher was a
+  datalist, and datalist suggestions filter by the field's current value —
+  once an identity was picked it looked like the only option. Replaced with
+  a `<select>` listing every registered agent plus "admin (all)".
+- **Teams member dots correlate via display name.** A member chip is an
+  agent ID; peer status is keyed by node name. When they differed (the
+  default before an operator renames), the chip showed no connection dot.
+  The lookup now also goes through the agents registry's display_name.
+
 ## [1.6.0] — 2026-07-19
 
 Fleet console: manage every node from one place — one WebUI for a same-host

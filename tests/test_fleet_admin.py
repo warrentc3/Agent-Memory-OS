@@ -348,3 +348,30 @@ def test_web_fleet_trigger_sync(small_fleet):
     assert len(results) == 1 and results[0]["ok"] is True
     # unknown action rejected at the model layer
     assert http.post("/api/fleet/trigger", json={"action": "explode"}).status_code == 422
+
+
+def test_web_fleet_browse_requires_read_private_then_works(small_fleet):
+    app = create_app(home=small_fleet["home"])
+    http = TestClient(app)
+    # node-a granted manage only -> the target node refuses the content read
+    # and the console surfaces that refusal (not a silent empty list).
+    r = http.get("/api/fleet/browse", params={"url": "http://node-a:8000"})
+    assert r.status_code == 403
+    assert "read-private" in r.json()["detail"]
+    # grant read-private on node-a -> live remote read works
+    grantor = MemoryClient(home=small_fleet["home"].parent / "node-a")
+    grantor.store.grant_fleet_admin(small_fleet["keypair"]["public_key"],
+                                    ["manage", "read-private"])
+    grantor.close()
+    r2 = http.get("/api/fleet/browse", params={"url": "http://node-a:8000"})
+    assert r2.status_code == 200
+    memories = r2.json()["memories"]
+    assert [m["owner"] for m in memories] == ["node-a"]
+    assert "note on node-a" in memories[0]["content"]
+    # owner filter passes through
+    r3 = http.get("/api/fleet/browse",
+                  params={"url": "http://node-a:8000", "owner": "nobody"})
+    assert r3.status_code == 200 and r3.json()["memories"] == []
+    # unreachable node -> 502, not a hang or crash
+    r4 = http.get("/api/fleet/browse", params={"url": "http://node-x:8000"})
+    assert r4.status_code == 502

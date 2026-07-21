@@ -881,6 +881,41 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"action": request.action, "results": results}
 
+    @app.get("/api/fleet/browse")
+    def fleet_browse(
+        url: str = Query(min_length=1),
+        limit: int = Query(default=20, ge=1, le=100),
+        offset: int = Query(default=0, ge=0),
+        owner: str | None = None,
+    ) -> dict[str, Any]:
+        """Read memories LIVE from a managed node (console only).
+
+        Private memories deliberately never sync to the console, so its local
+        Browse cannot show them; this reads them off the owning node with a
+        signed request instead. The target node enforces its own capability
+        gate ('read-private') and records the read in ITS org audit — the
+        node's owner always sees that the console looked.
+        """
+        from urllib.parse import quote, urlencode
+
+        from .fleet import FleetKeyMissing, load_console_key, signed_call
+
+        try:
+            keypair = load_console_key(home)
+        except FleetKeyMissing as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        params = {"limit": str(limit), "offset": str(offset)}
+        if owner:
+            params["owner"] = owner
+        target = "/api/memories?" + urlencode(params, quote_via=quote)
+        status, body = signed_call(keypair, url, "GET", target)
+        if status == 0:
+            raise HTTPException(status_code=502, detail=f"node unreachable: {body}")
+        if status != 200:
+            detail = body.get("detail") if isinstance(body, dict) else str(body)[:200]
+            raise HTTPException(status_code=status, detail=str(detail))
+        return body if isinstance(body, dict) else {"memories": []}
+
     @app.get("/api/peers/status")
     def peers_status() -> dict[str, Any]:
         """Probe every registered peer's /healthz concurrently and report
