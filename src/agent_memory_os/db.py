@@ -501,6 +501,16 @@ MIGRATIONS: list[tuple[int, str, object]] = [
 ]
 
 
+def _validate_migration_plan(migrations: Sequence[tuple[int, str, object]]) -> None:
+    """Reject an ambiguous migration plan before opening or changing a database."""
+    versions = [version for version, _, _ in migrations]
+    duplicates = sorted({version for version in versions if versions.count(version) > 1})
+    if duplicates:
+        raise RuntimeError(f"duplicate migration versions: {duplicates}")
+    if versions != sorted(versions):
+        raise RuntimeError("migration versions must be strictly increasing")
+
+
 class MemoryStore:
     def __init__(
         self,
@@ -512,6 +522,7 @@ class MemoryStore:
     ):
         if resonance_hops < 0:
             raise ValueError("resonance_hops must be >= 0")
+        _validate_migration_plan(MIGRATIONS)
         self.path = Path(path)
         self.candidate_providers = list(candidate_providers or [])
         self.resonance_hops = resonance_hops
@@ -551,10 +562,18 @@ class MemoryStore:
             """
         )
         applied = {
-            row["version"] for row in self.conn.execute("SELECT version FROM schema_migrations")
+            row["version"]: row["description"]
+            for row in self.conn.execute(
+                "SELECT version, description FROM schema_migrations"
+            )
         }
         for version, description, migrate in MIGRATIONS:
             if version in applied:
+                if applied[version] != description:
+                    raise RuntimeError(
+                        f"migration {version} history mismatch: database recorded "
+                        f"{applied[version]!r}, code expects {description!r}"
+                    )
                 continue
             migrate(self.conn)
             self.conn.execute(
