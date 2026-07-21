@@ -4,6 +4,24 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.6.2] — 2026-07-21
+
+- **Fix: fleet update trigger echoes `?confirm=update`.** The update-run
+  endpoint refuses without the explicit confirmation echo (so a stray POST
+  can never restart a node) — but the fleet trigger didn't supply it, so
+  `fleet update` and the console's Update buttons failed fleet-wide with
+  HTTP 400 on 1.6.1.
+- **Migration anti-collision** (first community contribution — thanks
+  @warrentc3, #3): duplicate or out-of-order migration versions are rejected
+  before touching a database, and an applied version whose recorded
+  description no longer matches the declared migration fails closed instead
+  of silently skipping — two independently developed branches can no longer
+  ship databases with an incomplete schema.
+- **Test hygiene** (@warrentc3, #2): Windows-safe path assertions, tests no
+  longer open persistent homes (one touched the operator's real
+  `~/.agent-memory`), updater process creation mocked in the authorization
+  test, tidier `.gitignore`.
+
 ## [1.6.1] — 2026-07-21
 
 Console usability fixes from first real fleet use.
