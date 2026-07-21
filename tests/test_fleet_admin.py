@@ -375,3 +375,12 @@ def test_web_fleet_browse_requires_read_private_then_works(small_fleet):
     # unreachable node -> 502, not a hang or crash
     r4 = http.get("/api/fleet/browse", params={"url": "http://node-x:8000"})
     assert r4.status_code == 502
+
+
+def test_update_trigger_carries_confirm_echo():
+    """update-run refuses without ?confirm=update; the console must supply it
+    (found live: fleet update failed fleet-wide with HTTP 400 without this)."""
+    from agent_memory_os.fleet import TRIGGER_TARGETS
+
+    method, path = TRIGGER_TARGETS["update"]
+    assert method == "POST" and "confirm=update" in path

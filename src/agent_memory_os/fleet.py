@@ -167,7 +167,9 @@ def fleet_status(client, home: str | None = None) -> dict[str, Any]:
 
 TRIGGER_TARGETS = {
     "sync": ("POST", "/api/sync/run"),
-    "update": ("POST", "/api/maintenance/update-run"),
+    # update-run demands an explicit ?confirm= echo so a stray POST can never
+    # restart a node; the console supplies it — the operator already confirmed.
+    "update": ("POST", "/api/maintenance/update-run?confirm=update"),
 }
 
 
