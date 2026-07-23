@@ -9,7 +9,7 @@ import json
 from .candidates import CandidateProvider
 from .cache import LRUCache
 from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
-from .db import MemoryStore, RETENTION_MIN_HALF_LIVES
+from .db import LEGACY_CONTEXT_OWNER, MemoryStore, RETENTION_MIN_HALF_LIVES
 from .schema import MemoryLink, MemoryRecord, RecallProfile, SearchResult
 
 class MemoryClient:
@@ -446,7 +446,7 @@ class MemoryClient:
                 if record is None:
                     raise KeyError(memory_id)
                 if record.owner != requester_agent_id:
-                    raise PermissionError("only the owner may link a memory")
+                    raise KeyError(memory_id)
         saved = self.store.add_link(
             MemoryLink(src_id=src_id, dst_id=dst_id, relation=relation, weight=weight, source=source or {})
         )
@@ -746,8 +746,10 @@ class MemoryClient:
         Saves the current agent state as a ContextSnapshot memory record.
         """
         from .schema import ContextSnapshot
-        self.store.conn.execute("BEGIN IMMEDIATE")
+        if self.store.conn.in_transaction:
+            raise RuntimeError("cannot offload context during an active database transaction")
         try:
+            self.store.conn.execute("BEGIN IMMEDIATE")
             snapshot = ContextSnapshot(
                 session_id=session_id,
                 snapshot_data=snapshot_data,
@@ -764,7 +766,8 @@ class MemoryClient:
             record.content = f"session_id:{session_id}\n{record.content}"
             saved = self.store.add(record)
         except Exception:
-            self.store.conn.rollback()
+            if self.store.conn.in_transaction:
+                self.store.conn.rollback()
             raise
         self.cache.clear()
         return saved.id
@@ -786,7 +789,7 @@ class MemoryClient:
                 or record.source.get("session_id") != session_id
                 or (
                     requester_agent_id is not None
-                    and record.owner != requester_agent_id
+                    and record.owner not in (requester_agent_id, LEGACY_CONTEXT_OWNER)
                 )
             ):
                 raise ValueError(f"Snapshot {snapshot_id} not found")

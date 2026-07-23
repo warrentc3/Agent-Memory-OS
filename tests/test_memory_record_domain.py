@@ -106,3 +106,20 @@ def test_update_reuses_domain_validation_without_persisting_invalid_value(tmp_pa
         client.update(memory.id, confidence=2.0)
 
     assert client.get(memory.id).confidence == 0.8
+
+
+def test_legacy_nonstandard_domain_values_hydrate_without_poisoning_search(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    memory = client.add("Legacy application-defined record.")
+    client.store.conn.execute(
+        "UPDATE memories SET scope = ?, type = ? WHERE id = ?",
+        ("session", "reflection", memory.id),
+    )
+    client.store.conn.commit()
+
+    hydrated = client.get(memory.id)
+    assert hydrated.scope == "session"
+    assert hydrated.type == "reflection"
+    assert memory.id in {
+        hit.record.id for hit in client.search("legacy application defined record")
+    }

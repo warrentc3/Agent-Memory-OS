@@ -10,6 +10,7 @@ from __future__ import annotations
 import pytest
 
 from agent_memory_os.client import MemoryClient
+from agent_memory_os.db import LEGACY_CONTEXT_OWNER
 
 
 def _seed(client, owner, n=1, visibility=None):
@@ -45,6 +46,40 @@ def test_reassign_owner_merges_into_existing(tmp_path):
     counts = {r["owner"]: r for r in client.owner_counts()}
     assert "default" not in counts
     assert counts["mizuki"]["memories"] == 4
+
+
+def test_legacy_context_is_surfaced_and_classified_with_delivery_history(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    snapshot_id = client.offload_context(
+        {"step": 1},
+        "legacy-session",
+        owner=LEGACY_CONTEXT_OWNER,
+    )
+    delivered = client.add("Legacy delivery marker.", owner="default")
+    client.store.record_delivery(
+        "legacy-session",
+        [delivered.id],
+        owner=LEGACY_CONTEXT_OWNER,
+    )
+
+    legacy = {row["owner"]: row for row in client.owner_counts()}[
+        LEGACY_CONTEXT_OWNER
+    ]
+    assert legacy["classification_required"] is True
+    assert legacy["context_deliveries"] == 1
+
+    changed = client.reassign_owner(LEGACY_CONTEXT_OWNER, "alice")
+
+    assert changed["memories_owner"] == 1
+    assert changed["context_deliveries"] == 1
+    assert client.get(snapshot_id).owner == "alice"
+    assert delivered.id in client.store.delivered_ids(
+        "legacy-session",
+        owner="alice",
+    )
+    assert LEGACY_CONTEXT_OWNER not in {
+        row["owner"] for row in client.owner_counts()
+    }
 
 
 def test_reassign_owner_moves_agent_grants_and_bumps_acl(tmp_path):

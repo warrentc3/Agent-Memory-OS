@@ -9,8 +9,9 @@ def test_update_requires_matching_owner(tmp_path):
     client = MemoryClient(home=tmp_path)
     alice = client.add("Alice owns this memory.", owner="alice")
 
-    with pytest.raises(PermissionError, match="only the memory owner"):
+    with pytest.raises(KeyError) as exc_info:
         client.update(alice.id, requester_agent_id="bob", content="Bob changed it.")
+    assert exc_info.value.args == (alice.id,)
 
     updated = client.update(
         alice.id,
@@ -33,8 +34,20 @@ def test_link_requires_both_memories_to_be_owned(tmp_path):
     )
     assert own_link.src_id == alice.id
 
-    with pytest.raises(PermissionError, match="only the owner may link"):
+    with pytest.raises(KeyError) as exc_info:
         client.link(alice.id, bob.id, requester_agent_id="alice")
+    assert exc_info.value.args == (bob.id,)
+
+
+def test_context_offload_preserves_an_existing_transaction(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    client.store.conn.execute("BEGIN")
+
+    with pytest.raises(RuntimeError, match="active database transaction"):
+        client.offload_context({"step": 1}, "busy-session", owner="alice")
+
+    assert client.store.conn.in_transaction is True
+    client.store.conn.rollback()
 
 
 def test_recall_feedback_does_not_mutate_shared_foreign_memory(tmp_path):

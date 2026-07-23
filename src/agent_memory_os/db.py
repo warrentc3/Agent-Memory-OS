@@ -34,6 +34,7 @@ RESONANCE_CONVERGENCE_CAP = 2.0
 LINK_DECAY_HALF_LIFE_DAYS = 90.0
 CO_RECALL_WEIGHT_STEP = 0.05
 CO_RECALL_WEAKEN_STEP = 0.1
+LEGACY_CONTEXT_OWNER = "__legacy_unscoped_context__"
 CO_RECALL_INITIAL_WEIGHT = 0.2
 NEGATIVE_FEEDBACK_CONFIDENCE_STEP = 0.05
 SUPERSEDED_SCORE_PENALTY = 0.4
@@ -235,6 +236,28 @@ def _migration_session_recall_owner(conn: sqlite3.Connection) -> None:
     )
     conn.execute("DROP TABLE session_recall_log")
     conn.execute("ALTER TABLE session_recall_log_v2 RENAME TO session_recall_log")
+
+
+def _migration_mark_legacy_context(conn: sqlite3.Connection) -> None:
+    """Preserve pre-requester context as explicitly unscoped legacy state.
+
+    No migration-time identity is authoritative for a shared database. Marking
+    legacy rows avoids falsely assigning them while allowing requester-aware
+    readers to retain the same session continuity the old unscoped model had.
+    """
+    conn.execute(
+        "UPDATE memories SET owner = ? WHERE type = 'snapshot' AND owner = 'default'",
+        (LEGACY_CONTEXT_OWNER,),
+    )
+    conn.execute(
+        "UPDATE memories_archive SET owner = ? "
+        "WHERE type = 'snapshot' AND owner = 'default'",
+        (LEGACY_CONTEXT_OWNER,),
+    )
+    conn.execute(
+        "UPDATE session_recall_log SET owner = ? WHERE owner = ''",
+        (LEGACY_CONTEXT_OWNER,),
+    )
 
 
 def _migration_memory_audit(conn: sqlite3.Connection) -> None:
@@ -543,6 +566,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (16, "one-time pairing invites for team join", _migration_pairing_invites),
     (17, "fleet admin trust anchors + signature replay guard", _migration_fleet_admins),
     (18, "requester-scoped session recall delivery log", _migration_session_recall_owner),
+    (19, "mark pre-requester context as legacy unscoped", _migration_mark_legacy_context),
 ]
 
 
@@ -730,7 +754,7 @@ class MemoryStore:
         if existing is None:
             raise KeyError(memory_id)
         if requester_agent_id is not None and existing.owner != requester_agent_id:
-            raise PermissionError("only the memory owner may update it")
+            raise KeyError(memory_id)
         for name, value in fields.items():
             setattr(existing, name, value)
         if "content" in fields and "summary" not in fields:
@@ -1035,8 +1059,9 @@ class MemoryStore:
 
     def delivered_ids(self, session_id: str, *, owner: str | None = None) -> set[str]:
         rows = self.conn.execute(
-            "SELECT memory_id FROM session_recall_log WHERE owner = ? AND session_id = ?",
-            (owner or "", session_id),
+            "SELECT memory_id FROM session_recall_log "
+            "WHERE owner IN (?, ?) AND session_id = ?",
+            (owner or "", LEGACY_CONTEXT_OWNER, session_id),
         ).fetchall()
         return {row["memory_id"] for row in rows}
 
@@ -1184,11 +1209,19 @@ class MemoryStore:
             "SELECT owner, COUNT(*) AS n FROM memories GROUP BY owner")}
         arch = {r["owner"]: r["n"] for r in self.conn.execute(
             "SELECT owner, COUNT(*) AS n FROM memories_archive GROUP BY owner")}
+        legacy_deliveries = int(self.conn.execute(
+            "SELECT COUNT(*) FROM session_recall_log WHERE owner = ?",
+            (LEGACY_CONTEXT_OWNER,),
+        ).fetchone()[0])
         registered = {a["id"] for a in self.list_agents()}
         owners = sorted(set(live) | set(arch))
+        if legacy_deliveries and LEGACY_CONTEXT_OWNER not in owners:
+            owners.append(LEGACY_CONTEXT_OWNER)
         return [
             {"owner": o, "memories": live.get(o, 0), "archived": arch.get(o, 0),
-             "registered_agent": o in registered}
+             "registered_agent": o in registered,
+             "context_deliveries": legacy_deliveries if o == LEGACY_CONTEXT_OWNER else 0,
+             "classification_required": o == LEGACY_CONTEXT_OWNER}
             for o in owners
         ]
 
@@ -1201,7 +1234,8 @@ class MemoryStore:
         to a real agent identity. Moves memory ownership, archived rows,
         `agent:<old>` ACL grants (bumping the ACL clock so peers converge),
         team/project memberships (dedup on conflict), recall profiles, and the
-        agents-registry row if present. Returns per-table change counts.
+        agents-registry row if present. Requester-scoped delivery history moves
+        with the owner as well. Returns per-table change counts.
         """
         old_owner = old_owner.strip()
         new_owner = new_owner.strip()
@@ -1252,6 +1286,23 @@ class MemoryStore:
                 "UPDATE OR REPLACE recall_profiles SET agent_id = ? WHERE agent_id = ?",
                 (new_owner, old_owner),
             ).rowcount
+            delivery_rows = int(self.conn.execute(
+                "SELECT COUNT(*) FROM session_recall_log WHERE owner = ?",
+                (old_owner,),
+            ).fetchone()[0])
+            if delivery_rows:
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO session_recall_log"
+                    "(owner, session_id, memory_id, delivered_at) "
+                    "SELECT ?, session_id, memory_id, delivered_at "
+                    "FROM session_recall_log WHERE owner = ?",
+                    (new_owner, old_owner),
+                )
+                self.conn.execute(
+                    "DELETE FROM session_recall_log WHERE owner = ?",
+                    (old_owner,),
+                )
+            counts["context_deliveries"] = delivery_rows
         self._invalidate_membership_caches()
         return counts
 
@@ -1997,8 +2048,8 @@ class MemoryStore:
         where = ["type = 'snapshot'", "json_extract(source, '$.session_id') = ?"]
         params: list[object] = [session_id]
         if owner is not None:
-            where.append("owner = ?")
-            params.append(owner)
+            where.append("owner IN (?, ?)")
+            params.extend((owner, LEGACY_CONTEXT_OWNER))
         params.append(max(1, limit))
         rows = self.conn.execute(
             f"""
@@ -2021,10 +2072,10 @@ class MemoryStore:
             """
             SELECT COALESCE(MAX(CAST(json_extract(source, '$.snapshot_index') AS INTEGER)), -1)
             FROM memories
-            WHERE type = 'snapshot' AND owner = ?
+            WHERE type = 'snapshot' AND owner IN (?, ?)
               AND json_extract(source, '$.session_id') = ?
             """,
-            (owner, session_id),
+            (owner, LEGACY_CONTEXT_OWNER, session_id),
         ).fetchone()
         return int(row[0]) + 1
 
@@ -2043,8 +2094,8 @@ class MemoryStore:
         where = ["type = 'snapshot'", "json_extract(source, '$.session_id') = ?"]
         params: list[object] = [session_id]
         if owner is not None:
-            where.append("owner = ?")
-            params.append(owner)
+            where.append("owner IN (?, ?)")
+            params.extend((owner, LEGACY_CONTEXT_OWNER))
         row = self.conn.execute(
             f"""
             SELECT * FROM memories
@@ -3675,6 +3726,7 @@ class MemoryStore:
             pinned=bool(row["pinned"]),
             helpful_count=int(_row_get(row, "helpful_count", 0) or 0),
             unhelpful_count=int(_row_get(row, "unhelpful_count", 0) or 0),
+            _validate=False,
         )
 
     @staticmethod
