@@ -131,6 +131,21 @@ def test_purge_owner_removes_all_owned(tmp_path):
     assert client.owner_counts() == []
 
 
+def test_purge_owner_removes_requester_delivery_history(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    shared = client.add(
+        "Shared memory delivered to Bob.",
+        owner="alice",
+        visibility=["global"],
+    )
+    client.store.record_delivery("reused-session", [shared.id], owner="bob")
+
+    result = client.purge_owner("bob")
+
+    assert result["delivery_rows_deleted"] == 1
+    assert client.store.delivered_ids("reused-session", owner="bob") == set()
+
+
 def test_reassign_registers_unrecognized_target_by_default(tmp_path):
     """Moving memories to a fresh owner must leave them under a RECOGNIZED
     identity, else they are hidden all over again (the original mizuki bug)."""

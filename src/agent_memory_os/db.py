@@ -20,6 +20,7 @@ from .schema import (
     MemoryRecord,
     RecallProfile,
     SearchResult,
+    normalize_iso_timestamp,
     utc_now,
     utc_now_micro,
 )
@@ -258,6 +259,34 @@ def _migration_mark_legacy_context(conn: sqlite3.Connection) -> None:
         "UPDATE session_recall_log SET owner = ? WHERE owner = ''",
         (LEGACY_CONTEXT_OWNER,),
     )
+
+
+def _migration_canonicalize_expiry_timestamps(conn: sqlite3.Connection) -> None:
+    """Canonicalize previously accepted ISO-8601 expiry spellings.
+
+    Python accepts forms such as basic-format dates that SQLite julianday()
+    does not. Rewriting parsable values keeps the instant-based SQL gates
+    compatible with records written before canonical storage was enforced.
+    """
+    for table in ("memories", "memories_archive"):
+        rows = conn.execute(
+            f"SELECT id, expires_at FROM {table} WHERE expires_at IS NOT NULL"
+        ).fetchall()
+        for row in rows:
+            try:
+                normalized = normalize_iso_timestamp(
+                    row["expires_at"],
+                    field_name="expires_at",
+                )
+            except ValueError:
+                # Preserve values outside the previously accepted Python ISO
+                # contract; this migration must not invent expiry semantics.
+                continue
+            if normalized != row["expires_at"]:
+                conn.execute(
+                    f"UPDATE {table} SET expires_at = ? WHERE id = ?",
+                    (normalized, row["id"]),
+                )
 
 
 def _migration_memory_audit(conn: sqlite3.Connection) -> None:
@@ -567,6 +596,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (17, "fleet admin trust anchors + signature replay guard", _migration_fleet_admins),
     (18, "requester-scoped session recall delivery log", _migration_session_recall_owner),
     (19, "mark pre-requester context as legacy unscoped", _migration_mark_legacy_context),
+    (20, "canonicalize legacy expiry timestamps", _migration_canonicalize_expiry_timestamps),
 ]
 
 
@@ -2610,6 +2640,9 @@ class MemoryStore:
         archived_removed = self.conn.execute(
             "DELETE FROM memories_archive WHERE owner = ?", (owner,)
         ).rowcount
+        delivery_rows_removed = self.conn.execute(
+            "DELETE FROM session_recall_log WHERE owner = ?", (owner,)
+        ).rowcount
         if owned_ids:
             placeholders = ", ".join("?" for _ in owned_ids)
             self.conn.execute(
@@ -2633,6 +2666,7 @@ class MemoryStore:
             "memories_deleted": int(memories_removed),
             "links_deleted": int(links_removed),
             "archived_deleted": int(archived_removed),
+            "delivery_rows_deleted": int(delivery_rows_removed),
         }
 
     def rebuild_indexes(self) -> dict[str, int]:

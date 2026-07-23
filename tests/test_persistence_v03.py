@@ -8,6 +8,7 @@ from agent_memory_os.db import (
     LEGACY_CONTEXT_OWNER,
     MIGRATIONS,
     MemoryStore,
+    _migration_canonicalize_expiry_timestamps,
     _migration_mark_legacy_context,
     _migration_session_recall_owner,
     _validate_migration_plan,
@@ -215,7 +216,7 @@ def test_database_at_migration_18_upgrades_legacy_context_in_place(tmp_path):
     conn.close()
 
     upgraded = MemoryClient(home=tmp_path)
-    assert upgraded.store.schema_version() == 19
+    assert upgraded.store.schema_version() == MIGRATIONS[-1][0]
     assert upgraded.get(snapshot_id).owner == LEGACY_CONTEXT_OWNER
     assert upgraded.reload_context(
         "real-upgrade-session",
@@ -225,6 +226,54 @@ def test_database_at_migration_18_upgrades_legacy_context_in_place(tmp_path):
         "real-upgrade-session",
         owner="alice",
     )
+
+
+def test_legacy_expiry_migration_canonicalizes_python_iso_forms():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE memories (id TEXT PRIMARY KEY, expires_at TEXT);
+        CREATE TABLE memories_archive (id TEXT PRIMARY KEY, expires_at TEXT);
+        INSERT INTO memories VALUES ('future', '20990101T000000+00:00');
+        INSERT INTO memories_archive VALUES ('past', '20000101T000000+00:00');
+        INSERT INTO memories VALUES ('unknown', 'someday');
+        """
+    )
+
+    _migration_canonicalize_expiry_timestamps(conn)
+    _migration_canonicalize_expiry_timestamps(conn)
+
+    assert conn.execute(
+        "SELECT expires_at FROM memories WHERE id = 'future'"
+    ).fetchone()[0] == "2099-01-01T00:00:00+00:00"
+    assert conn.execute(
+        "SELECT expires_at FROM memories_archive WHERE id = 'past'"
+    ).fetchone()[0] == "2000-01-01T00:00:00+00:00"
+    assert conn.execute(
+        "SELECT expires_at FROM memories WHERE id = 'unknown'"
+    ).fetchone()[0] == "someday"
+    conn.close()
+
+
+def test_database_upgrade_keeps_basic_format_future_expiry_visible(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    memory = client.add("Future basic-format expiry sentinel.")
+    client.store.conn.execute(
+        "UPDATE memories SET expires_at = ? WHERE id = ?",
+        ("20990101T000000+00:00", memory.id),
+    )
+    client.store.conn.execute("DELETE FROM schema_migrations WHERE version = 20")
+    client.store.conn.commit()
+    client.close()
+
+    upgraded = MemoryClient(home=tmp_path)
+    assert upgraded.get(memory.id).expires_at == "2099-01-01T00:00:00+00:00"
+    assert memory.id in {
+        hit.record.id
+        for hit in upgraded.search("future basic format expiry sentinel")
+    }
+    assert upgraded.dashboard_stats()["expired"] == 0
 
 
 def test_integrity_check_detects_fts_drift(tmp_path):
