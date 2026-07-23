@@ -575,7 +575,11 @@ def _cmd_service(args) -> int:
                 update_instance_settings(args.home, port=port)
     config = svc.make_config(args.home, host, port)
     if args.action == "install":
-        actions = svc.install(config, dry_run=args.dry_run)
+        try:
+            actions = svc.install(config, dry_run=args.dry_run)
+        except RuntimeError as exc:
+            print(f"service install failed: {exc}")
+            return 1
         for action in actions:
             print(("would: " if args.dry_run else "") + action)
         if not args.dry_run:

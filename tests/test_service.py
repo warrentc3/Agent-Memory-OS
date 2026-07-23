@@ -1,7 +1,10 @@
 from pathlib import Path
+import subprocess
 
 import pytest
 
+from agent_memory_os import service as service_module
+from agent_memory_os.cli import main
 from agent_memory_os.service import (
     SERVICE_LABEL,
     SERVICE_NAME,
@@ -72,3 +75,34 @@ def test_install_and_uninstall_dry_run_all_platforms(config, platform):
 def test_install_rejects_unknown_platform(config):
     with pytest.raises(RuntimeError):
         install(config, platform="plan9", dry_run=True)
+
+
+def test_windows_install_propagates_required_command_failure(config, monkeypatch):
+    def fail(command):
+        return subprocess.CompletedProcess(command, 1, "", "access denied")
+
+    monkeypatch.setattr(service_module, "_run", fail)
+
+    with pytest.raises(RuntimeError, match="access denied"):
+        install(config, platform="win32")
+
+
+def test_cli_service_install_reports_native_failure(tmp_path, monkeypatch, capsys):
+    def fail(*args, **kwargs):
+        raise RuntimeError("native manager refused install")
+
+    monkeypatch.setattr(service_module, "install", fail)
+
+    result = main(
+        [
+            "--home",
+            str(tmp_path),
+            "service",
+            "install",
+            "--port",
+            "8123",
+        ]
+    )
+
+    assert result == 1
+    assert "service install failed" in capsys.readouterr().out
