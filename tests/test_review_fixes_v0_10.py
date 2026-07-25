@@ -66,6 +66,16 @@ def test_semantic_signature_changes_on_in_place_edit(tmp_path):
     assert client.store.semantic_signature() != sig_before
 
 
+def test_semantic_signature_changes_on_same_length_same_second_edit(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    memory = client.add("alpha", visibility=["global"])
+    sig_before = client.store.semantic_signature()
+
+    client.update(memory.id, content="bravo")
+
+    assert client.store.semantic_signature() != sig_before
+
+
 def test_semantic_signature_stable_under_reinforcement(tmp_path):
     """Reinforcement writes must NOT trigger a spurious index rebuild."""
     client = MemoryClient(home=tmp_path)

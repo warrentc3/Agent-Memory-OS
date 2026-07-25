@@ -1,12 +1,40 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import InitVar, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 import json
 import uuid
 
 from .scoring import VALID_DECAY_POLICIES
+
+
+PUBLIC_MEMORY_SCOPES = frozenset({"user", "agent", "project", "team", "global"})
+VALID_MEMORY_SCOPES = PUBLIC_MEMORY_SCOPES | {"profile"}
+PUBLIC_MEMORY_TYPES = frozenset(
+    {"preference", "fact", "procedure", "environment", "decision", "warning", "note"}
+)
+VALID_MEMORY_TYPES = PUBLIC_MEMORY_TYPES | {"snapshot"}
+
+
+def normalize_iso_timestamp(value: str | None, *, field_name: str) -> str | None:
+    """Validate an ISO-8601 timestamp and canonicalize it to UTC.
+
+    Naive values retain the historical API interpretation of UTC. Explicit
+    offsets are converted as instants, so storage and lexical presentation no
+    longer depend on the caller's offset spelling.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field_name} must be an ISO-8601 timestamp")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{field_name} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat()
 
 
 def utc_now() -> str:
@@ -59,8 +87,46 @@ class MemoryRecord:
     pinned: bool = False
     helpful_count: int = 0
     unhelpful_count: int = 0
+    _validate: InitVar[bool] = True
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, _validate: bool) -> None:
+        # Persisted rows predate the canonical write contract and may contain
+        # application-defined scope/type values. Hydration preserves those
+        # rows; every ordinary constructor and dataclasses.replace() call keeps
+        # the strict default and therefore validates new or updated state.
+        if _validate:
+            if not isinstance(self.content, str) or not self.content.strip():
+                raise ValueError("content must be a non-empty string")
+            if not isinstance(self.owner, str) or not self.owner.strip():
+                raise ValueError("owner must be a non-empty string")
+            if self.scope not in VALID_MEMORY_SCOPES:
+                raise ValueError(f"scope must be one of {sorted(VALID_MEMORY_SCOPES)}")
+            if self.type not in VALID_MEMORY_TYPES:
+                raise ValueError(f"type must be one of {sorted(VALID_MEMORY_TYPES)}")
+            if self.summary is not None and not isinstance(self.summary, str):
+                raise ValueError("summary must be a string or None")
+            if not isinstance(self.tags, list) or not all(
+                isinstance(tag, str) and tag.strip() for tag in self.tags
+            ):
+                raise ValueError("tags must be a list of non-empty strings")
+            if not isinstance(self.visibility, list) or not all(
+                isinstance(grant, str) and grant.strip() for grant in self.visibility
+            ):
+                raise ValueError("visibility must be a list of non-empty strings")
+            if not isinstance(self.source, dict):
+                raise ValueError("source must be a mapping")
+            for field_name in ("confidence", "importance"):
+                value = getattr(self, field_name)
+                if (
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not 0.0 <= value <= 1.0
+                ):
+                    raise ValueError(f"{field_name} must be between 0.0 and 1.0")
+            self.expires_at = normalize_iso_timestamp(
+                self.expires_at,
+                field_name="expires_at",
+            )
         if self.decay_policy not in VALID_DECAY_POLICIES:
             raise ValueError(f"decay_policy must be one of {sorted(VALID_DECAY_POLICIES)}")
         if self.decay_half_life_days is None:
@@ -90,12 +156,14 @@ class MemoryRecord:
 class ContextSnapshot:
     session_id: str
     snapshot_data: dict[str, Any]
+    owner: str = "default"
     trigger: str = "manual"
     snapshot_index: int = 0
 
     def to_record(self) -> MemoryRecord:
         return MemoryRecord(
             content=json.dumps(self.snapshot_data, ensure_ascii=False),
+            owner=self.owner,
             type="snapshot",
             summary=f"Snapshot for session {self.session_id} (index {self.snapshot_index})",
             source={

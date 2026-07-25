@@ -53,7 +53,11 @@ def test_orchestrator_buckets_and_proactive_recall(tmp_path):
 
 def test_orchestrator_session_iterative_deepening(tmp_path):
     client, records = seeded_client(tmp_path)
-    client.offload_context({"step": 3, "notes": "mid-release"}, session_id="rel-42")
+    client.offload_context(
+        {"step": 3, "notes": "mid-release"},
+        session_id="rel-42",
+        owner="neo",
+    )
 
     first = client.orchestrate_context(
         "prepare the staging deploy", session_id="rel-42",
@@ -71,7 +75,7 @@ def test_orchestrator_session_iterative_deepening(tmp_path):
     assert records["relevant"].id not in second_task_ids
     # bedrock constants repeat every time by design
     assert records["bedrock"].id in second.sections["bedrock"]["memory_ids"]
-    assert records["relevant"].id in client.store.delivered_ids("rel-42")
+    assert records["relevant"].id in client.store.delivered_ids("rel-42", owner="neo")
 
 
 def test_orchestrator_respects_small_budgets(tmp_path):

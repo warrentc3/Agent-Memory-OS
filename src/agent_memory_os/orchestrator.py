@@ -107,7 +107,11 @@ def orchestrate_context(
     if max_tokens < 128:
         raise ValueError("max_tokens must be >= 128")
     store = client.store
-    seen = store.delivered_ids(session_id) if session_id else set()
+    seen = (
+        store.delivered_ids(session_id, owner=requester_agent_id)
+        if session_id
+        else set()
+    )
 
     task_results = client.search(
         task,
@@ -161,7 +165,10 @@ def orchestrate_context(
 
     session_lines: list[str] = []
     if session_id:
-        snapshot = store.latest_snapshot_record(session_id)
+        snapshot = store.latest_snapshot_record(
+            session_id,
+            owner=requester_agent_id,
+        )
         if snapshot is not None:
             session_lines.append(
                 f"- Context snapshot {snapshot.id} available for session "
@@ -230,7 +237,11 @@ def orchestrate_context(
         for memory_id in sections.get(name, {}).get("memory_ids", [])
     ]
     if session_id and delivered:
-        store.record_delivery(session_id, delivered)
+        store.record_delivery(
+            session_id,
+            delivered,
+            owner=requester_agent_id,
+        )
 
     return OrchestratedContext(
         text="\n".join(lines).rstrip() + ("\n" if lines else ""),

@@ -23,12 +23,20 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from .client import MemoryClient
-from .schema import MemoryRecord, SearchResult, VALID_LINK_RELATIONS
+from .schema import (
+    MemoryRecord,
+    PUBLIC_MEMORY_SCOPES,
+    PUBLIC_MEMORY_TYPES,
+    SearchResult,
+    VALID_LINK_RELATIONS,
+)
 from .tokens import load_token
 from .web_ui import PAGE
 
-VALID_SCOPES = {"user", "agent", "project", "team", "global"}
-VALID_TYPES = {"preference", "fact", "procedure", "environment", "decision", "warning", "note"}
+# Backward-compatible aliases for callers that imported the Web API's public
+# classification sets before they moved to the shared schema module.
+VALID_SCOPES = PUBLIC_MEMORY_SCOPES
+VALID_TYPES = PUBLIC_MEMORY_TYPES
 
 
 class AddMemoryRequest(BaseModel):
@@ -50,15 +58,15 @@ class AddMemoryRequest(BaseModel):
     @field_validator("scope")
     @classmethod
     def _valid_scope(cls, value: str) -> str:
-        if value not in VALID_SCOPES:
-            raise ValueError(f"scope must be one of {sorted(VALID_SCOPES)}")
+        if value not in PUBLIC_MEMORY_SCOPES:
+            raise ValueError(f"scope must be one of {sorted(PUBLIC_MEMORY_SCOPES)}")
         return value
 
     @field_validator("type")
     @classmethod
     def _valid_type(cls, value: str) -> str:
-        if value not in VALID_TYPES:
-            raise ValueError(f"type must be one of {sorted(VALID_TYPES)}")
+        if value not in PUBLIC_MEMORY_TYPES:
+            raise ValueError(f"type must be one of {sorted(PUBLIC_MEMORY_TYPES)}")
         return value
 
     @field_validator("expires_at")
@@ -93,15 +101,15 @@ class UpdateMemoryRequest(BaseModel):
     @field_validator("scope")
     @classmethod
     def _valid_scope(cls, value: str | None) -> str | None:
-        if value is not None and value not in VALID_SCOPES:
-            raise ValueError(f"scope must be one of {sorted(VALID_SCOPES)}")
+        if value is not None and value not in PUBLIC_MEMORY_SCOPES:
+            raise ValueError(f"scope must be one of {sorted(PUBLIC_MEMORY_SCOPES)}")
         return value
 
     @field_validator("type")
     @classmethod
     def _valid_type(cls, value: str | None) -> str | None:
-        if value is not None and value not in VALID_TYPES:
-            raise ValueError(f"type must be one of {sorted(VALID_TYPES)}")
+        if value is not None and value not in PUBLIC_MEMORY_TYPES:
+            raise ValueError(f"type must be one of {sorted(PUBLIC_MEMORY_TYPES)}")
         return value
 
     @field_validator("expires_at")

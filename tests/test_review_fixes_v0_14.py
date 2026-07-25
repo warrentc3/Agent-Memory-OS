@@ -298,6 +298,31 @@ def test_restore_archived_seeds_acl_clock(tmp_path):
     assert acl == m.created_at
 
 
+def test_sync_canonicalizes_basic_format_expiry_from_older_peer(tmp_path):
+    src = MemoryClient(home=tmp_path / "src")
+    dst = MemoryClient(home=tmp_path / "dst")
+    memory = src.add(
+        "Federated basic-format expiry sentinel.",
+        owner="peer-agent",
+        visibility=["global"],
+    )
+    src.store.conn.execute(
+        "UPDATE memories SET expires_at = ? WHERE id = ?",
+        ("20990101T000000+00:00", memory.id),
+    )
+    src.store.conn.commit()
+    bundle = tmp_path / "basic-expiry.jsonl"
+    export_bundle(src.store, bundle)
+
+    import_bundle(dst.store, str(bundle), org_scope="full")
+
+    assert dst.get(memory.id).expires_at == "2099-01-01T00:00:00+00:00"
+    assert memory.id in {
+        hit.record.id
+        for hit in dst.search("federated basic format expiry sentinel")
+    }
+
+
 # ---- web push leg is untrusted and cannot mutate org structure ----
 
 def test_web_push_import_rejects_org_mutation(tmp_path):

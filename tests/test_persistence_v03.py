@@ -4,7 +4,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agent_memory_os import MemoryClient
-from agent_memory_os.db import MIGRATIONS, MemoryStore, _validate_migration_plan
+from agent_memory_os.db import (
+    LEGACY_CONTEXT_OWNER,
+    MIGRATIONS,
+    MemoryStore,
+    _migration_canonicalize_expiry_timestamps,
+    _migration_mark_legacy_context,
+    _migration_session_recall_owner,
+    _validate_migration_plan,
+)
 from agent_memory_os.embedding import HashingEmbedder
 from agent_memory_os.web_app import create_app
 
@@ -76,6 +84,196 @@ def test_legacy_database_upgrades_in_place(tmp_path):
     record = store.get("mem_legacy")
     assert record.content == "old row" and record.pinned is False
     store.close()
+
+
+def test_session_recall_owner_migration_preserves_legacy_rows_and_is_idempotent():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE session_recall_log (
+          session_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          delivered_at TEXT NOT NULL,
+          PRIMARY KEY (session_id, memory_id)
+        );
+        INSERT INTO session_recall_log VALUES ('session-1', 'mem_1', '2026-01-01');
+        """
+    )
+
+    _migration_session_recall_owner(conn)
+    _migration_session_recall_owner(conn)
+
+    columns = {
+        row["name"]
+        for row in conn.execute("PRAGMA table_info(session_recall_log)").fetchall()
+    }
+    row = conn.execute(
+        "SELECT owner, session_id, memory_id FROM session_recall_log"
+    ).fetchone()
+    assert "owner" in columns
+    assert tuple(row) == ("", "session-1", "mem_1")
+    conn.close()
+
+
+def test_legacy_context_migration_marks_unscoped_rows_and_is_idempotent():
+    conn = sqlite3.connect(":memory:")
+    conn.executescript(
+        """
+        CREATE TABLE memories (id TEXT, owner TEXT, type TEXT);
+        CREATE TABLE memories_archive (id TEXT, owner TEXT, type TEXT);
+        CREATE TABLE session_recall_log (
+          owner TEXT NOT NULL,
+          session_id TEXT NOT NULL,
+          memory_id TEXT NOT NULL,
+          delivered_at TEXT NOT NULL,
+          PRIMARY KEY (owner, session_id, memory_id)
+        );
+        INSERT INTO memories VALUES ('snapshot-live', 'default', 'snapshot');
+        INSERT INTO memories VALUES ('ordinary', 'default', 'note');
+        INSERT INTO memories_archive VALUES ('snapshot-archived', 'default', 'snapshot');
+        INSERT INTO session_recall_log VALUES ('', 'session-1', 'ordinary', '2026-01-01');
+        """
+    )
+
+    _migration_mark_legacy_context(conn)
+    _migration_mark_legacy_context(conn)
+
+    assert conn.execute(
+        "SELECT owner FROM memories WHERE id = 'snapshot-live'"
+    ).fetchone()[0] == LEGACY_CONTEXT_OWNER
+    assert conn.execute(
+        "SELECT owner FROM memories WHERE id = 'ordinary'"
+    ).fetchone()[0] == "default"
+    assert conn.execute(
+        "SELECT owner FROM memories_archive WHERE id = 'snapshot-archived'"
+    ).fetchone()[0] == LEGACY_CONTEXT_OWNER
+    assert conn.execute(
+        "SELECT owner FROM session_recall_log"
+    ).fetchone()[0] == LEGACY_CONTEXT_OWNER
+    conn.close()
+
+
+def test_legacy_unscoped_context_remains_available_to_requesters(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    legacy_snapshot = client.offload_context(
+        {"step": 1, "era": "legacy"},
+        "upgrade-session",
+        owner=LEGACY_CONTEXT_OWNER,
+    )
+    delivered = client.add("Legacy delivered marker.", owner="default")
+    client.store.record_delivery(
+        "upgrade-session",
+        [delivered.id],
+        owner=LEGACY_CONTEXT_OWNER,
+    )
+
+    assert client.reload_context(
+        "upgrade-session",
+        requester_agent_id="alice",
+    ) == {"step": 1, "era": "legacy"}
+    assert client.reload_context(
+        "upgrade-session",
+        snapshot_id=legacy_snapshot,
+        requester_agent_id="bob",
+    ) == {"step": 1, "era": "legacy"}
+    assert delivered.id in client.store.delivered_ids(
+        "upgrade-session",
+        owner="alice",
+    )
+
+    current_snapshot = client.offload_context(
+        {"step": 2, "era": "requester"},
+        "upgrade-session",
+        owner="alice",
+    )
+    assert client.get(current_snapshot).source["snapshot_index"] == 1
+    assert client.reload_context(
+        "upgrade-session",
+        requester_agent_id="alice",
+    ) == {"step": 2, "era": "requester"}
+
+
+def test_database_at_migration_18_upgrades_legacy_context_in_place(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    snapshot_id = client.offload_context(
+        {"step": 1},
+        "real-upgrade-session",
+        owner="default",
+    )
+    delivered = client.add("Pre-upgrade delivered marker.", owner="default")
+    client.store.record_delivery(
+        "real-upgrade-session",
+        [delivered.id],
+        owner=None,
+    )
+    client.close()
+
+    db_path = tmp_path / "memories.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("DELETE FROM schema_migrations WHERE version = 19")
+    conn.commit()
+    conn.close()
+
+    upgraded = MemoryClient(home=tmp_path)
+    assert upgraded.store.schema_version() == MIGRATIONS[-1][0]
+    assert upgraded.get(snapshot_id).owner == LEGACY_CONTEXT_OWNER
+    assert upgraded.reload_context(
+        "real-upgrade-session",
+        requester_agent_id="alice",
+    ) == {"step": 1}
+    assert delivered.id in upgraded.store.delivered_ids(
+        "real-upgrade-session",
+        owner="alice",
+    )
+
+
+def test_legacy_expiry_migration_canonicalizes_python_iso_forms():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE memories (id TEXT PRIMARY KEY, expires_at TEXT);
+        CREATE TABLE memories_archive (id TEXT PRIMARY KEY, expires_at TEXT);
+        INSERT INTO memories VALUES ('future', '20990101T000000+00:00');
+        INSERT INTO memories_archive VALUES ('past', '20000101T000000+00:00');
+        INSERT INTO memories VALUES ('unknown', 'someday');
+        """
+    )
+
+    _migration_canonicalize_expiry_timestamps(conn)
+    _migration_canonicalize_expiry_timestamps(conn)
+
+    assert conn.execute(
+        "SELECT expires_at FROM memories WHERE id = 'future'"
+    ).fetchone()[0] == "2099-01-01T00:00:00+00:00"
+    assert conn.execute(
+        "SELECT expires_at FROM memories_archive WHERE id = 'past'"
+    ).fetchone()[0] == "2000-01-01T00:00:00+00:00"
+    assert conn.execute(
+        "SELECT expires_at FROM memories WHERE id = 'unknown'"
+    ).fetchone()[0] == "someday"
+    conn.close()
+
+
+def test_database_upgrade_keeps_basic_format_future_expiry_visible(tmp_path):
+    client = MemoryClient(home=tmp_path)
+    memory = client.add("Future basic-format expiry sentinel.")
+    client.store.conn.execute(
+        "UPDATE memories SET expires_at = ? WHERE id = ?",
+        ("20990101T000000+00:00", memory.id),
+    )
+    client.store.conn.execute("DELETE FROM schema_migrations WHERE version = 20")
+    client.store.conn.commit()
+    client.close()
+
+    upgraded = MemoryClient(home=tmp_path)
+    assert upgraded.get(memory.id).expires_at == "2099-01-01T00:00:00+00:00"
+    assert memory.id in {
+        hit.record.id
+        for hit in upgraded.search("future basic format expiry sentinel")
+    }
+    assert upgraded.dashboard_stats()["expired"] == 0
 
 
 def test_integrity_check_detects_fts_drift(tmp_path):

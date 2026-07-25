@@ -66,3 +66,54 @@ def test_remove_project_member_invalidates_cache_for_nonowner(tmp_path):
     assert PROJ_MEM not in _texts(c, "bob", "api key rotates")
     # ...but alice, the owner, still sees it
     assert PROJ_MEM in _texts(c, "alice", "api key rotates")
+
+
+def test_other_connection_visibility_revoke_invalidates_cached_recall(tmp_path):
+    writer = MemoryClient(home=tmp_path)
+    reader = MemoryClient(home=tmp_path)
+    memory = writer.add(
+        "Cross-process revocation sentinel.",
+        owner="alice",
+        visibility=["global"],
+    )
+
+    assert memory.id in {
+        hit.record.id
+        for hit in reader.search("cross process revocation", requester_agent_id="bob")
+    }
+    writer.update(memory.id, requester_agent_id="alice", visibility=[])
+
+    assert memory.id not in {
+        hit.record.id
+        for hit in reader.search("cross process revocation", requester_agent_id="bob")
+    }
+    reader.close()
+    writer.close()
+
+
+def test_other_connection_membership_revoke_invalidates_all_acl_caches(tmp_path):
+    writer = MemoryClient(home=tmp_path)
+    reader = MemoryClient(home=tmp_path)
+    for agent_id in ("alice", "bob"):
+        writer.store.register_agent(agent_id)
+    writer.create_team("apollo")
+    writer.add_team_member("apollo", "alice")
+    writer.add_team_member("apollo", "bob")
+    memory = writer.add(
+        "Cross-process Apollo membership sentinel.",
+        owner="alice",
+        visibility=["team:apollo"],
+    )
+
+    assert memory.id in {
+        hit.record.id
+        for hit in reader.search("apollo membership sentinel", requester_agent_id="bob")
+    }
+    writer.remove_team_member("apollo", "bob")
+
+    assert memory.id not in {
+        hit.record.id
+        for hit in reader.search("apollo membership sentinel", requester_agent_id="bob")
+    }
+    reader.close()
+    writer.close()

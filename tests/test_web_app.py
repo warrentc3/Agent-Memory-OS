@@ -404,6 +404,29 @@ def test_web_api_owners_reassign_rejects_identical(tmp_path):
     assert r.status_code == 400
 
 
+def test_web_api_surfaces_legacy_context_for_classification(tmp_path):
+    from agent_memory_os import MemoryClient
+    from agent_memory_os.db import LEGACY_CONTEXT_OWNER
+
+    seeded = MemoryClient(home=tmp_path)
+    seeded.offload_context(
+        {"step": 1},
+        "legacy-web-session",
+        owner=LEGACY_CONTEXT_OWNER,
+    )
+    seeded.close()
+
+    app = create_app(home=tmp_path)
+    client = TestClient(app)
+    owners = {
+        row["owner"]: row
+        for row in client.get("/api/owners").json()["owners"]
+    }
+
+    assert owners[LEGACY_CONTEXT_OWNER]["classification_required"] is True
+    assert owners[LEGACY_CONTEXT_OWNER]["memories"] == 1
+
+
 def test_web_api_peers_status_probes_and_reports(tmp_path):
     app = create_app(home=tmp_path)
     client = TestClient(app)

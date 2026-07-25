@@ -6,12 +6,13 @@ sessions. Run with `agent-memory-os[mcp]` installed; the core package keeps no
 hard MCP dependency so the SDK and CLI stay lightweight.
 
 Identity: set `AGENT_MEMORY_AGENT_ID` in the environment so every read/write is
-attributed to that agent and gated by its team/project ACL. The identity is
-taken ONLY from the environment, never from tool arguments, so one agent can
-never read or mutate another agent's private memories.
+attributed to that agent and gated by its team/project ACL. When configured,
+the identity is taken only from the environment; an optional legacy owner
+argument may match it but cannot override it. An unset identity retains the
+legacy administrative/default compatibility behavior and is not isolated.
 """
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from .client import MemoryClient
 
@@ -77,9 +78,32 @@ def create_server():  # pragma: no cover - optional integration scaffold
     @mcp.tool()
     def memory_add(
         content: Annotated[str, Field(description="The fact to remember, as a self-contained sentence (e.g. 'The user prefers dark mode.'). Write it so it makes sense on its own in a future session.")],
-        owner: Annotated[str | None, Field(description="Owner id the memory belongs to. Defaults to this server's AGENT_MEMORY_AGENT_ID, else 'default'.")] = None,
-        scope: Annotated[str, Field(description="Lifecycle label used for graph coloring and filtering: 'user', 'agent', 'project', 'team', or 'global'. Does NOT set access control (use `share` for that).")] = "user",
-        type: Annotated[str, Field(description="Kind of memory: 'preference', 'fact', 'procedure', 'environment', 'decision', 'warning', or 'note'.")] = "note",
+        owner: Annotated[
+            str | None,
+            Field(
+                description="Legacy compatibility field. If supplied, it must match "
+                "this server's AGENT_MEMORY_AGENT_ID when one is configured."
+            ),
+        ] = None,
+        scope: Annotated[
+            Literal["user", "agent", "project", "team", "global"],
+            Field(
+                description="Lifecycle label used for graph coloring and filtering. "
+                "Does NOT set access control (use `share` for that)."
+            ),
+        ] = "user",
+        type: Annotated[
+            Literal[
+                "preference",
+                "fact",
+                "procedure",
+                "environment",
+                "decision",
+                "warning",
+                "note",
+            ],
+            Field(description="Kind of memory."),
+        ] = "note",
         share: Annotated[str, Field(description="Who may read this memory (the ACL). 'private' (default, owner only), 'global' (all agents), 'team' or 'team:<id>' (your team — teammates on the same node share it), 'project' or 'project:<id>', or 'agent:<id>'. Use 'team'/'project' to share with collaborators; leave 'private' for personal notes.")] = "private",
     ) -> dict:
         """Store a durable memory that will survive across sessions.
@@ -95,8 +119,16 @@ def create_server():  # pragma: no cover - optional integration scaffold
             visibility = _resolve_share(share)
         except ValueError as exc:
             return {"error": str(exc)}
-        rec = client.add(content, owner=owner or agent_id or "default", scope=scope,
-                         type=type, visibility=visibility)
+        if agent_id is not None and owner is not None and owner != agent_id:
+            return {"error": "owner must match this MCP server's configured identity"}
+        effective_owner = agent_id or owner or "default"
+        rec = client.add(
+            content,
+            owner=effective_owner,
+            scope=scope,
+            type=type,
+            visibility=visibility,
+        )
         return {"id": rec.id, "content": rec.content, "visibility": rec.visibility}
 
     @mcp.tool()
@@ -147,15 +179,29 @@ def create_server():  # pragma: no cover - optional integration scaffold
         Linked memories reinforce each other in recall, so a search that hits one can
         surface the other even with no shared keywords. Use it to connect a decision to
         its cause, or a fix to the problem it solved. Returns the created link, or an
-        `{"error": ...}` object if either memory id does not exist.
+        `{"error": ...}` object if either memory id does not exist or, when an
+        identity is configured, is not owned by that agent.
         """
         try:
-            link = client.link(src_id, dst_id, relation=relation, weight=weight)
+            link = client.link(
+                src_id,
+                dst_id,
+                relation=relation,
+                weight=weight,
+                requester_agent_id=agent_id,
+            )
         except KeyError as exc:
             return {"error": f"memory not found: {exc.args[0]}"}
         except ValueError as exc:
             return {"error": str(exc)}
-        return {"src_id": link.src_id, "dst_id": link.dst_id, "relation": link.relation, "weight": link.weight}
+        except PermissionError as exc:
+            return {"error": str(exc)}
+        return {
+            "src_id": link.src_id,
+            "dst_id": link.dst_id,
+            "relation": link.relation,
+            "weight": link.weight,
+        }
 
     @mcp.tool()
     def memory_recall_feedback(
@@ -167,9 +213,9 @@ def create_server():  # pragma: no cover - optional integration scaffold
 
         This closes the learning loop: `helpful=True` strengthens the memories and the
         links between them (they will resurface more readily); `helpful=False` weakens
-        them and lowers their confidence. Only memories visible to this agent are
-        affected — you cannot influence another identity's memories. Returns a summary
-        of what was reinforced or weakened.
+        them and lowers their confidence. With a configured identity, only memories
+        owned by that agent are affected; sharing grants recall access, not mutation
+        authority. Returns a summary of what was reinforced or weakened.
         """
         # Identity is the env-declared agent, never caller-supplied: an agent
         # must not weaken/reinforce (or even name) memories under another
@@ -179,6 +225,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
             create_colinks=create_colinks,
             helpful=helpful,
             requester_agent_id=agent_id,
+            owner=agent_id,
         )
 
     @mcp.tool()
@@ -194,15 +241,21 @@ def create_server():  # pragma: no cover - optional integration scaffold
         Use it to correct content, re-weight importance/confidence, or pin a memory so
         it is never forgotten. Only the fields you pass are changed. Returns the updated
         `id`, `content`, and `updated_at`, or an `{"error": ...}` object if the id does
-        not exist.
+        not exist or, when an identity is configured, is not owned by that agent.
         """
         fields = {k: v for k, v in {"content": content, "importance": importance,
                                     "confidence": confidence, "pinned": pinned}.items() if v is not None}
         try:
-            rec = client.update(memory_id, **fields)
+            rec = client.update(
+                memory_id,
+                requester_agent_id=agent_id,
+                **fields,
+            )
         except KeyError:
             return {"error": f"memory not found: {memory_id}"}
         except ValueError as exc:
+            return {"error": str(exc)}
+        except PermissionError as exc:
             return {"error": str(exc)}
         return {"id": rec.id, "content": rec.content, "updated_at": rec.updated_at}
 
@@ -220,21 +273,35 @@ def create_server():  # pragma: no cover - optional integration scaffold
         `visibility`, or an `{"error": ...}` object if it doesn't exist, isn't yours, or
         `share` is invalid.
         """
-        existing = client.get(memory_id)
+        existing = client.get_visible(memory_id, requester_agent_id=agent_id)
         if existing is None:
             return {"error": f"memory not found: {memory_id}"}
-        if agent_id and existing.owner != agent_id:
-            return {"error": f"only the owner ({existing.owner}) can change this memory's visibility"}
+        if agent_id is not None and existing.owner != agent_id:
+            return {
+                "error": f"only the owner ({existing.owner}) can change this memory's visibility"
+            }
         try:
             visibility = _resolve_share(share)
         except ValueError as exc:
             return {"error": str(exc)}
-        rec = client.update(memory_id, visibility=visibility)
+        rec = client.update(
+            memory_id,
+            requester_agent_id=agent_id,
+            visibility=visibility,
+        )
         return {"id": rec.id, "visibility": rec.visibility}
 
     @mcp.tool()
     def memory_consolidate(
-        owner: Annotated[str | None, Field(description="Restrict consolidation to one owner id. Omit to consolidate across all owners this agent may modify.")] = None,
+        owner: Annotated[
+            str | None,
+            Field(
+                description="Legacy compatibility filter. If supplied, it must match "
+                "this server's configured identity when one exists. Omit to "
+                "consolidate that identity's memories; an unset identity retains "
+                "the legacy administrative view."
+            ),
+        ] = None,
         scope: Annotated[str | None, Field(description="Restrict consolidation to one scope (e.g. 'project'). Omit for all scopes.")] = None,
     ) -> dict:
         """Merge duplicate memories and synthesize concept memories (housekeeping).
@@ -244,7 +311,14 @@ def create_server():  # pragma: no cover - optional integration scaffold
         store compact and recall sharp. Safe to run occasionally rather than per-write.
         Returns counts of what was merged and created.
         """
-        return client.consolidate(owner=owner, scope=scope)
+        try:
+            return client.consolidate(
+                owner=owner,
+                scope=scope,
+                requester_agent_id=agent_id,
+            )
+        except PermissionError as exc:
+            return {"error": str(exc)}
 
     @mcp.tool()
     def memory_offload_context(
@@ -258,7 +332,12 @@ def create_server():  # pragma: no cover - optional integration scaffold
         later with `memory_reload_context` instead of being lost. Snapshots are rotated
         per session. Returns the new `snapshot_id` and `session_id`.
         """
-        snapshot_id = client.offload_context(snapshot_data, session_id=session_id, trigger=trigger)
+        snapshot_id = client.offload_context(
+            snapshot_data,
+            session_id=session_id,
+            trigger=trigger,
+            owner=agent_id or "default",
+        )
         return {"snapshot_id": snapshot_id, "session_id": session_id}
 
     @mcp.tool()
@@ -302,7 +381,10 @@ def create_server():  # pragma: no cover - optional integration scaffold
         snapshot, or an `{"error": ...}` object if the session has fewer than two.
         """
         try:
-            return client.snapshot_diff(session_id)
+            return client.snapshot_diff(
+                session_id,
+                requester_agent_id=agent_id,
+            )
         except ValueError as exc:
             return {"error": str(exc)}
 
@@ -318,7 +400,11 @@ def create_server():  # pragma: no cover - optional integration scaffold
         an `{"error": ...}` object if the session/snapshot is not found.
         """
         try:
-            return client.reload_context(session_id, snapshot_id=snapshot_id)
+            return client.reload_context(
+                session_id,
+                snapshot_id=snapshot_id,
+                requester_agent_id=agent_id,
+            )
         except ValueError as exc:
             return {"error": str(exc)}
 

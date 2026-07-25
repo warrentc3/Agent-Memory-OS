@@ -26,6 +26,8 @@ from contextlib import nullcontext
 from datetime import datetime
 from pathlib import Path
 
+from .schema import normalize_iso_timestamp
+
 
 def _guard(lock):
     """Hold `lock` around a DB operation, or nothing when called single-threaded.
@@ -330,6 +332,17 @@ def import_bundle(
 
 def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
                   trusted=True, local_agents=frozenset()) -> None:
+    entry = dict(entry)
+    if entry.get("expires_at") is not None:
+        try:
+            entry["expires_at"] = normalize_iso_timestamp(
+                entry["expires_at"],
+                field_name="expires_at",
+            )
+        except ValueError:
+            # Older peers may carry data outside the canonical write contract.
+            # Preserve it for lenient hydration rather than dropping the row.
+            pass
     # A deletion that happened at or after this version wins over the re-add.
     tomb = store.tombstone_for(entry["id"])
     if tomb is not None and _norm_ts(tomb) >= _norm_ts(entry.get("updated_at")):
@@ -349,7 +362,6 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
         if existing is None and entry.get("owner") in local_agents:
             stats["memories_skipped"] += 1
             return
-        entry = dict(entry)
         entry["source"] = _tag_source(entry.get("source"), source_peer)
 
     # Old bundles (pre-ACL-clock) carry no acl_updated_at; treat it as the

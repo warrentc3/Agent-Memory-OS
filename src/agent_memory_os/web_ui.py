@@ -1068,19 +1068,34 @@ async function loadOwners() {
   if (!owners.length) { box.textContent = t("No owners yet."); return; }
   const acting = actingAs();
   for (const o of owners) {
+    const needsClassification = !!o.classification_required;
     const row = document.createElement("div");
     row.className = "topitem";
     const left = document.createElement("span");
-    const name = el("b", null, o.owner);
+    const name = el("b", null, needsClassification ? t("Historical context") : o.owner);
     left.appendChild(name);
+    if (needsClassification) {
+      const code = el("span", "muted", o.owner);
+      code.style.cssText = "font-size:10px;margin-left:8px";
+      left.appendChild(code);
+    }
     const meta = el("span", "muted");
     meta.style.fontSize = "11px";
     meta.style.marginLeft = "8px";
     let metaText = o.memories + " " + t("live");
     if (o.archived) metaText += " · " + o.archived + " " + t("archived");
+    if (o.context_deliveries) {
+      metaText += " · " + o.context_deliveries + " " + t("delivery records");
+    }
     if (o.registered_agent) metaText += " · " + t("registered");
     meta.textContent = metaText;
     left.appendChild(meta);
+    if (needsClassification) {
+      const tag = el("span", "muted");
+      tag.style.cssText = "font-size:11px;margin-left:8px;color:var(--warn,#d29922)";
+      tag.textContent = t("historical context needs owner classification");
+      left.appendChild(tag);
+    }
     // Hidden-memory hint: when browsing AS an identity, an owner that is not
     // that identity holds memories the Browse tab may not show.
     if (acting && o.owner !== acting) {
@@ -1091,13 +1106,16 @@ async function loadOwners() {
     }
     const right = document.createElement("span");
     right.style.cssText = "display:flex;gap:6px";
-    const reBtn = el("button", "ghost", t("Reassign…"));
+    const reBtn = el(
+      "button", "ghost", needsClassification ? t("Classify…") : t("Reassign…")
+    );
     reBtn.style.fontSize = "11px";
     reBtn.addEventListener("click", () => reassignOwner(o));
     const delBtn = el("button", "danger", t("Delete"));
     delBtn.style.fontSize = "11px";
     delBtn.addEventListener("click", () => deleteOwner(o.owner));
-    right.append(reBtn, delBtn);
+    right.appendChild(reBtn);
+    if (!needsClassification) right.appendChild(delBtn);
     row.appendChild(left); row.appendChild(right);
     box.appendChild(row);
   }
@@ -1106,10 +1124,12 @@ async function loadOwners() {
 async function reassignOwner(owner) {
   const oldOwner = owner.owner;
   const n = owner.memories + owner.archived;
-  const target = prompt(
-    t("Reassign every memory owned by") + " “" + oldOwner + "” (" + n + ") " +
-    t("to which owner? (the target may already exist — its memories are kept and these are folded in)")
-  );
+  const target = owner.classification_required
+    ? prompt(t("Assign this historical context to which owner?"))
+    : prompt(
+        t("Reassign every memory owned by") + " “" + oldOwner + "” (" + n + ") " +
+        t("to which owner? (the target may already exist — its memories are kept and these are folded in)")
+      );
   if (target === null) return;
   const newOwner = target.trim();
   if (!newOwner) { toast(t("Enter a target owner."), "err"); return; }
@@ -1120,6 +1140,9 @@ async function reassignOwner(owner) {
       body: JSON.stringify({ old_owner: oldOwner, new_owner: newOwner }),
     });
     let msg = oldOwner + " → " + newOwner + ": " + r.changed.memories_owner + " " + t("moved");
+    if (r.changed.context_deliveries) {
+      msg += " · " + r.changed.context_deliveries + " " + t("delivery records");
+    }
     if (r.changed.target_registered) msg += " · " + t("registered so it's recognized");
     toast(msg, "ok");
     loadOwners(); loadStats(); loadDashboard(); browseLoaded = false;

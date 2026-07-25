@@ -68,13 +68,11 @@ def test_dco_session_isolation(client):
     id_a = client.offload_context(state_a, session_a)
     id_b = client.offload_context(state_b, session_b)
 
-    # Try to load session A's snapshot using session B's ID (should fail or return B's latest)
-    # Based on the implementation of reload_context:
-    # - If snapshot_id is provided, it just calls self.get(snapshot_id).
-    # - If snapshot_id is None, it searches by session_id.
-    
-    # Verification 1: a specific snapshot ID is retrievable regardless of session_id (implementation detail)
-    # But we must ensure that searching for session B does NOT return session A's data.
+    # A specific snapshot id remains bound to its recorded session.
+    with pytest.raises(ValueError, match=f"Snapshot {id_a} not found"):
+        client.reload_context(session_id=session_b, snapshot_id=id_a)
+
+    # Searching by session must also stay inside the requested session.
     
     reloaded_b = client.reload_context(session_id=session_b)
     assert reloaded_b == state_b
@@ -105,6 +103,8 @@ def test_dco_latest_snapshot_retrieval(client):
     
     assert reloaded == state_3
     assert reloaded["version"] == 3
+    records = client.store.recent_snapshot_records(session_id, limit=3)
+    assert [record.source["snapshot_index"] for record in records] == [2, 1, 0]
 
 def test_dco_nonexistent_session(client):
     """
