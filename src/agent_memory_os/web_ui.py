@@ -308,6 +308,10 @@ PAGE = r"""<!doctype html>
 
 <main>
   <div id="ro-banner"></div>
+  <div id="remote-banner" style="display:none;margin:8px 0;padding:7px 12px;border-radius:8px;background:rgba(210,153,34,.14);border:1px solid var(--warn,#d29922);font-size:13px;align-items:center;gap:10px">
+    <span id="remote-banner-text"></span>
+    <button class="ghost" id="btn-remote-exit" style="font-size:11px;padding:2px 10px">Back to this node</button>
+  </div>
   <section class="tab active" id="tab-dashboard">
     <div class="tiles">
       <div class="tile"><span class="tilelabel">Memories</span><span class="tileval" id="d-total">–</span></div>
@@ -761,6 +765,10 @@ Object.assign(I18N["zh-TW"], {"Historical context":"歷史情境","delivery reco
 Object.assign(I18N["zh-CN"], {"Historical context":"历史上下文","delivery records":"条投递记录","historical context needs owner classification":"历史上下文待归类所有者","Classify…":"归类…","Assign this historical context to which owner?":"要把这批历史上下文归给哪个所有者?"});
 Object.assign(I18N["ja"], {"Historical context":"過去のコンテキスト","delivery records":"件の配信記録","historical context needs owner classification":"過去のコンテキストは所有者の分類待ち","Classify…":"分類…","Assign this historical context to which owner?":"この過去のコンテキストをどの所有者に割り当てますか?"});
 Object.assign(I18N["ko"], {"Historical context":"과거 컨텍스트","delivery records":"건의 전달 기록","historical context needs owner classification":"과거 컨텍스트는 소유자 분류 필요","Classify…":"분류…","Assign this historical context to which owner?":"이 과거 컨텍스트를 어느 소유자에게 지정할까요?"});
+Object.assign(I18N["zh-TW"], {"Managing remote node":"管理中的遠端節點","every tab now reads and writes that node, over signed fleet requests audited there.":"所有分頁現在都直接讀寫該節點(經簽章的艦隊請求,並在該節點留下稽核)。","Back to this node":"回到本節點"});
+Object.assign(I18N["zh-CN"], {"Managing remote node":"管理中的远程节点","every tab now reads and writes that node, over signed fleet requests audited there.":"所有页签现在都直接读写该节点(经签名的舰队请求,并在该节点留下审计)。","Back to this node":"回到本节点"});
+Object.assign(I18N["ja"], {"Managing remote node":"管理中のリモートノード","every tab now reads and writes that node, over signed fleet requests audited there.":"すべてのタブがそのノードを直接読み書きします(署名付きフリートリクエスト、ノード側で監査記録)。","Back to this node":"このノードに戻る"});
+Object.assign(I18N["ko"], {"Managing remote node":"관리 중인 원격 노드","every tab now reads and writes that node, over signed fleet requests audited there.":"모든 탭이 이제 해당 노드를 직접 읽고 씁니다(서명된 플릿 요청, 해당 노드에 감사 기록).","Back to this node":"이 노드로 돌아가기"});
 
 let locale = localStorage.getItem("amos.locale") || (() => {
   const nav = (navigator.language || "en");
@@ -821,7 +829,48 @@ function applyLocale() {
 })();
 
 const actingAs = () => $("acting-as").value.trim();
-$("acting-as").addEventListener("change", () => localStorage.setItem("amos.actingAs", actingAs()));
+$("acting-as").addEventListener("change", () => {
+  localStorage.setItem("amos.actingAs", actingAs());
+  syncRemoteTarget();
+});
+async function syncRemoteTarget() {
+  const id = actingAs();
+  let target = null;
+  if (id) {
+    if (!Object.keys(peerUrlByName).length) await fetchPeerStatus();
+    const hit = peerUrlByName[id];
+    if (hit && hit.ok) target = { url: hit.url, name: id };
+  }
+  const changed = ((remoteTarget && remoteTarget.url) || "") !== ((target && target.url) || "");
+  remoteTarget = target;
+  const banner = $("remote-banner");
+  if (remoteTarget) {
+    $("remote-banner-text").textContent =
+      t("Managing remote node") + " “" + remoteTarget.name + "” (" + remoteTarget.url + ") — " +
+      t("every tab now reads and writes that node, over signed fleet requests audited there.");
+    banner.style.display = "flex";
+  } else {
+    banner.style.display = "none";
+  }
+  if (changed) refreshAfterTargetSwitch();
+}
+function refreshAfterTargetSwitch() {
+  browseLoaded = false;
+  loadStats(); loadVersionBadge();
+  const active = document.querySelector("nav.tabs button.active");
+  const tab = active ? active.dataset.tab : "dashboard";
+  if (tab === "dashboard") loadDashboard();
+  else if (tab === "browse") refreshBrowse();
+  else if (tab === "graph") loadGraph();
+  else if (tab === "agents") refreshAgents();
+  else if (tab === "teams") refreshTeams();
+  else if (tab === "tools") loadOwners();
+}
+$("btn-remote-exit").addEventListener("click", () => {
+  $("acting-as").value = "";
+  localStorage.setItem("amos.actingAs", "");
+  syncRemoteTarget();
+});
 function populateActingAs(agents) {
   // A real <select> instead of a datalist: datalist suggestions filter by the
   // field's CURRENT value, so once an identity was chosen it looked like the
@@ -845,12 +894,26 @@ function toast(message, kind) {
   setTimeout(() => node.remove(), 4200);
 }
 
+/* Remote management mode: when the console operator switches to an identity
+   that lives on a managed fleet node, every tab's API call is transparently
+   forwarded to that node via the signed fleet proxy — the whole UI becomes
+   that node's console. Fleet endpoints and the console's own peer probing
+   stay local (they ARE the console's view of the fleet). */
+let remoteTarget = null;
+function proxied(path) {
+  if (!remoteTarget) return path;
+  if (!path.startsWith("/api/")) return path;
+  if (path.startsWith("/api/fleet") || path.startsWith("/api/peers/status")) return path;
+  return "/api/fleet/proxy?url=" + encodeURIComponent(remoteTarget.url) +
+         "&path=" + encodeURIComponent(path);
+}
+
 async function api(path, options, isRetry) {
   const request = Object.assign({}, options);
   request.headers = Object.assign({}, (options && options.headers) || {});
   const token = localStorage.getItem("amos.token");
   if (token) request.headers["Authorization"] = "Bearer " + token;
-  const response = await fetch(path, request);
+  const response = await fetch(proxied(path), request);
   if (response.status === 401) {
     localStorage.removeItem("amos.token");
     showLogin(token ? t("Invalid token \u2014 please re-enter.") : "");
@@ -895,6 +958,7 @@ function el(tag, className, text) {
 
 /* ---------- peer connection status (color dot) ---------- */
 let peerStatusCache = {};
+let peerUrlByName = {};
 async function fetchPeerStatus() {
   try {
     const data = await api("/api/peers/status");
@@ -910,6 +974,8 @@ async function fetchPeerStatus() {
       }
       const entry = { state: state, title: title };
       for (const k of [s.url, s.name, s.node_name]) if (k) byKey[k] = entry;
+      for (const k of [s.name, s.node_name]) if (k)
+        peerUrlByName[k] = { url: s.url, ok: state !== "down" };
     }
     peerStatusCache = byKey;
   } catch (e) { /* keep last-known cache */ }
@@ -1365,7 +1431,7 @@ async function refreshAgents() {
   const list = $("agents-list");
   try {
     const [data] = await Promise.all([api("/api/agents"), fetchPeerStatus()]);
-    populateActingAs(data.agents);
+    if (!remoteTarget) populateActingAs(data.agents);
     list.innerHTML = "";
     if (!data.agents.length) {
       const empty = el("div", "empty");
@@ -1617,7 +1683,7 @@ $("btn-agent-save").addEventListener("click", async () => {
     refreshAgents();
   } catch (e) { toast(e.message, "err"); }
 });
-refreshAgents();
+refreshAgents().then(syncRemoteTarget);
 
 /* ---------- memory cards ---------- */
 function gauge(label, value) {

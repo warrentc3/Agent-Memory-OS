@@ -137,7 +137,7 @@ and auditors.
 | `GET/POST/DELETE /api/agents[…]` | Agent registry. |
 | `GET/POST/DELETE /api/peers`, `GET /api/peers/status`, `POST /api/sync/run`, `GET /api/sync/export`, `POST /api/sync/import` | Federation. `/peers/status` probes each peer's health for the console's connection dot. |
 | `GET /api/owners`, `POST /api/owners/reassign` | List owners with counts; re-attribute one owner's memories to another (merge-capable). |
-| `GET /api/fleet/status`, `POST /api/fleet/trigger`, `GET /api/fleet/browse` | Console-node only: aggregate fleet view; run sync/update across managed nodes; read memories live off a node that granted `read-private` (audited on that node). Cross-node calls authenticate with per-request Ed25519 signatures (`X-AMOS-Fleet-*` headers), not bearer tokens. |
+| `GET /api/fleet/status`, `POST /api/fleet/trigger`, `GET /api/fleet/browse`, `/api/fleet/proxy` | Console-node only: aggregate fleet view; run sync/update across managed nodes; read memories live off a node that granted `read-private` (audited on that node); the proxy powers the console's remote-management mode (switch "Acting as" to a fleet identity and every tab operates on that node). Cross-node calls authenticate with per-request Ed25519 signatures (`X-AMOS-Fleet-*` headers), not bearer tokens. |
 | `DELETE /api/owners/{owner}/memories?confirm=<owner>` | Forget an agent entirely (double confirmation). |
 
 ---

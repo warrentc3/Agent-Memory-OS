@@ -384,3 +384,70 @@ def test_update_trigger_carries_confirm_echo():
 
     method, path = TRIGGER_TARGETS["update"]
     assert method == "POST" and "confirm=update" in path
+
+
+# --------------------------------------------------------------------------- #
+# Remote management mode: the console-side signed proxy
+# --------------------------------------------------------------------------- #
+
+def _console_http(small_fleet):
+    return TestClient(create_app(home=small_fleet["home"]))
+
+
+def test_fleet_proxy_forwards_get_and_post(small_fleet):
+    # read-private needed for the remote memories read
+    grantor = MemoryClient(home=small_fleet["home"].parent / "node-a")
+    grantor.store.grant_fleet_admin(small_fleet["keypair"]["public_key"],
+                                    ["manage", "read-private"])
+    grantor.close()
+    http = _console_http(small_fleet)
+    r = http.get("/api/fleet/proxy",
+                 params={"url": "http://node-a:8000", "path": "/api/memories?limit=5"})
+    assert r.status_code == 200
+    assert [m["owner"] for m in r.json()["memories"]] == ["node-a"]
+    # mutation forwards too (owner reassign on the REMOTE node)
+    r2 = http.post(
+        "/api/fleet/proxy",
+        params={"url": "http://node-a:8000", "path": "/api/owners/reassign"},
+        json={"old_owner": "node-a", "new_owner": "renamed"},
+    )
+    assert r2.status_code == 200
+    assert r2.json()["changed"]["memories_owner"] == 1
+    # and the remote node audited the fleet operation, attributed to the key
+    remote = MemoryClient(home=small_fleet["home"].parent / "node-a")
+    entries = remote.store.org_audit_log(limit=10)
+    remote.close()
+    key_id = small_fleet["keypair"]["key_id"]
+    assert any(e["actor"] == f"fleet:{key_id}" and "owners/reassign" in e["detail"]
+               for e in entries)
+
+
+def test_fleet_proxy_guard_rails(small_fleet):
+    http = _console_http(small_fleet)
+    # unregistered target refused (no open forwarder)
+    r = http.get("/api/fleet/proxy",
+                 params={"url": "http://evil:9999", "path": "/api/stats"})
+    assert r.status_code == 400 and "registered peer" in r.json()["detail"]
+    # non-/api/ path refused
+    r2 = http.get("/api/fleet/proxy",
+                  params={"url": "http://node-a:8000", "path": "/healthz"})
+    assert r2.status_code == 400
+    # no proxy recursion
+    r3 = http.get("/api/fleet/proxy",
+                  params={"url": "http://node-a:8000",
+                          "path": "/api/fleet/status"})
+    assert r3.status_code == 400
+    # unreachable registered peer -> 502
+    r4 = http.get("/api/fleet/proxy",
+                  params={"url": "http://node-x:8000", "path": "/api/stats"})
+    assert r4.status_code == 502
+
+
+def test_fleet_proxy_surfaces_remote_capability_denial(small_fleet):
+    # node-a granted manage only in the fixture: content read denied REMOTELY,
+    # and the console surfaces that status instead of masking it.
+    http = _console_http(small_fleet)
+    r = http.get("/api/fleet/proxy",
+                 params={"url": "http://node-a:8000", "path": "/api/memories"})
+    assert r.status_code == 403
+    assert "read-private" in str(r.json()["detail"])

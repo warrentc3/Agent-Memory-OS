@@ -4,6 +4,22 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.8.0] — 2026-07-25
+
+- **Remote management mode: identity switching now switches the whole
+  console.** On a fleet console, "Acting as" was only a local ACL filter —
+  but a member's memories live on the member's NODE, so switching identity
+  showed an empty view, defeating the point of central management. Now, when
+  the operator switches to an identity that lives on a managed node, every
+  tab (dashboard, browse, search, graph, agents, teams, tools) transparently
+  reads and writes THAT node through the new signed fleet proxy
+  (`/api/fleet/proxy`) — full remote administration from one UI, with a
+  prominent "Managing remote node" banner and one-click return. The target
+  node remains the authority: it verifies each request's Ed25519 signature,
+  enforces its manage/read-private grants, and audits every accepted call.
+  Guard rails: only registered peers, only non-fleet `/api/` paths, no proxy
+  recursion. Local-only identities keep the existing ACL-filter behavior.
+
 ## [1.7.0] — 2026-07-25
 
 Requester-scoped memory state — the MCP identity model, completed (community

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import json
 import os
 import threading
 import time
@@ -923,6 +924,49 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             detail = body.get("detail") if isinstance(body, dict) else str(body)[:200]
             raise HTTPException(status_code=status, detail=str(detail))
         return body if isinstance(body, dict) else {"memories": []}
+
+    @app.api_route("/api/fleet/proxy",
+                   methods=["GET", "POST", "PATCH", "DELETE"])
+    async def fleet_proxy(request: Request) -> Response:
+        """Console-side signed proxy: operate a managed node through THIS UI.
+
+        Powers remote management mode — when the operator switches the console
+        to a fleet identity, every tab's API call is forwarded to that node,
+        signed with the console's fleet key. The target node stays the
+        authority: it verifies the signature, enforces its manage/read-private
+        grants, and audits every accepted call. Guard rails here: the target
+        must be a REGISTERED peer (no open forwarder), only /api/ paths are
+        forwardable, and fleet endpoints are excluded (no proxy recursion).
+        """
+        from .fleet import FleetKeyMissing, load_console_key, signed_call
+
+        url = request.query_params.get("url", "").strip().rstrip("/")
+        target = request.query_params.get("path", "")
+        if not url or not target:
+            raise HTTPException(status_code=400, detail="url and path are required")
+        if not target.startswith("/api/") or target.startswith("/api/fleet"):
+            raise HTTPException(status_code=400,
+                                detail="only non-fleet /api/ paths can be proxied")
+        try:
+            keypair = load_console_key(home)
+        except FleetKeyMissing as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        with lock:
+            peers = {str(p["url"]).rstrip("/") for p in client.store.list_peers()}
+        if url not in peers:
+            raise HTTPException(status_code=400,
+                                detail="target is not a registered peer of this console")
+        body = await request.body()
+        status, payload = signed_call(
+            keypair, url, request.method, target,
+            payload=None if not body else json.loads(body.decode("utf-8")),
+        )
+        if status == 0:
+            raise HTTPException(status_code=502, detail=f"node unreachable: {payload}")
+        return JSONResponse(
+            content=payload if isinstance(payload, (dict, list)) else {"detail": str(payload)[:400]},
+            status_code=status,
+        )
 
     @app.get("/api/peers/status")
     def peers_status() -> dict[str, Any]:
