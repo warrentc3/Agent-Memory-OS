@@ -4,6 +4,38 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.7.0] — 2026-07-25
+
+Requester-scoped memory state — the MCP identity model, completed (community
+contribution by @warrentc3, #5, with #4).
+
+- **Security: four holes closed.** On earlier releases, with an MCP identity
+  configured: `memory_add`'s caller-supplied `owner` could spoof any identity
+  (the argument took precedence over the environment); `update`/`link`/
+  `consolidate` had no ownership checks; `memory_reload_context(snapshot_id=…)`
+  could read ANY memory by id, bypassing the visibility hard gate; and
+  cross-process revocations could be served stale from the recall cache
+  indefinitely. All four are fixed — identity comes only from
+  `AGENT_MEMORY_AGENT_ID`, mutations require ownership (sharing grants recall,
+  not mutation authority), and a `PRAGMA data_version` check (~2 µs/read)
+  invalidates process-local caches when another connection commits.
+- **Snapshots and delivery history are per identity** (migrations 18–19).
+  Context snapshots and the iterative-delivery log are scoped by owner and
+  session; pre-upgrade context is marked as *Historical context* and stays
+  readable so existing sessions keep their continuity — the console's
+  Ownership panel offers a **Classify** action to assign it (delivery history
+  moves along). An unset identity retains the legacy administrative behavior.
+- **Validation is write-strict, read-lenient.** New writes validate
+  scope/type/tags/visibility/expiry; existing rows with application-defined
+  values keep hydrating and searching fine. Expiry comparisons are now
+  instant-based (`julianday`), with legacy spellings canonicalized
+  (migration 20) and normalized on sync import.
+- **Fix: `service install` no longer reports success when the native service
+  manager failed** (@warrentc3, #4) — launchctl/systemctl/schtasks failures
+  surface with a failing exit code.
+- Console strings for the new legacy-context flow translated in all five
+  locales.
+
 ## [1.6.2] — 2026-07-21
 
 - **Fix: fleet update trigger echoes `?confirm=update`.** The update-run

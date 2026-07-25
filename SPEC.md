@@ -692,3 +692,33 @@ per-node-revocable authority instead of a controller with standing power.
   node that is up but not granted reports "unauthorized" instead of vanishing
   — visibility of the fleet's trust state is itself a feature. Recommended
   topology: managed nodes run headless (API only), one node runs the console.
+
+## v1.7 Requester-scoped memory state (community, #5)
+
+First externally-contributed feature line (@warrentc3). It completes the MCP
+identity model introduced in v1.2: identity was already the read-side ACL key;
+v1.7 makes it govern MUTATION and per-session state too.
+
+- **Ownership gates mutation; sharing grants recall, not authority.** With
+  `AGENT_MEMORY_AGENT_ID` configured, update/link/feedback/consolidate require
+  the requester to OWN the memory; the caller-supplied `owner` argument can
+  only echo the configured identity, never override it. Four pre-existing
+  holes closed (owner spoof on add; unauthenticated update/link/consolidate;
+  ACL-bypassing read via `reload_context(snapshot_id)`; indefinitely stale
+  post-revocation caches — now bounded by a `PRAGMA data_version` probe).
+- **Per-identity session state.** Snapshots and the iterative-delivery log key
+  on (owner, session): one requester can neither read nor pollute another's
+  parked context (migration 18). Pre-upgrade context is re-owned to a
+  `__legacy_unscoped_context__` sentinel (migration 19) that requester-aware
+  readers still accept — old sessions keep continuity, matching the unscoped
+  model they were written under — and the console surfaces it as *Historical
+  context* with a Classify action (delivery history moves with the owner).
+- **Write-strict, read-lenient validation.** The canonical record contract is
+  enforced where records are CREATED or MODIFIED; hydration of persisted rows
+  is lenient so a legacy row with application-defined scope/type can never
+  poison reads. Expiry comparisons are instant-based (`julianday`); legacy
+  spellings are canonicalized once (migration 20) and normalized on sync
+  import, so the invariant survives federation with older peers.
+- Unset identity remains the legacy administrative mode — deliberate: the SDK
+  and single-tenant deployments keep their semantics, and isolation engages
+  exactly when an identity is declared.

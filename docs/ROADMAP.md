@@ -1,6 +1,6 @@
 # AgentMemoryOS Roadmap
 
-Last updated: 2026-07-19
+Last updated: 2026-07-25
 
 Governance rules:
 
@@ -50,6 +50,14 @@ Governance rules:
 - **Explicit TLS verification** for `https://` peer URLs.
 - `agent-memory-mcp` console entry point (zero-install `uvx` runs; MCP-directory
   listings such as Smithery).
+
+## Shipped — v1.7 (requester-scoped memory state — community #4 #5)
+
+- MCP identity now governs mutation and per-session state: ownership-gated
+  update/link/feedback/consolidate, per-identity snapshots + delivery log
+  (migrations 18–20), legacy-context sentinel with console Classify flow,
+  write-strict/read-lenient validation, instant-based expiry. Four security
+  holes closed. Honest service-install failures.
 
 ## Shipped — v1.6 (fleet console)
 
