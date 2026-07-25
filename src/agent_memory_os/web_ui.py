@@ -563,6 +563,23 @@ PAGE = r"""<!doctype html>
         <div id="maint-out" style="margin:6px 0;font-size:13px;color:var(--muted)"></div>
       </div>
       <div class="tool" style="grid-column: 1 / -1;">
+        <h3>Logs</h3>
+        <p class="hint">Service log of this node (or of the managed node, in remote mode). Shows the last 100 lines by default; the filter searches the whole recent window and returns the last matching lines.</p>
+        <div class="row">
+          <select id="log-file" style="max-width:220px;font-size:12px"></select>
+          <input id="log-q" type="text" placeholder="filter…" style="font-size:12px;padding:3px 8px;max-width:220px">
+          <select id="log-lines" style="max-width:110px;font-size:12px">
+            <option value="100" selected>100</option>
+            <option value="300">300</option>
+            <option value="1000">1000</option>
+            <option value="2000">2000</option>
+          </select>
+          <button class="ghost" id="btn-log-refresh">Refresh</button>
+        </div>
+        <pre id="log-view" style="margin-top:8px;max-height:420px;overflow:auto;font-size:11.5px;line-height:1.5;background:var(--bg,#0f1117);border:1px solid var(--border,#2a2f45);padding:10px 12px;border-radius:8px;white-space:pre-wrap;word-break:break-all"></pre>
+        <div id="log-meta" style="margin-top:4px;font-size:11.5px;color:var(--muted)"></div>
+      </div>
+      <div class="tool" style="grid-column: 1 / -1;">
         <h3>Ownership</h3>
         <p class="hint">Every owner that holds memories on this host, with live and archived counts. Browse is filtered by <b>Acting as</b>; this list is not — so memories owned by an identity you are not browsing as (and not shared with you) show up here even when the Browse tab looks empty. Reassign folds one owner's memories into another (the target may already exist); delete removes them for good.</p>
         <div class="row"><button class="ghost" id="btn-owners-refresh">Refresh owners</button></div>
@@ -769,6 +786,10 @@ Object.assign(I18N["zh-TW"], {"Managing remote node":"管理中的遠端節點",
 Object.assign(I18N["zh-CN"], {"Managing remote node":"管理中的远程节点","every tab now reads and writes that node, over signed fleet requests audited there.":"所有页签现在都直接读写该节点(经签名的舰队请求,并在该节点留下审计)。","Back to this node":"回到本节点"});
 Object.assign(I18N["ja"], {"Managing remote node":"管理中のリモートノード","every tab now reads and writes that node, over signed fleet requests audited there.":"すべてのタブがそのノードを直接読み書きします(署名付きフリートリクエスト、ノード側で監査記録)。","Back to this node":"このノードに戻る"});
 Object.assign(I18N["ko"], {"Managing remote node":"관리 중인 원격 노드","every tab now reads and writes that node, over signed fleet requests audited there.":"모든 탭이 이제 해당 노드를 직접 읽고 씁니다(서명된 플릿 요청, 해당 노드에 감사 기록).","Back to this node":"이 노드로 돌아가기"});
+Object.assign(I18N["zh-TW"], {"Logs":"日誌","Service log of this node (or of the managed node, in remote mode). Shows the last 100 lines by default; the filter searches the whole recent window and returns the last matching lines.":"本節點的服務日誌(遠端管理模式下為受管節點的日誌)。預設顯示最後 100 行;過濾會搜尋整個近期視窗並回傳最後的相符行。","filter…":"過濾……","No log files found.":"找不到日誌檔。","(no matching lines)":"(沒有相符的行)","lines shown":"行顯示中","matching in the recent window":"行相符(近期視窗內)","older log content beyond the 2 MB window is not searched":"超過 2 MB 視窗的較舊日誌不在搜尋範圍"});
+Object.assign(I18N["zh-CN"], {"Logs":"日志","Service log of this node (or of the managed node, in remote mode). Shows the last 100 lines by default; the filter searches the whole recent window and returns the last matching lines.":"本节点的服务日志(远程管理模式下为受管节点的日志)。默认显示最后 100 行;过滤会搜索整个近期窗口并返回最后的匹配行。","filter…":"过滤……","No log files found.":"找不到日志文件。","(no matching lines)":"(没有匹配的行)","lines shown":"行显示中","matching in the recent window":"行匹配(近期窗口内)","older log content beyond the 2 MB window is not searched":"超过 2 MB 窗口的较旧日志不在搜索范围"});
+Object.assign(I18N["ja"], {"Logs":"ログ","Service log of this node (or of the managed node, in remote mode). Shows the last 100 lines by default; the filter searches the whole recent window and returns the last matching lines.":"このノードのサービスログ(リモート管理モードでは対象ノードのログ)。既定で最新 100 行を表示。フィルタは直近ウィンドウ全体を検索し、最後に一致した行を返します。","filter…":"フィルタ……","No log files found.":"ログファイルが見つかりません。","(no matching lines)":"(一致する行なし)","lines shown":"行を表示中","matching in the recent window":"行が一致(直近ウィンドウ内)","older log content beyond the 2 MB window is not searched":"2 MB ウィンドウを超える古いログは検索対象外"});
+Object.assign(I18N["ko"], {"Logs":"로그","Service log of this node (or of the managed node, in remote mode). Shows the last 100 lines by default; the filter searches the whole recent window and returns the last matching lines.":"이 노드의 서비스 로그(원격 관리 모드에서는 대상 노드의 로그). 기본으로 마지막 100줄을 표시하며, 필터는 최근 창 전체를 검색해 마지막 일치 줄을 반환합니다.","filter…":"필터……","No log files found.":"로그 파일을 찾을 수 없습니다.","(no matching lines)":"(일치하는 줄 없음)","lines shown":"줄 표시 중","matching in the recent window":"줄 일치(최근 창 내)","older log content beyond the 2 MB window is not searched":"2 MB 창을 넘는 오래된 로그는 검색되지 않습니다"});
 
 let locale = localStorage.getItem("amos.locale") || (() => {
   const nav = (navigator.language || "en");
@@ -864,7 +885,7 @@ function refreshAfterTargetSwitch() {
   else if (tab === "graph") loadGraph();
   else if (tab === "agents") refreshAgents();
   else if (tab === "teams") refreshTeams();
-  else if (tab === "tools") loadOwners();
+  else if (tab === "tools") { loadOwners(); loadLogs(); }
 }
 $("btn-remote-exit").addEventListener("click", () => {
   $("acting-as").value = "";
@@ -1018,7 +1039,7 @@ document.querySelectorAll("nav.tabs button").forEach((button) => {
     if (button.dataset.tab === "dashboard") loadDashboard();
     if (button.dataset.tab === "agents") refreshAgents();
     if (button.dataset.tab === "teams") refreshTeams();
-    if (button.dataset.tab === "tools") loadOwners();
+    if (button.dataset.tab === "tools") { loadOwners(); loadLogs(); }
     if (button.dataset.tab === "fleet") loadFleet();
   });
 });
@@ -1512,6 +1533,40 @@ $("btn-node-rename").addEventListener("click", async () => {
 });
 $("btn-audit-refresh").addEventListener("click", loadAudit);
 $("btn-owners-refresh").addEventListener("click", loadOwners);
+
+/* ---------- log viewer ---------- */
+async function loadLogs() {
+  const view = $("log-view"), meta = $("log-meta"), select = $("log-file");
+  const params = new URLSearchParams({ lines: $("log-lines").value });
+  if (select.value) params.set("file", select.value);
+  const query = $("log-q").value.trim();
+  if (query) params.set("q", query);
+  let data;
+  try { data = await api("/api/logs?" + params.toString()); }
+  catch (e) { view.textContent = String(e.message || e); return; }
+  const current = select.value;
+  select.innerHTML = "";
+  for (const name of data.files)
+    select.appendChild(Object.assign(document.createElement("option"),
+      { value: name, textContent: name }));
+  if (data.files.includes(current)) select.value = current;
+  else if (data.file) select.value = data.file;
+  if (!data.files.length) {
+    view.textContent = t("No log files found.");
+    meta.textContent = "";
+    return;
+  }
+  view.textContent = data.lines.length ? data.lines.join("\n") : t("(no matching lines)");
+  view.scrollTop = view.scrollHeight;  // newest lines at the bottom
+  let info = data.lines.length + " " + t("lines shown");
+  if (query) info += " · " + data.matched + " " + t("matching in the recent window");
+  if (data.truncated) info += " · " + t("older log content beyond the 2 MB window is not searched");
+  meta.textContent = info;
+}
+$("btn-log-refresh").addEventListener("click", loadLogs);
+$("log-file").addEventListener("change", loadLogs);
+$("log-lines").addEventListener("change", loadLogs);
+$("log-q").addEventListener("keydown", (e) => { if (e.key === "Enter") loadLogs(); });
 
 /* ---------- fleet console ---------- */
 async function loadFleet() {

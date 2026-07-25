@@ -20,6 +20,13 @@ tagged on GitHub/GitLab.
   Guard rails: only registered peers, only non-fleet `/api/` paths, no proxy
   recursion. Local-only identities keep the existing ACL-filter behavior.
 
+- **Log viewer in the console** (Tools → Logs): tails this node's service
+  log — last 100 lines by default (100/300/1000/2000), scrollable, with a
+  case-insensitive filter that searches the recent window and returns the
+  last matching lines. Strictly whitelisted to the home's known log files
+  (`webui.log`, `logs/*.log`) with a bounded 2 MB read. In remote-management
+  mode it shows the managed node's logs, like every other tab.
+
 ## [1.7.0] — 2026-07-25
 
 Requester-scoped memory state — the MCP identity model, completed (community

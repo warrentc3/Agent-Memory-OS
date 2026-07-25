@@ -968,6 +968,58 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             status_code=status,
         )
 
+    LOG_TAIL_READ_BYTES = 2_000_000  # bounded read so huge logs can't OOM the console
+
+    @app.get("/api/logs")
+    def logs_view(
+        file: str | None = None,
+        lines: int = Query(default=100, ge=1, le=2000),
+        q: str | None = None,
+    ) -> dict[str, Any]:
+        """Tail this node's service logs (default: last 100 lines).
+
+        Strictly whitelisted to the home's known log locations — never an
+        arbitrary file reader. `q` filters case-insensitively BEFORE tailing,
+        so a search returns the last N *matching* lines. In the console's
+        remote-management mode this proxies like everything else, showing the
+        managed node's own logs.
+        """
+        from .crypto import resolve_home
+
+        base = resolve_home(home)
+        candidates: list[tuple[str, Path]] = []
+        direct = base / "webui.log"
+        if direct.is_file():
+            candidates.append(("webui.log", direct))
+        logs_dir = base / "logs"
+        if logs_dir.is_dir():
+            for p in sorted(logs_dir.glob("*.log")):
+                if p.is_file():
+                    candidates.append((f"logs/{p.name}", p))
+        names = [name for name, _ in candidates]
+        if not candidates:
+            return {"files": [], "file": None, "lines": [], "truncated": False}
+        chosen_name, chosen = candidates[0]
+        if file:
+            match = next(((n, p) for n, p in candidates if n == file), None)
+            if match is None:
+                raise HTTPException(status_code=404, detail=f"unknown log file: {file}")
+            chosen_name, chosen = match
+        size = chosen.stat().st_size
+        with open(chosen, "rb") as handle:
+            if size > LOG_TAIL_READ_BYTES:
+                handle.seek(size - LOG_TAIL_READ_BYTES)
+            text = handle.read().decode("utf-8", errors="replace")
+        rows = text.splitlines()
+        truncated = size > LOG_TAIL_READ_BYTES
+        if truncated and rows:
+            rows = rows[1:]  # drop the partial first line of the window
+        if q:
+            needle = q.lower()
+            rows = [row for row in rows if needle in row.lower()]
+        return {"files": names, "file": chosen_name, "lines": rows[-lines:],
+                "truncated": truncated, "size": size, "matched": len(rows)}
+
     @app.get("/api/peers/status")
     def peers_status() -> dict[str, Any]:
         """Probe every registered peer's /healthz concurrently and report

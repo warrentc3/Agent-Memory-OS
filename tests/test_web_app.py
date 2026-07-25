@@ -442,3 +442,41 @@ def test_web_api_peers_status_probes_and_reports(tmp_path):
     assert s["reachable"] is False
     for key in ("name", "node_name", "is_amos", "status", "integrity", "version", "detail"):
         assert key in s
+
+
+def test_web_api_logs_tail_filter_and_whitelist(tmp_path):
+    # two known log locations + one file that must NOT be reachable
+    (tmp_path / "webui.log").write_text(
+        "".join(f"line {i}\n" for i in range(250)) + "ERROR boom\n", encoding="utf-8")
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs" / "web.log").write_text("service start\n", encoding="utf-8")
+    (tmp_path / "secret.txt").write_text("do not serve", encoding="utf-8")
+    app = create_app(home=tmp_path)
+    http = TestClient(app)
+
+    # default: last 100 lines of the first candidate (webui.log)
+    data = http.get("/api/logs").json()
+    assert data["file"] == "webui.log"
+    assert set(data["files"]) == {"webui.log", "logs/web.log"}
+    assert len(data["lines"]) == 100
+    assert data["lines"][-1] == "ERROR boom"
+
+    # lines param + explicit file selection
+    assert len(http.get("/api/logs", params={"lines": 10}).json()["lines"]) == 10
+    other = http.get("/api/logs", params={"file": "logs/web.log"}).json()
+    assert other["lines"] == ["service start"]
+
+    # q filters BEFORE tailing: last matching lines come back
+    hits = http.get("/api/logs", params={"q": "error"}).json()
+    assert hits["lines"] == ["ERROR boom"] and hits["matched"] == 1
+
+    # strict whitelist: no traversal, no arbitrary files
+    for bad in ("secret.txt", "../secret.txt", "/etc/passwd", "logs/../secret.txt"):
+        assert http.get("/api/logs", params={"file": bad}).status_code == 404
+
+
+def test_web_api_logs_empty_home(tmp_path):
+    app = create_app(home=tmp_path)
+    http = TestClient(app)
+    data = http.get("/api/logs").json()
+    assert data == {"files": [], "file": None, "lines": [], "truncated": False}
