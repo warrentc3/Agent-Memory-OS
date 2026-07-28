@@ -290,3 +290,39 @@ def status_info(*, platform: str = sys.platform) -> dict:
     except Exception as exc:  # noqa: BLE001 - status must never crash the CLI
         info["detail"] = str(exc)
     return info
+
+
+def running_under_systemd() -> bool:
+    """True when this process was started by systemd (it sets INVOCATION_ID
+    for every unit it launches)."""
+    import os
+
+    return bool(os.environ.get("INVOCATION_ID"))
+
+
+def systemd_self_update(*, pip_runner=None, killer=None) -> bool:
+    """Upgrade in-process, then self-exit so the service manager restarts us.
+
+    Under systemd the detached-updater flow cannot work: the spawned updater
+    lives in the unit's cgroup and the default KillMode reaps it the moment
+    the main process stops — pip never finishes and the node silently stays
+    on the old version. Instead: run pip to completion while the server keeps
+    serving, then terminate ourselves; Restart=always brings the console back
+    on the new code. Returns True when the restart was triggered, False when
+    the upgrade failed (we stay up on the current version).
+    """
+    import os
+    import signal
+
+    run = pip_runner or (lambda: subprocess.run(
+        [sys.executable, "-m", "pip", "install", "--upgrade", "agent-memory-os"],
+        capture_output=True, text=True,
+    ))
+    result = run()
+    if getattr(result, "returncode", 1) != 0:
+        detail = (getattr(result, "stderr", "") or getattr(result, "stdout", "") or "").strip()
+        print(f"systemd self-update failed; staying on the current version: {detail[-500:]}",
+              file=sys.stderr, flush=True)
+        return False
+    (killer or (lambda: os.kill(os.getpid(), signal.SIGTERM)))()
+    return True

@@ -4,6 +4,18 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.8.1] — 2026-07-28
+
+- **Fix: self-update now works on systemd-managed nodes.** The detached
+  updater spawned by `update-run` lives in the unit's cgroup, and systemd's
+  default `KillMode=control-group` reaped it the moment the main process
+  stopped — `fleet update` reported ok while every node silently stayed on
+  the old version. Under systemd (detected via `INVOCATION_ID`) the console
+  now upgrades in an in-process thread and then exits itself, letting
+  `Restart=always` bring it back on the new code; a failed pip leaves the
+  node running on the current version. Bare/pidfile deployments keep the
+  existing detached-updater path.
+
 ## [1.8.0] — 2026-07-25
 
 - **Remote management mode: identity switching now switches the whole

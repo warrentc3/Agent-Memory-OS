@@ -120,6 +120,7 @@ def test_team_update_authorization_gate(tmp_path, monkeypatch):
     tokens.create_token(tmp_path)
     sync_token = tokens.create_token(tmp_path, tier="sync")
     headers = {"Authorization": f"Bearer {sync_token}"}
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
     started = []
     monkeypatch.setattr(
         "subprocess.Popen",

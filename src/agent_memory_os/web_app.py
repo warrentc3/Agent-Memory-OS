@@ -785,6 +785,18 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             return {"started": False,
                     "detail": "Docker deployment: pull the new image tag and recreate the "
                               "container (a container cannot pip-upgrade itself)."}
+        from .service import running_under_systemd, systemd_self_update
+
+        if running_under_systemd():
+            # The detached updater would be reaped with the unit's cgroup the
+            # moment it kills this process (pip never finishes). Upgrade in
+            # an in-process thread instead, then self-exit — Restart=always
+            # brings the console back on the new code.
+            threading.Thread(target=systemd_self_update, daemon=True).start()
+            return {"started": True,
+                    "detail": "systemd-managed console: upgrading in place — the service "
+                              "manager will restart it on the new version shortly. "
+                              "Reload the page in ~30s."}
         try:
             subprocess.Popen(
                 [sys.executable, "-m", "agent_memory_os.cli", "update", "--yes"],

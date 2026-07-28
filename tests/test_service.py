@@ -106,3 +106,52 @@ def test_cli_service_install_reports_native_failure(tmp_path, monkeypatch, capsy
 
     assert result == 1
     assert "service install failed" in capsys.readouterr().out
+
+
+def test_systemd_self_update_kills_only_on_success():
+    from agent_memory_os.service import systemd_self_update
+
+    killed = []
+
+    class Ok:
+        returncode = 0
+        stderr = ""
+        stdout = ""
+
+    class Fail:
+        returncode = 1
+        stderr = "no network"
+        stdout = ""
+
+    assert systemd_self_update(pip_runner=lambda: Ok(),
+                               killer=lambda: killed.append(True)) is True
+    assert killed == [True]
+
+    killed.clear()
+    assert systemd_self_update(pip_runner=lambda: Fail(),
+                               killer=lambda: killed.append(True)) is False
+    assert killed == []  # upgrade failed -> stay up, no restart
+
+
+def test_update_run_uses_in_process_path_under_systemd(tmp_path, monkeypatch):
+    import threading
+    import subprocess
+
+    from fastapi.testclient import TestClient
+
+    from agent_memory_os import service as service_module
+    from agent_memory_os.web_app import create_app
+
+    monkeypatch.setenv("INVOCATION_ID", "abc123")
+    ran = threading.Event()
+    monkeypatch.setattr(service_module, "systemd_self_update",
+                        lambda **kwargs: ran.set())
+    # the detached-updater path must NOT be used under systemd
+    monkeypatch.setattr(subprocess, "Popen",
+                        lambda *a, **k: (_ for _ in ()).throw(AssertionError("Popen used")))
+    http = TestClient(create_app(home=tmp_path))
+    r = http.post("/api/maintenance/update-run?confirm=update")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["started"] is True and "systemd" in body["detail"]
+    assert ran.wait(timeout=5)
