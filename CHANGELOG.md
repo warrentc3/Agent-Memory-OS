@@ -4,6 +4,17 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [Unreleased]
+
+- **Fix: the self-update relaunch log is now visible in the console log
+  viewer.** The pidfile relaunch (`agent-memory update` on a non-service
+  install) wrote `<home>/web.log`, a root-level name the Tools → Logs
+  whitelist never included — so the one log that explains a failed restart
+  couldn't be read from the console. The relaunch now writes to
+  `logs/web.log` (the same location the installed service uses, already
+  whitelisted), and the viewer additionally serves a legacy root-level
+  `web.log` so logs written by earlier versions stay reachable.
+
 ## [1.8.1] — 2026-07-28
 
 - **Fix: self-update now works on systemd-managed nodes.** The detached

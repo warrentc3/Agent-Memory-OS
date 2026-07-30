@@ -1000,9 +1000,13 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
 
         base = resolve_home(home)
         candidates: list[tuple[str, Path]] = []
-        direct = base / "webui.log"
-        if direct.is_file():
-            candidates.append(("webui.log", direct))
+        # Root-level names: webui.log (documented) and web.log — the file the
+        # pidfile relaunch in `agent-memory update` wrote before it moved to
+        # logs/web.log, kept viewable for stores that already have one.
+        for root_name in ("webui.log", "web.log"):
+            direct = base / root_name
+            if direct.is_file():
+                candidates.append((root_name, direct))
         logs_dir = base / "logs"
         if logs_dir.is_dir():
             for p in sorted(logs_dir.glob("*.log")):

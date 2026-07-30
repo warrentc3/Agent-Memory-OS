@@ -445,9 +445,12 @@ def test_web_api_peers_status_probes_and_reports(tmp_path):
 
 
 def test_web_api_logs_tail_filter_and_whitelist(tmp_path):
-    # two known log locations + one file that must NOT be reachable
+    # three known log locations + one file that must NOT be reachable
     (tmp_path / "webui.log").write_text(
         "".join(f"line {i}\n" for i in range(250)) + "ERROR boom\n", encoding="utf-8")
+    # legacy root-level relaunch log (written by `agent-memory update` before
+    # it moved to logs/web.log) must stay viewable
+    (tmp_path / "web.log").write_text("relaunch line\n", encoding="utf-8")
     (tmp_path / "logs").mkdir()
     (tmp_path / "logs" / "web.log").write_text("service start\n", encoding="utf-8")
     (tmp_path / "secret.txt").write_text("do not serve", encoding="utf-8")
@@ -457,7 +460,7 @@ def test_web_api_logs_tail_filter_and_whitelist(tmp_path):
     # default: last 100 lines of the first candidate (webui.log)
     data = http.get("/api/logs").json()
     assert data["file"] == "webui.log"
-    assert set(data["files"]) == {"webui.log", "logs/web.log"}
+    assert set(data["files"]) == {"webui.log", "web.log", "logs/web.log"}
     assert len(data["lines"]) == 100
     assert data["lines"][-1] == "ERROR boom"
 
@@ -465,6 +468,8 @@ def test_web_api_logs_tail_filter_and_whitelist(tmp_path):
     assert len(http.get("/api/logs", params={"lines": 10}).json()["lines"]) == 10
     other = http.get("/api/logs", params={"file": "logs/web.log"}).json()
     assert other["lines"] == ["service start"]
+    legacy = http.get("/api/logs", params={"file": "web.log"}).json()
+    assert legacy["lines"] == ["relaunch line"]
 
     # q filters BEFORE tailing: last matching lines come back
     hits = http.get("/api/logs", params={"q": "error"}).json()
