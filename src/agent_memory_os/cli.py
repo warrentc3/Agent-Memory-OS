@@ -1029,7 +1029,12 @@ def _restart_web_from_pidfile(home) -> str:
     stdout = subprocess.DEVNULL
     stderr = subprocess.DEVNULL
     try:
-        log = open(Path(resolve_home(home)) / "web.log", "ab")  # noqa: SIM115 - handed to child
+        # logs/web.log: the same location the installed service logs to, and
+        # inside the console log viewer's whitelist — a root-level web.log was
+        # invisible to Tools -> Logs.
+        log_dir = Path(resolve_home(home)) / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log = open(log_dir / "web.log", "ab")  # noqa: SIM115 - handed to child
         stdout, stderr = log, subprocess.STDOUT
     except OSError:
         pass
