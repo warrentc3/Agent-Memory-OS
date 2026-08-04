@@ -39,6 +39,85 @@ from .web_ui import PAGE
 VALID_SCOPES = PUBLIC_MEMORY_SCOPES
 VALID_TYPES = PUBLIC_MEMORY_TYPES
 
+_MANAGE = frozenset(("manage",))
+_READ_PRIVATE = frozenset(("read-private",))
+_MANAGE_AND_READ_PRIVATE = frozenset(("manage", "read-private"))
+_PROXIED_OPERATION = "proxied-operation"
+
+# Every /api/ operation has an explicit fleet-authority decision.  `None`
+# means deliberately unavailable to fleet signatures; the proxy sentinel
+# delegates to the proxied operation's own entry.  There is no fallback.
+FLEET_ROUTE_CAPABILITIES: dict[
+    tuple[str, str], frozenset[str] | str | None
+] = {
+    ("POST", "/api/node"): _MANAGE,
+    ("POST", "/api/agents/rename"): _MANAGE,
+    ("GET", "/api/owners"): _MANAGE,
+    ("POST", "/api/owners/reassign"): _MANAGE,
+    ("GET", "/api/node"): _MANAGE,
+    ("GET", "/api/stats"): _MANAGE,
+    ("POST", "/api/memories"): _MANAGE,
+    ("GET", "/api/memories"): _READ_PRIVATE,
+    ("GET", "/api/graph"): _READ_PRIVATE,
+    ("GET", "/api/memories/{memory_id}"): _READ_PRIVATE,
+    ("PATCH", "/api/memories/{memory_id}"): _MANAGE_AND_READ_PRIVATE,
+    ("GET", "/api/dashboard"): _MANAGE,
+    ("POST", "/api/retention"): _MANAGE,
+    ("GET", "/api/archive"): _READ_PRIVATE,
+    ("POST", "/api/archive/{memory_id}/restore"): _MANAGE_AND_READ_PRIVATE,
+    ("GET", "/api/integrity"): _MANAGE,
+    ("GET", "/api/agents"): _MANAGE,
+    ("POST", "/api/agents"): _MANAGE,
+    ("DELETE", "/api/agents/{agent_id}"): _MANAGE,
+    ("GET", "/api/teams"): _MANAGE,
+    ("POST", "/api/teams"): _MANAGE,
+    ("DELETE", "/api/teams/{team_id}"): _MANAGE,
+    ("GET", "/api/org/audit"): _MANAGE,
+    ("GET", "/api/maintenance/scan"): _MANAGE,
+    ("GET", "/api/maintenance/orphans"): _MANAGE_AND_READ_PRIVATE,
+    ("POST", "/api/maintenance/orphans/delete"): _MANAGE,
+    ("POST", "/api/maintenance/reindex"): _MANAGE,
+    ("POST", "/api/maintenance/vacuum"): _MANAGE,
+    ("GET", "/api/usage"): _MANAGE,
+    ("GET", "/api/maintenance/update-check"): _MANAGE,
+    ("POST", "/api/maintenance/update-run"): _MANAGE,
+    ("POST", "/api/teams/{team_id}/members"): _MANAGE,
+    ("DELETE", "/api/teams/{team_id}/members"): _MANAGE,
+    ("GET", "/api/projects"): _MANAGE,
+    ("POST", "/api/projects"): _MANAGE,
+    ("DELETE", "/api/projects/{project_id}"): _MANAGE,
+    ("POST", "/api/projects/{project_id}/members"): _MANAGE,
+    ("DELETE", "/api/projects/{project_id}/members"): _MANAGE,
+    ("GET", "/api/peers"): _MANAGE,
+    ("GET", "/api/fleet/status"): _MANAGE,
+    ("POST", "/api/fleet/trigger"): _MANAGE,
+    ("GET", "/api/fleet/browse"): _READ_PRIVATE,
+    ("GET", "/api/fleet/proxy"): _PROXIED_OPERATION,
+    ("POST", "/api/fleet/proxy"): _PROXIED_OPERATION,
+    ("PATCH", "/api/fleet/proxy"): _PROXIED_OPERATION,
+    ("DELETE", "/api/fleet/proxy"): _PROXIED_OPERATION,
+    ("GET", "/api/logs"): _MANAGE,
+    ("GET", "/api/peers/status"): _MANAGE,
+    ("POST", "/api/peers"): _MANAGE,
+    ("POST", "/api/pairing/redeem"): None,
+    ("DELETE", "/api/peers"): _MANAGE,
+    ("POST", "/api/sync/run"): _MANAGE,
+    ("GET", "/api/sync/export"): _READ_PRIVATE,
+    ("POST", "/api/sync/import"): _MANAGE,
+    ("GET", "/api/orchestrate"): _READ_PRIVATE,
+    ("DELETE", "/api/owners/{owner}/memories"): _MANAGE,
+    ("DELETE", "/api/memories/{memory_id}"): _MANAGE,
+    ("POST", "/api/memories/{memory_id}/share"): _MANAGE,
+    ("POST", "/api/memories/{memory_id}/revoke"): _MANAGE,
+    ("GET", "/api/memories/{memory_id}/audit"): _READ_PRIVATE,
+    ("GET", "/api/memories/{memory_id}/links"): _READ_PRIVATE,
+    ("POST", "/api/links"): _MANAGE,
+    ("POST", "/api/recall"): _MANAGE,
+    ("POST", "/api/consolidate"): _MANAGE,
+    ("GET", "/api/search"): _READ_PRIVATE,
+    ("GET", "/api/context-pack"): _READ_PRIVATE,
+}
+
 
 class AddMemoryRequest(BaseModel):
     content: str = Field(min_length=1)
@@ -317,29 +396,39 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         # content reads need 'read-private', mutations need 'manage', and a
         # mutation that returns a private record needs both.
         FLEET_FRESHNESS_S = 120
-        FLEET_CONTENT_READ_PREFIXES = (
-            "/api/memories", "/api/search", "/api/context-pack",
-            "/api/orchestrate", "/api/archive", "/api/graph", "/api/sync/export",
-        )
+        def _fleet_route_template(method: str, path: str) -> str | None:
+            for route in app.routes:
+                methods = getattr(route, "methods", None)
+                path_regex = getattr(route, "path_regex", None)
+                if methods and method in methods and path_regex and path_regex.fullmatch(path):
+                    return str(route.path)
+            return None
 
-        def _fleet_required_caps(method: str, path: str) -> frozenset[str]:
-            if method == "GET":
-                if path == "/api/maintenance/orphans":
-                    # The orphan inventory is an administrative inspection that
-                    # includes snippets of otherwise inaccessible content.
-                    return frozenset(("manage", "read-private"))
-                if any(path.startswith(prefix) for prefix in FLEET_CONTENT_READ_PREFIXES):
-                    return frozenset(("read-private",))
-                return frozenset(("manage",))
-            if method == "PATCH" and path.startswith("/api/memories/"):
-                return frozenset(("manage", "read-private"))
-            if (
-                method == "POST"
-                and path.startswith("/api/archive/")
-                and path.endswith("/restore")
-            ):
-                return frozenset(("manage", "read-private"))
-            return frozenset(("manage",))
+        def _fleet_required_caps(request) -> tuple[frozenset[str] | None, str]:
+            route_template = _fleet_route_template(request.method, request.url.path)
+            if route_template is None:
+                return None, "unclassified fleet route"
+            configured = FLEET_ROUTE_CAPABILITIES.get(
+                (request.method, route_template), "missing"
+            )
+            if configured == "missing" or configured is None:
+                return None, "route is not authorized for fleet access"
+            if configured != _PROXIED_OPERATION:
+                return configured, ""
+
+            from urllib.parse import urlsplit
+
+            target = request.query_params.get("path", "")
+            target_path = urlsplit(target).path
+            if not target_path.startswith("/api/") or target_path.startswith("/api/fleet"):
+                return None, "proxied route is not authorized for fleet access"
+            target_template = _fleet_route_template(request.method, target_path)
+            target_caps = FLEET_ROUTE_CAPABILITIES.get(
+                (request.method, target_template or ""), "missing"
+            )
+            if not isinstance(target_caps, frozenset):
+                return None, "proxied route is not authorized for fleet access"
+            return target_caps, ""
 
         async def _fleet_authorizes(request) -> tuple[bool, str, str]:
             """(allowed, key_id, deny_reason) for a signed fleet request."""
@@ -368,7 +457,9 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 request.method, target, body, timestamp, nonce)
             if not _crypto.fleet_verify(admin["public_key"], message, signature):
                 return False, key_id, "invalid signature"
-            required = _fleet_required_caps(request.method, request.url.path)
+            required, route_reason = _fleet_required_caps(request)
+            if required is None:
+                return False, key_id, route_reason
             missing = sorted(required - set(admin["caps"]))
             if missing:
                 label = "capability" if len(missing) == 1 else "capabilities"

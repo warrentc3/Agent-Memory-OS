@@ -2,6 +2,7 @@
 timestamp convergence."""
 
 import json
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -82,17 +83,23 @@ def test_final_visibility_retraction_propagates_without_private_content(tmp_path
     assert peer.get_visible(memory.id, requester_agent_id="bob") is not None
 
     source.revoke_share(memory.id, actor="alice", to_agent="bob")
+    source.close()
+    source = MemoryClient(home=tmp_path / "source")
     retraction_bundle = tmp_path / "retraction.jsonl"
     counts = source.export_bundle(retraction_bundle, include_private=False)
     entries = [json.loads(line) for line in retraction_bundle.read_text(encoding="utf-8").splitlines()]
-    retractions = [entry for entry in entries if entry.get("kind") == "acl_retraction"]
+    retractions = [entry for entry in entries if entry.get("acl_retraction") is True]
 
+    assert entries[0]["kind"] == "bundle"
+    assert entries[0]["version"] == 3
     assert counts["memories"] == 0
     assert counts["acl_retractions"] == 1
     assert len(retractions) == 1
     assert retractions == [{
-        "kind": "acl_retraction",
+        "kind": "memory",
+        "acl_retraction": True,
         "id": memory.id,
+        "visibility": "[]",
         "acl_updated_at": retractions[0]["acl_updated_at"],
     }]
     assert "Content that must not travel" not in retraction_bundle.read_text(encoding="utf-8")
@@ -103,7 +110,9 @@ def test_final_visibility_retraction_propagates_without_private_content(tmp_path
     assert peer.get_visible(memory.id, requester_agent_id="bob") is None
 
     absent = MemoryClient(home=tmp_path / "absent")
-    absent_stats = absent.import_bundle(retraction_bundle, trusted=False, org_scope=None)
+    absent_stats = absent.import_bundle(
+        retraction_bundle, trusted=False, org_scope=None,
+    )
     assert absent_stats["acl_retractions_applied"] == 0
     assert absent.get(memory.id) is None
 
@@ -111,6 +120,13 @@ def test_final_visibility_retraction_propagates_without_private_content(tmp_path
     peer.store._set_visibility(memory.id, ["agent:carol"])
     peer.import_bundle(retraction_bundle, trusted=False, org_scope=None)
     assert peer.get_visible(memory.id, requester_agent_id="carol") is not None
+
+    forwarded = tmp_path / "forwarded.jsonl"
+    peer.export_bundle(forwarded, include_private=False)
+    assert any(
+        entry.get("acl_retraction") is True and entry.get("id") == memory.id
+        for entry in map(json.loads, forwarded.read_text(encoding="utf-8").splitlines())
+    )
 
     source.close()
     peer.close()
@@ -123,15 +139,108 @@ def test_acl_retraction_rejects_future_clock(tmp_path):
     forged = tmp_path / "future-retraction.jsonl"
     forged.write_text(
         '{"kind": "bundle", "version": 3}\n'
-        f'{{"kind": "acl_retraction", "id": "{memory.id}", '
-        '"acl_updated_at": "2999-01-01T00:00:00+00:00"}\n',
+        f'{{"kind": "memory", "acl_retraction": true, "id": "{memory.id}", '
+        '"visibility": "[]", "acl_updated_at": "2999-01-01T00:00:00+00:00"}\n',
         encoding="utf-8",
     )
 
-    stats = target.import_bundle(forged, trusted=False, org_scope=None)
+    stats = target.import_bundle(
+        forged, source_peer="http://peer:8000", trusted=False, org_scope=None,
+    )
     assert stats["acl_retractions_applied"] == 0
     assert target.get_visible(memory.id, requester_agent_id="bob") is not None
     target.close()
+
+
+def test_acl_retraction_rejects_malformed_clock(tmp_path):
+    target = MemoryClient(home=tmp_path / "target")
+    memory = target.add("Scoped record.", owner="alice", visibility=["agent:bob"])
+    forged = tmp_path / "malformed-retraction.jsonl"
+    forged.write_text(
+        '{"kind": "bundle", "version": 3}\n'
+        f'{{"kind": "memory", "acl_retraction": true, "id": "{memory.id}", '
+        '"visibility": "[]", "acl_updated_at": "zzzz"}\n',
+        encoding="utf-8",
+    )
+
+    stats = target.import_bundle(
+        forged, source_peer="http://peer:8000", trusted=False, org_scope=None,
+    )
+    assert stats["acl_retractions_applied"] == 0
+    record = target.get(memory.id)
+    assert record is not None
+    assert record.visibility == ["agent:bob"]
+    stored_clock = target.store.conn.execute(
+        "SELECT acl_updated_at FROM memories WHERE id = ?", (memory.id,)
+    ).fetchone()[0]
+    assert stored_clock != "zzzz"
+    target.close()
+
+
+def test_acl_retraction_marker_uses_existing_v3_memory_dispatch(tmp_path):
+    target = MemoryClient(home=tmp_path / "target")
+    memory = target.add("Scoped record.", owner="alice", visibility=["agent:bob"])
+    stored_clock = target.store.conn.execute(
+        "SELECT acl_updated_at FROM memories WHERE id = ?", (memory.id,)
+    ).fetchone()[0]
+    clock = (datetime.fromisoformat(stored_clock) + timedelta(seconds=1)).isoformat()
+    bundle = tmp_path / "legacy-memory-dispatch.jsonl"
+    bundle.write_text(
+        '{"kind": "bundle", "version": 3}\n'
+        f'{{"kind": "memory", "id": "{memory.id}", "visibility": "[]", '
+        f'"acl_updated_at": "{clock}"}}\n',
+        encoding="utf-8",
+    )
+
+    stats = target.import_bundle(
+        bundle, source_peer="http://peer:8000", trusted=False, org_scope=None,
+    )
+    assert stats["memories_updated"] == 1
+    assert target.get_visible(memory.id, requester_agent_id="bob") is None
+    target.close()
+
+
+def test_private_noop_does_not_create_acl_retraction(tmp_path):
+    source = MemoryClient(home=tmp_path / "source")
+    private = source.add("Never shared.", owner="alice", visibility=[])
+    source.update(private.id, visibility=[])
+
+    bundle = tmp_path / "shared.jsonl"
+    counts = source.export_bundle(bundle, include_private=False)
+    assert counts["acl_retractions"] == 0
+    assert private.id not in bundle.read_text(encoding="utf-8")
+    source.close()
+
+
+@pytest.mark.parametrize(
+    ("export_scope", "allowed_grant", "blocked_grant"),
+    [
+        ({"team": "beta"}, "team:beta", "team:alpha"),
+        ({"project": "beta-app"}, "project:beta-app", "project:alpha-app"),
+    ],
+)
+def test_acl_retraction_export_is_policy_scoped(
+    tmp_path, export_scope, allowed_grant, blocked_grant,
+):
+    source = MemoryClient(home=tmp_path / "source")
+    allowed = source.add("Allowed scope.", owner="alice", visibility=[allowed_grant])
+    blocked = source.add("Other scope.", owner="alice", visibility=[blocked_grant])
+    private = source.add("Never shared.", owner="alice", visibility=[])
+    source.update(allowed.id, visibility=[])
+    source.update(blocked.id, visibility=[])
+    source.update(private.id, visibility=[])
+
+    bundle = tmp_path / "scoped.jsonl"
+    counts = source.export_bundle(bundle, include_private=False, **export_scope)
+    entries = [json.loads(line) for line in bundle.read_text(encoding="utf-8").splitlines()]
+    retraction_ids = {
+        entry["id"] for entry in entries if entry.get("acl_retraction") is True
+    }
+    assert counts["acl_retractions"] == 1
+    assert retraction_ids == {allowed.id}
+    assert blocked.id not in bundle.read_text(encoding="utf-8")
+    assert private.id not in bundle.read_text(encoding="utf-8")
+    source.close()
 
 
 def test_deleted_memory_does_not_resurrect(tmp_path):
@@ -161,7 +270,7 @@ def test_semi_trusted_peer_cannot_impersonate_local_agent(tmp_path):
         '{"kind": "bundle", "version": 2}\n'
         '{"kind": "memory", "id": "mem_forged_1", "owner": "alice", '
         '"scope": "user", "type": "note", "content": "trust me", "summary": "", '
-        '"tags": "[]", "visibility": "[\\"global\\"]", "source": "{}", '
+        '"tags": "[]", "visibility": "[\\"agent:consumer\\"]", "source": "{}", '
         '"confidence": 0.8, "importance": 0.5, "created_at": "2026-01-01T00:00:00+00:00", '
         '"updated_at": "2026-01-01T00:00:00+00:00", "decay_policy": "exponential", '
         '"decay_half_life_days": 30.0, "access_count": 0, "pinned": 0, '
@@ -196,6 +305,26 @@ def test_semi_trusted_import_records_provenance(tmp_path):
     assert rec is not None
     assert rec.visibility == ["agent:consumer"]
     assert rec.source.get("synced_from") == "http://peer:8000"
+
+
+@pytest.mark.parametrize("grant", ["team:apollo", "project:moonshot"])
+def test_semi_trusted_import_permits_scoped_non_global_grants(tmp_path, grant):
+    source = MemoryClient(home=tmp_path / "source")
+    memory = source.add("Scoped insight.", owner="peerbot", visibility=[grant])
+    bundle = tmp_path / "scoped-peer.jsonl"
+    source.export_bundle(bundle, include_private=False)
+    target = MemoryClient(home=tmp_path / "target")
+
+    stats = target.import_bundle(
+        bundle, source_peer="http://peer:8000", trusted=False, org_scope=None,
+    )
+    assert stats["memories_added"] == 1
+    imported = target.get(memory.id)
+    assert imported is not None
+    assert imported.visibility == [grant]
+    assert imported.source.get("synced_from") == "http://peer:8000"
+    source.close()
+    target.close()
 
 
 def test_semi_trusted_peer_cannot_inject_new_global_memory(tmp_path):

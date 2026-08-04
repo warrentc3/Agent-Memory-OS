@@ -576,6 +576,28 @@ def _migration_fleet_admins(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_acl_retractions(conn: sqlite3.Connection) -> None:
+    # A content-free ACL retraction must represent a REAL nonempty-to-empty
+    # transition, not an inference from the current private row.  Keep the
+    # previous audience locally so scoped exports can select only retractions
+    # relevant to that peer; prior audience/source never enter the bundle.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS acl_retractions (
+          memory_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+          acl_updated_at TEXT NOT NULL,
+          previous_visibility TEXT NOT NULL,
+          previous_source TEXT NOT NULL DEFAULT '{}',
+          PRIMARY KEY (memory_id, acl_updated_at)
+        )
+        """
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS acl_retractions_clock "
+        "ON acl_retractions(acl_updated_at)"
+    )
+
+
 MIGRATIONS: list[tuple[int, str, object]] = [
     (1, "decay and reinforcement columns", _migration_decay_columns),
     (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
@@ -597,6 +619,7 @@ MIGRATIONS: list[tuple[int, str, object]] = [
     (18, "requester-scoped session recall delivery log", _migration_session_recall_owner),
     (19, "mark pre-requester context as legacy unscoped", _migration_mark_legacy_context),
     (20, "canonicalize legacy expiry timestamps", _migration_canonicalize_expiry_timestamps),
+    (21, "durable policy-scoped ACL retractions", _migration_acl_retractions),
 ]
 
 
@@ -785,6 +808,8 @@ class MemoryStore:
             raise KeyError(memory_id)
         if requester_agent_id is not None and existing.owner != requester_agent_id:
             raise KeyError(memory_id)
+        previous_visibility = list(existing.visibility)
+        previous_source = existing.source_json()
         for name, value in fields.items():
             setattr(existing, name, value)
         if "content" in fields and "summary" not in fields:
@@ -821,10 +846,18 @@ class MemoryStore:
             # _set_visibility; without this a revoke made via update() would stay
             # local). Microsecond resolution so an edit + ACL change in the same
             # second still orders after creation.
+            acl_updated_at = utc_now_micro()
             self.conn.execute(
                 "UPDATE memories SET acl_updated_at = ? WHERE id = ?",
-                (utc_now_micro(), memory_id),
+                (acl_updated_at, memory_id),
             )
+            if previous_visibility and not existing.visibility:
+                self._record_acl_retraction(
+                    memory_id,
+                    previous_visibility=json.dumps(previous_visibility, ensure_ascii=False),
+                    previous_source=previous_source,
+                    acl_updated_at=acl_updated_at,
+                )
         self.conn.commit()
         return existing
 
@@ -1525,33 +1558,49 @@ class MemoryStore:
         """Remove one `team:<id>`/`project:<id>`/`agent:<id>` grant from every
         memory's visibility. Used when a scope is deleted so a reused id cannot
         resurrect access. ACL-only change — does not touch updated_at."""
-        self.conn.execute(
-            """
-            UPDATE memories
-            SET visibility = COALESCE(
-                (SELECT json_group_array(value) FROM json_each(memories.visibility)
-                 WHERE value != ?), '[]')
-            WHERE EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = ?)
-            """,
-            (grant, grant),
-        )
+        rows = self.conn.execute(
+            "SELECT id, visibility, source FROM memories "
+            "WHERE EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = ?)",
+            (grant,),
+        ).fetchall()
+        for row in rows:
+            previous = json.loads(row["visibility"] or "[]")
+            visibility = [value for value in previous if value != grant]
+            acl_updated_at = utc_now_micro()
+            self.conn.execute(
+                "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
+                (json.dumps(visibility, ensure_ascii=False), acl_updated_at, row["id"]),
+            )
+            if previous and not visibility:
+                self._record_acl_retraction(
+                    row["id"], previous_visibility=row["visibility"],
+                    previous_source=row["source"], acl_updated_at=acl_updated_at,
+                )
 
     def _strip_bare_team_grant(self, team_id: str) -> None:
         """Remove the legacy bare `team` grant from memories keyed to this team
         via source.team_id. The bare scheme is invisible to
         `_strip_visibility_grant`'s single-string match, so a deleted team's id,
         if reused, would otherwise resurrect read access through it."""
-        self.conn.execute(
-            """
-            UPDATE memories
-            SET visibility = COALESCE(
-                (SELECT json_group_array(value) FROM json_each(memories.visibility)
-                 WHERE value != 'team'), '[]')
-            WHERE json_extract(source, '$.team_id') = ?
-              AND EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = 'team')
-            """,
+        rows = self.conn.execute(
+            "SELECT id, visibility, source FROM memories "
+            "WHERE json_extract(source, '$.team_id') = ? "
+            "AND EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = 'team')",
             (team_id,),
-        )
+        ).fetchall()
+        for row in rows:
+            previous = json.loads(row["visibility"] or "[]")
+            visibility = [value for value in previous if value != "team"]
+            acl_updated_at = utc_now_micro()
+            self.conn.execute(
+                "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
+                (json.dumps(visibility, ensure_ascii=False), acl_updated_at, row["id"]),
+            )
+            if previous and not visibility:
+                self._record_acl_retraction(
+                    row["id"], previous_visibility=row["visibility"],
+                    previous_source=row["source"], acl_updated_at=acl_updated_at,
+                )
 
     def add_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
         if self.get_team(team_id) is None:
@@ -2430,11 +2479,45 @@ class MemoryStore:
         propagate the grant change to peers (so a revoke actually retracts
         already-synced access instead of staying local).
         """
+        row = self.conn.execute(
+            "SELECT visibility, source FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()
+        if row is None:
+            raise KeyError(memory_id)
+        previous = json.loads(row["visibility"] or "[]")
+        acl_updated_at = utc_now_micro()
         self.conn.execute(
             "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
-            (json.dumps(visibility, ensure_ascii=False), utc_now_micro(), memory_id),
+            (json.dumps(visibility, ensure_ascii=False), acl_updated_at, memory_id),
         )
+        if previous and not visibility:
+            self._record_acl_retraction(
+                memory_id, previous_visibility=row["visibility"],
+                previous_source=row["source"], acl_updated_at=acl_updated_at,
+            )
         self.conn.commit()
+
+    def _record_acl_retraction(
+        self,
+        memory_id: str,
+        *,
+        previous_visibility: str,
+        previous_source: str,
+        acl_updated_at: str,
+    ) -> None:
+        """Persist one proven final revoke for scoped, content-free export."""
+        try:
+            grants = json.loads(previous_visibility)
+        except (TypeError, ValueError):
+            return
+        if not isinstance(grants, list) or not grants:
+            return
+        self.conn.execute(
+            "INSERT OR IGNORE INTO acl_retractions"
+            "(memory_id, acl_updated_at, previous_visibility, previous_source) "
+            "VALUES (?, ?, ?, ?)",
+            (memory_id, acl_updated_at, previous_visibility, previous_source or "{}"),
+        )
 
     def audit_log(self, memory_id: str) -> list[dict[str, str]]:
         rows = self.conn.execute(

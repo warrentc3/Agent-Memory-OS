@@ -8,16 +8,21 @@ tagged on GitHub/GitLab.
 
 - **Security: ACL revocations now converge across processes and peers.**
   Long-running clients refresh ACL-sensitive direct, list, and graph reads
-  after another SQLite connection commits. A final visibility revoke now
-  travels in shared bundles as a content-free `acl_retraction`; it never
-  creates an absent memory, carries no private content, and cannot overwrite a
-  newer ACL decision. Untrusted imports can no longer introduce new globally
-  visible memories.
+  after another SQLite connection commits. A durable final-revoke ledger now
+  emits only genuine nonempty-to-empty ACL transitions, filtered to the
+  receiving team/project policy and serialized as a content-free v3 memory ACL
+  update that rolling peers already understand. New importers never create an
+  absent memory, reject malformed/future-clock retractions, and preserve newer
+  ACL decisions. Untrusted imports can no longer introduce
+  new globally visible memories.
 - **Security: fleet capabilities now distinguish reads from mutations.**
   `read-private` permits content reads but no longer authorizes create, update,
   delete, share, revoke, or recall operations. Mutations that return private
   records and orphan inspection require both `manage` and `read-private`;
-  orphan deletion remains `manage`-only.
+  orphan deletion remains `manage`-only. Every API operation has an explicit
+  method/route classification, unclassified routes deny fleet access, and the
+  console browse/proxy paths enforce the initiating key's content authority
+  before using the console's downstream key.
 - **Packaging: the MCP extra is constrained to compatible 1.x releases.** MCP
   2.0 removed `mcp.server.fastmcp`, which the current MCP server uses, so the
   `mcp` and `full` extras now require `mcp<2`.

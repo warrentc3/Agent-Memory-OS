@@ -62,12 +62,12 @@ def _norm_ts(value: str | None) -> str:
     (which compare wrong lexicographically) resolve to the same instant.
     Unparseable/empty input sorts before everything.
     """
-    if not value:
+    if not isinstance(value, str) or not value:
         return ""
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
     except ValueError:
-        return value
+        return ""
 
 
 def _incoming_wins(inc_ts: str, inc_content: str, ex_ts: str, ex_content: str) -> bool:
@@ -195,29 +195,39 @@ def export_bundle(
             handle.write(json.dumps({"kind": "memory", **payload}, ensure_ascii=False) + "\n")
             counts["memories"] += 1
         if not include_private:
-            # A final revoke makes the row private, so the memory record itself
-            # is correctly filtered above. Carry only the independent ACL clock
-            # needed to retract an already-synced grant. The two-clock test
-            # excludes ordinary private creations, migrated rows (whose ACL
-            # clock was backfilled from updated_at), and content-only edits.
-            # No content or previous grant is disclosed.
-            since_norm = _norm_ts(since)
-            private_rows = store.conn.execute(
-                "SELECT id, created_at, updated_at, acl_updated_at FROM memories "
-                "WHERE json_array_length(visibility) = 0"
+            # Only durable, proven nonempty-to-empty transitions appear here.
+            # Previous audience/source are local routing metadata: a scoped
+            # peer receives only retractions for records it could previously
+            # receive, while the bundle carries no prior ACL or content.
+            retract_clauses, retract_params = [], []
+            if since:
+                retract_clauses.append("acl_updated_at > ?")
+                retract_params.append(since)
+            if team:
+                retract_clauses.append(
+                    "(EXISTS (SELECT 1 FROM json_each(previous_visibility) WHERE value = ?)"
+                    " OR EXISTS (SELECT 1 FROM json_each(previous_visibility) WHERE value = 'team'"
+                    "            AND json_extract(previous_source, '$.team_id') = ?))"
+                )
+                retract_params.extend([f"team:{team}", team])
+            if project:
+                retract_clauses.append(
+                    "EXISTS (SELECT 1 FROM json_each(previous_visibility) WHERE value = ?)"
+                )
+                retract_params.append(f"project:{project}")
+            retract_where = (
+                f"WHERE {' AND '.join(retract_clauses)}" if retract_clauses else ""
             )
-            for row in private_rows:
-                acl_raw = row["acl_updated_at"] or row["updated_at"]
-                acl_norm = _norm_ts(acl_raw)
-                if not acl_norm or acl_norm in {
-                    _norm_ts(row["created_at"]), _norm_ts(row["updated_at"]),
-                }:
-                    continue
-                if since and acl_norm <= since_norm:
-                    continue
+            retractions = store.conn.execute(
+                "SELECT memory_id, acl_updated_at FROM acl_retractions "
+                f"{retract_where} ORDER BY acl_updated_at, memory_id",
+                retract_params,
+            )
+            for row in retractions:
                 handle.write(json.dumps({
-                    "kind": "acl_retraction", "id": row["id"],
-                    "acl_updated_at": acl_raw,
+                    "kind": "memory", "acl_retraction": True,
+                    "id": row["memory_id"], "visibility": "[]",
+                    "acl_updated_at": row["acl_updated_at"],
                 }) + "\n")
                 counts["acl_retractions"] += 1
         link_where, link_params = ("WHERE updated_at > ?", [since]) if since else ("", [])
@@ -332,17 +342,29 @@ def import_bundle(
     try:
         with path.open("r", encoding="utf-8") as handle:
             header = json.loads(handle.readline())
-            if header.get("kind") != "bundle" or header.get("version") not in (1, 2, 3):
+            bundle_version = header.get("version")
+            if header.get("kind") != "bundle" or bundle_version not in (1, 2, 3):
                 raise ValueError("not a compatible agent-memory-os bundle")
             for line in handle:
                 entry = json.loads(line)
                 kind = entry.pop("kind")
                 if kind == "memory":
-                    _merge_memory(
-                        store, entry, stats,
-                        source_peer=source_peer, trusted=trusted, local_agents=local_agents,
-                    )
+                    if entry.pop("acl_retraction", False) is True:
+                        if _visibility_values(entry.get("visibility")) != set():
+                            raise ValueError(
+                                "acl_retraction memory must carry empty visibility"
+                            )
+                        _apply_acl_retraction(store, entry, stats)
+                    else:
+                        _merge_memory(
+                            store, entry, stats,
+                            source_peer=source_peer, trusted=trusted,
+                            local_agents=local_agents,
+                        )
                 elif kind == "acl_retraction":
+                    # Compatibility with bundles produced by the earlier draft
+                    # implementation of this feature. New exports use a marked
+                    # memory record so older v3 importers do not ignore it.
                     _apply_acl_retraction(store, entry, stats)
                 elif kind == "link":
                     _merge_link(store, entry, stats)
@@ -386,7 +408,8 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
         return
 
     existing = store.conn.execute(
-        "SELECT updated_at, content, visibility, acl_updated_at FROM memories WHERE id = ?",
+        "SELECT updated_at, content, visibility, source, acl_updated_at "
+        "FROM memories WHERE id = ?",
         (entry["id"],),
     ).fetchone()
 
@@ -453,9 +476,19 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
     acl_wins = inc_acl > ex_acl or (
         inc_acl == ex_acl and (entry.get("visibility") or "") > (existing["visibility"] or "")
     )
-    if acl_wins and not _ts_too_future(inc_acl_raw) and _acl_change_allowed(
-        entry.get("visibility"), existing["visibility"], trusted
+    if (
+        acl_wins
+        and inc_acl
+        and not _ts_too_future(inc_acl_raw)
+        and _acl_change_allowed(entry.get("visibility"), existing["visibility"], trusted)
     ):
+        incoming_visibility = _visibility_values(entry.get("visibility"))
+        existing_visibility = _visibility_values(existing["visibility"])
+        if existing_visibility and incoming_visibility == set():
+            store._record_acl_retraction(
+                entry["id"], previous_visibility=existing["visibility"],
+                previous_source=existing["source"], acl_updated_at=inc_acl_raw,
+            )
         store.conn.execute(
             "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
             (entry.get("visibility"), inc_acl_raw, entry["id"]),
@@ -494,7 +527,8 @@ def _apply_acl_retraction(store, entry: dict, stats: dict) -> None:
     if not memory_id or not incoming_raw or _ts_too_future(incoming_raw):
         return
     existing = store.conn.execute(
-        "SELECT updated_at, acl_updated_at FROM memories WHERE id = ?",
+        "SELECT updated_at, acl_updated_at, visibility, source "
+        "FROM memories WHERE id = ?",
         (memory_id,),
     ).fetchone()
     if existing is None:
@@ -503,6 +537,12 @@ def _apply_acl_retraction(store, entry: dict, stats: dict) -> None:
     current = _norm_ts(existing["acl_updated_at"] or existing["updated_at"])
     if not incoming or incoming <= current:
         return
+    existing_visibility = _visibility_values(existing["visibility"])
+    if existing_visibility:
+        store._record_acl_retraction(
+            memory_id, previous_visibility=existing["visibility"],
+            previous_source=existing["source"], acl_updated_at=incoming_raw,
+        )
     store.conn.execute(
         "UPDATE memories SET visibility = '[]', acl_updated_at = ? WHERE id = ?",
         (incoming_raw, memory_id),

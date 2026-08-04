@@ -17,7 +17,7 @@ from fastapi.testclient import TestClient
 
 from agent_memory_os import crypto, tokens
 from agent_memory_os.client import MemoryClient
-from agent_memory_os.web_app import create_app
+from agent_memory_os.web_app import FLEET_ROUTE_CAPABILITIES, create_app
 
 
 @pytest.fixture()
@@ -258,6 +258,87 @@ def test_orphan_deletion_requires_manage_only(node):
     )
     assert response.status_code == 200
     assert response.json()["orphans_deleted"] == 1
+
+
+def test_every_api_operation_has_explicit_fleet_classification(tmp_path):
+    app = create_app(home=tmp_path)
+    registered = {
+        (method, route.path)
+        for route in app.routes
+        if str(getattr(route, "path", "")).startswith("/api/")
+        for method in (getattr(route, "methods", None) or set())
+    }
+    assert registered == set(FLEET_ROUTE_CAPABILITIES)
+
+
+def test_unclassified_api_route_is_denied_to_fleet_signature(tmp_path):
+    home = tmp_path / "node"
+    home.mkdir()
+    tokens.create_token(home)
+    keypair = crypto.generate_fleet_keypair()
+    client = MemoryClient(home=home)
+    client.store.grant_fleet_admin(keypair["public_key"], ["manage", "read-private"])
+    client.close()
+    app = create_app(home=home)
+
+    @app.get("/api/new-unclassified-route")
+    def unclassified():
+        return {"should_not": "run"}
+
+    with TestClient(app) as http:
+        response = _signed(http, keypair, "GET", "/api/new-unclassified-route")
+    assert response.status_code == 403
+    assert "not authorized for fleet access" in response.json()["detail"]
+
+
+def test_console_does_not_amplify_manage_into_private_read(tmp_path, monkeypatch):
+    from agent_memory_os import fleet as fleet_mod
+
+    home = tmp_path / "console"
+    home.mkdir()
+    tokens.create_token(home)
+    downstream_key = crypto.generate_fleet_keypair()
+    crypto.save_fleet_key(home, downstream_key)
+    caller_key = crypto.generate_fleet_keypair()
+    client = MemoryClient(home=home)
+    client.store.add_peer("http://node-a:8000", policy="shared")
+    client.store.grant_fleet_admin(caller_key["public_key"], ["manage"])
+    client.close()
+
+    calls = []
+
+    def private_response(keypair, url, method, target, payload=None):
+        calls.append((keypair["key_id"], url, method, target, payload))
+        return 200, {"memories": [{"content": "downstream private"}]}
+
+    monkeypatch.setattr(fleet_mod, "signed_call", private_response)
+    browse = "/api/fleet/browse?url=http%3A%2F%2Fnode-a%3A8000"
+    proxy = (
+        "/api/fleet/proxy?url=http%3A%2F%2Fnode-a%3A8000"
+        "&path=%2Fapi%2Fmemories"
+    )
+    with TestClient(create_app(home=home)) as http:
+        denied_browse = _signed(http, caller_key, "GET", browse)
+        denied_proxy = _signed(http, caller_key, "GET", proxy)
+        assert denied_browse.status_code == 403
+        assert denied_proxy.status_code == 403
+        assert "read-private" in denied_browse.json()["detail"]
+        assert "read-private" in denied_proxy.json()["detail"]
+        assert calls == []
+
+        grantor = MemoryClient(home=home)
+        grantor.store.grant_fleet_admin(
+            caller_key["public_key"], ["manage", "read-private"]
+        )
+        grantor.close()
+        allowed_browse = _signed(http, caller_key, "GET", browse)
+        allowed_proxy = _signed(http, caller_key, "GET", proxy)
+
+    assert allowed_browse.status_code == 200
+    assert allowed_proxy.status_code == 200
+    assert allowed_browse.json()["memories"][0]["content"] == "downstream private"
+    assert allowed_proxy.json()["memories"][0]["content"] == "downstream private"
+    assert len(calls) == 2
 
 
 def test_revocation_is_immediate(node):
