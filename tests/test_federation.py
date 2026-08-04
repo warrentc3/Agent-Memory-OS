@@ -95,7 +95,10 @@ def test_bundle_roundtrip_with_last_writer_wins(tmp_path):
 
     bundle = tmp_path / "bundle.jsonl"
     exported = host_a.export_bundle(bundle)
-    assert exported == {"memories": 2, "links": 1, "profiles": 1, "tombstones": 0}
+    assert exported == {
+        "memories": 2, "acl_retractions": 0, "links": 1,
+        "profiles": 1, "tombstones": 0,
+    }
 
     stats = host_b.import_bundle(bundle)
     assert stats["memories_added"] == 2 and stats["links_added"] == 1
@@ -160,7 +163,8 @@ def test_sync_http_endpoints_move_memories_between_hosts(tmp_path):
     host_a = TestClient(create_app(home=tmp_path / "a"))
     host_b = TestClient(create_app(home=tmp_path / "b"))
     created = host_a.post(
-        "/api/memories", json={"content": "Peer-synced memory.", "visibility": ["global"]}
+        "/api/memories",
+        json={"content": "Peer-synced memory.", "visibility": ["agent:peer-reader"]},
     ).json()
 
     bundle = host_a.get("/api/sync/export")
@@ -231,7 +235,8 @@ def test_peer_registry_and_mesh_sync(tmp_path, monkeypatch):
     host_a = MemoryClient(home=tmp_path / "a")
     peer_app = TestClient(create_app(home=tmp_path / "b"))
     created = peer_app.post(
-        "/api/memories", json={"content": "Memory living on peer B.", "visibility": ["global"]}
+        "/api/memories",
+        json={"content": "Memory living on peer B.", "visibility": ["agent:host-a"]},
     ).json()
 
     # registry CRUD + validation
@@ -255,7 +260,7 @@ def test_peer_registry_and_mesh_sync(tmp_path, monkeypatch):
 
     monkeypatch.setattr(sync_module, "_http", fake_http)
 
-    local_memory = host_a.add("Memory living on host A.", visibility=["global"])
+    local_memory = host_a.add("Memory living on host A.", visibility=["agent:peer-b"])
     results = sync_module.sync_all_peers(host_a)
 
     assert results[0]["ok"] is True

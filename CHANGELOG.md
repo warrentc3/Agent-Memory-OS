@@ -6,6 +6,21 @@ tagged on GitHub/GitLab.
 
 ## [Unreleased]
 
+- **Security: ACL revocations now converge across processes and peers.**
+  Long-running clients refresh ACL-sensitive direct, list, and graph reads
+  after another SQLite connection commits. A final visibility revoke now
+  travels in shared bundles as a content-free `acl_retraction`; it never
+  creates an absent memory, carries no private content, and cannot overwrite a
+  newer ACL decision. Untrusted imports can no longer introduce new globally
+  visible memories.
+- **Security: fleet capabilities now distinguish reads from mutations.**
+  `read-private` permits content reads but no longer authorizes create, update,
+  delete, share, revoke, or recall operations. Mutations that return private
+  records and orphan inspection require both `manage` and `read-private`;
+  orphan deletion remains `manage`-only.
+- **Packaging: the MCP extra is constrained to compatible 1.x releases.** MCP
+  2.0 removed `mcp.server.fastmcp`, which the current MCP server uses, so the
+  `mcp` and `full` extras now require `mcp<2`.
 - **Fix: the self-update relaunch log is now visible in the console log
   viewer.** The pidfile relaunch (`agent-memory update` on a non-service
   install) wrote `<home>/web.log`, a root-level name the Tools → Logs

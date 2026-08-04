@@ -27,13 +27,23 @@ def node(tmp_path):
     home.mkdir()
     tokens.create_token(home)  # bearer auth engaged -> fleet path exercised
     seed = MemoryClient(home=home)
-    seed.add("private note", owner="alice", visibility=[])
+    private = seed.add("private note", owner="alice", visibility=[])
+    archived = seed.add(
+        "archived private note", owner="alice", visibility=[],
+        expires_at="2000-01-01T00:00:00+00:00",
+    )
+    seed.run_retention()
+    orphan = seed.add("orphan content snippet", owner="external", visibility=["team:missing"])
     keypair = crypto.generate_fleet_keypair()
     seed.store.grant_fleet_admin(keypair["public_key"], ["manage"])
     seed.close()
     app = create_app(home=home)
     with TestClient(app) as http:
-        yield {"home": home, "http": http, "keypair": keypair}
+        yield {
+            "home": home, "http": http, "keypair": keypair,
+            "private_id": private.id, "archived_id": archived.id,
+            "orphan_id": orphan.id,
+        }
 
 
 def _signed(http, keypair, method, target, body=b""):
@@ -41,6 +51,12 @@ def _signed(http, keypair, method, target, body=b""):
     if body:
         headers["content-type"] = "application/json"
     return http.request(method, target, headers=headers, content=body or None)
+
+
+def _grant_caps(node, caps):
+    client = MemoryClient(home=node["home"])
+    client.store.grant_fleet_admin(node["keypair"]["public_key"], caps)
+    client.close()
 
 
 # --------------------------------------------------------------------------- #
@@ -149,10 +165,7 @@ def test_manage_cannot_read_content_routes(node):
 
 
 def test_read_private_cap_unlocks_content_and_audits(node):
-    client = MemoryClient(home=node["home"])
-    client.store.grant_fleet_admin(node["keypair"]["public_key"],
-                                   ["manage", "read-private"])
-    client.close()
+    _grant_caps(node, ["manage", "read-private"])
     response = _signed(node["http"], node["keypair"], "GET", "/api/memories")
     assert response.status_code == 200
     # The content read is on the node's audit trail, attributed to the key.
@@ -173,6 +186,78 @@ def test_signed_mutation_accepted_and_audited(node):
     entries = audit.store.org_audit_log(limit=10)
     audit.close()
     assert any("POST /api/owners/reassign" in e["detail"] for e in entries)
+
+
+def test_read_private_alone_cannot_mutate_content_routes(node):
+    _grant_caps(node, ["read-private"])
+    memory_id = node["private_id"]
+    requests = [
+        ("POST", "/api/memories", b'{"content":"blocked create","owner":"alice"}'),
+        ("PATCH", f"/api/memories/{memory_id}", b'{"content":"blocked patch"}'),
+        ("DELETE", f"/api/memories/{memory_id}", b""),
+        ("POST", f"/api/memories/{memory_id}/share",
+         b'{"actor":"alice","to_agent":"bob"}'),
+        ("POST", f"/api/memories/{memory_id}/revoke",
+         b'{"actor":"alice","to_agent":"bob"}'),
+        ("POST", "/api/recall", b'{"memory_ids":[],"helpful":true}'),
+    ]
+
+    for method, target, body in requests:
+        response = _signed(node["http"], node["keypair"], method, target, body)
+        assert response.status_code == 403, (method, target, response.text)
+        assert "manage" in response.json()["detail"]
+
+
+def test_record_returning_mutations_require_both_caps(node):
+    patch_target = f"/api/memories/{node['private_id']}"
+    restore_target = f"/api/archive/{node['archived_id']}/restore"
+
+    manage_patch = _signed(
+        node["http"], node["keypair"], "PATCH", patch_target,
+        b'{"content":"updated private note"}',
+    )
+    manage_restore = _signed(node["http"], node["keypair"], "POST", restore_target)
+    assert manage_patch.status_code == 403
+    assert manage_restore.status_code == 403
+    assert "read-private" in manage_patch.json()["detail"]
+    assert "read-private" in manage_restore.json()["detail"]
+
+    _grant_caps(node, ["manage", "read-private"])
+    combined_patch = _signed(
+        node["http"], node["keypair"], "PATCH", patch_target,
+        b'{"content":"updated private note"}',
+    )
+    combined_restore = _signed(node["http"], node["keypair"], "POST", restore_target)
+    assert combined_patch.status_code == 200
+    assert combined_patch.json()["content"] == "updated private note"
+    assert combined_restore.status_code == 200
+    assert combined_restore.json()["content"] == "archived private note"
+
+
+def test_orphan_snippets_require_manage_and_read_private(node):
+    manage_only = _signed(
+        node["http"], node["keypair"], "GET", "/api/maintenance/orphans",
+    )
+    assert manage_only.status_code == 403
+    assert "read-private" in manage_only.json()["detail"]
+
+    _grant_caps(node, ["manage", "read-private"])
+    combined = _signed(
+        node["http"], node["keypair"], "GET", "/api/maintenance/orphans",
+    )
+    assert combined.status_code == 200
+    orphan = next(item for item in combined.json()["orphans"]
+                  if item["id"] == node["orphan_id"])
+    assert orphan["content"] == "orphan content snippet"
+
+
+def test_orphan_deletion_requires_manage_only(node):
+    response = _signed(
+        node["http"], node["keypair"], "POST",
+        "/api/maintenance/orphans/delete?confirm=orphans",
+    )
+    assert response.status_code == 200
+    assert response.json()["orphans_deleted"] == 1
 
 
 def test_revocation_is_immediate(node):

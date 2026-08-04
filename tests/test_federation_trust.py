@@ -1,6 +1,8 @@
 """Federation trust model (v0.11) — per-peer scope, tombstones, provenance,
 timestamp convergence."""
 
+import json
+
 import pytest
 
 from agent_memory_os import MemoryClient
@@ -12,10 +14,12 @@ def test_shared_export_excludes_private(tmp_path):
     host.add("public knowledge", owner="a", visibility=["global"])
     host.add("team thing", owner="a", visibility=["team:apollo"])
     priv = host.add("private secret", owner="a", visibility=[])
+    host.update(priv.id, content="edited private secret")
 
     bundle = tmp_path / "shared.jsonl"
     counts = host.export_bundle(bundle, include_private=False)
     assert counts["memories"] == 2  # private excluded
+    assert counts["acl_retractions"] == 0  # content-only edits do not disclose its id
 
     target = MemoryClient(home=tmp_path / "t")
     target.import_bundle(bundle)
@@ -61,6 +65,73 @@ def test_tombstone_propagates_deletion(tmp_path):
     stats = b.import_bundle(bundle2)
     assert stats["tombstones_applied"] == 1
     assert b.get(mem.id) is None
+
+
+def test_final_visibility_retraction_propagates_without_private_content(tmp_path):
+    source = MemoryClient(home=tmp_path / "source")
+    peer = MemoryClient(home=tmp_path / "peer")
+    memory = source.add(
+        "Content that must not travel with its final ACL revoke.",
+        owner="alice",
+        visibility=["agent:bob"],
+    )
+
+    initial = tmp_path / "initial.jsonl"
+    source.export_bundle(initial, include_private=False)
+    peer.import_bundle(initial)
+    assert peer.get_visible(memory.id, requester_agent_id="bob") is not None
+
+    source.revoke_share(memory.id, actor="alice", to_agent="bob")
+    retraction_bundle = tmp_path / "retraction.jsonl"
+    counts = source.export_bundle(retraction_bundle, include_private=False)
+    entries = [json.loads(line) for line in retraction_bundle.read_text(encoding="utf-8").splitlines()]
+    retractions = [entry for entry in entries if entry.get("kind") == "acl_retraction"]
+
+    assert counts["memories"] == 0
+    assert counts["acl_retractions"] == 1
+    assert len(retractions) == 1
+    assert retractions == [{
+        "kind": "acl_retraction",
+        "id": memory.id,
+        "acl_updated_at": retractions[0]["acl_updated_at"],
+    }]
+    assert "Content that must not travel" not in retraction_bundle.read_text(encoding="utf-8")
+
+    stats = peer.import_bundle(retraction_bundle, trusted=False, org_scope=None)
+    assert stats["acl_retractions_applied"] == 1
+    assert peer.get(memory.id) is not None
+    assert peer.get_visible(memory.id, requester_agent_id="bob") is None
+
+    absent = MemoryClient(home=tmp_path / "absent")
+    absent_stats = absent.import_bundle(retraction_bundle, trusted=False, org_scope=None)
+    assert absent_stats["acl_retractions_applied"] == 0
+    assert absent.get(memory.id) is None
+
+    # A stale retraction cannot overwrite a newer local ACL decision.
+    peer.store._set_visibility(memory.id, ["agent:carol"])
+    peer.import_bundle(retraction_bundle, trusted=False, org_scope=None)
+    assert peer.get_visible(memory.id, requester_agent_id="carol") is not None
+
+    source.close()
+    peer.close()
+    absent.close()
+
+
+def test_acl_retraction_rejects_future_clock(tmp_path):
+    target = MemoryClient(home=tmp_path / "target")
+    memory = target.add("Scoped record.", owner="alice", visibility=["agent:bob"])
+    forged = tmp_path / "future-retraction.jsonl"
+    forged.write_text(
+        '{"kind": "bundle", "version": 3}\n'
+        f'{{"kind": "acl_retraction", "id": "{memory.id}", '
+        '"acl_updated_at": "2999-01-01T00:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
+
+    stats = target.import_bundle(forged, trusted=False, org_scope=None)
+    assert stats["acl_retractions_applied"] == 0
+    assert target.get_visible(memory.id, requester_agent_id="bob") is not None
+    target.close()
 
 
 def test_deleted_memory_does_not_resurrect(tmp_path):
@@ -113,7 +184,7 @@ def test_semi_trusted_import_records_provenance(tmp_path):
         '{"kind": "bundle", "version": 2}\n'
         '{"kind": "memory", "id": "mem_peer_1", "owner": "peerbot", '
         '"scope": "user", "type": "note", "content": "shared insight", "summary": "", '
-        '"tags": "[]", "visibility": "[\\"global\\"]", "source": "{}", '
+        '"tags": "[]", "visibility": "[\\"agent:consumer\\"]", "source": "{}", '
         '"confidence": 0.8, "importance": 0.5, "created_at": "2026-01-01T00:00:00+00:00", '
         '"updated_at": "2026-01-01T00:00:00+00:00", "decay_policy": "exponential", '
         '"decay_half_life_days": 30.0, "access_count": 0, "pinned": 0, '
@@ -123,7 +194,33 @@ def test_semi_trusted_import_records_provenance(tmp_path):
     target.import_bundle(bundle, source_peer="http://peer:8000", trusted=False)
     rec = target.get("mem_peer_1")
     assert rec is not None
+    assert rec.visibility == ["agent:consumer"]
     assert rec.source.get("synced_from") == "http://peer:8000"
+
+
+def test_semi_trusted_peer_cannot_inject_new_global_memory(tmp_path):
+    target = MemoryClient(home=tmp_path / "target")
+    bundle = tmp_path / "foreign-global.jsonl"
+    bundle.write_text(
+        '{"kind": "bundle", "version": 3}\n'
+        '{"kind": "memory", "id": "mem_foreign_global", "owner": "peerbot", '
+        '"scope": "user", "type": "note", "content": "injected", "summary": "", '
+        '"tags": "[]", "visibility": "[\\"global\\"]", "source": "{}", '
+        '"confidence": 0.8, "importance": 0.5, '
+        '"created_at": "2026-01-01T00:00:00+00:00", '
+        '"updated_at": "2026-01-01T00:00:00+00:00", '
+        '"acl_updated_at": "2026-01-01T00:00:00+00:00", '
+        '"decay_policy": "exponential", "decay_half_life_days": 30.0, '
+        '"access_count": 0, "pinned": 0, "helpful_count": 0, "unhelpful_count": 0}\n',
+        encoding="utf-8",
+    )
+
+    stats = target.import_bundle(
+        bundle, source_peer="http://peer:8000", trusted=False, org_scope=None,
+    )
+    assert stats["memories_skipped"] == 1
+    assert target.get("mem_foreign_global") is None
+    target.close()
 
 
 def test_same_second_edit_converges_by_content_tiebreak(tmp_path):
@@ -153,7 +250,7 @@ def test_mesh_sync_does_not_leak_private(tmp_path, monkeypatch):
 
     host_a = MemoryClient(home=tmp_path / "a")
     peer_app = TestClient(create_app(home=tmp_path / "b"))
-    host_a.add("A public", owner="a", visibility=["global"])
+    host_a.add("A public", owner="a", visibility=["agent:peer-reader"])
     host_a.add("A private", owner="a", visibility=[])
     host_a.store.add_peer("http://peer-b:8000", policy="shared")
 

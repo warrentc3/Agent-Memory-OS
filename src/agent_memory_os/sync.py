@@ -1,14 +1,16 @@
 """Federated sync: portable JSONL bundles + peer transport.
 
-`export_bundle` writes memories, links, recall profiles, and tombstones as one
-JSONL file; `import_bundle` merges a bundle into another store with
-deterministic, convergent conflict resolution:
+`export_bundle` writes memories, ACL retractions, links, recall profiles, and
+tombstones as one JSONL file; `import_bundle` merges a bundle into another
+store with deterministic, convergent conflict resolution:
 
 - memories: last-writer-wins on normalized `updated_at`, with a content
   tie-break so two nodes that edited in the same second still converge
 - links: merged keeping the strongest weight, highest activation count, and
   latest activation timestamp
 - profiles: last-writer-wins on `updated_at`
+- ACL retractions: empty-ACL transitions update existing rows only, on the
+  independent `acl_updated_at` clock
 - tombstones: a deletion propagates and blocks the row from resurrecting
 
 What leaves for a given peer is decided by that peer's **policy** (see
@@ -149,11 +151,16 @@ def export_bundle(
     members' nodes). `include_private` (default True) controls whether private
     `visibility=[]` memories are written — peer sync passes False for any
     non-'full' peer so private memory never leaves the machine. Tombstones are
-    always included (an id + timestamp carry no content).
+    always included (an id + timestamp carry no content). A transition to an
+    empty ACL is represented the same content-free way when private rows are
+    excluded, so a peer can retract access without receiving the private row.
     """
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
-    counts = {"memories": 0, "links": 0, "profiles": 0, "tombstones": 0}
+    counts = {
+        "memories": 0, "acl_retractions": 0, "links": 0,
+        "profiles": 0, "tombstones": 0,
+    }
     clauses, params = [], []
     if since:
         # A pure ACL change (share/revoke) bumps acl_updated_at, not updated_at,
@@ -187,6 +194,32 @@ def export_bundle(
             exported_ids.add(row["id"])
             handle.write(json.dumps({"kind": "memory", **payload}, ensure_ascii=False) + "\n")
             counts["memories"] += 1
+        if not include_private:
+            # A final revoke makes the row private, so the memory record itself
+            # is correctly filtered above. Carry only the independent ACL clock
+            # needed to retract an already-synced grant. The two-clock test
+            # excludes ordinary private creations, migrated rows (whose ACL
+            # clock was backfilled from updated_at), and content-only edits.
+            # No content or previous grant is disclosed.
+            since_norm = _norm_ts(since)
+            private_rows = store.conn.execute(
+                "SELECT id, created_at, updated_at, acl_updated_at FROM memories "
+                "WHERE json_array_length(visibility) = 0"
+            )
+            for row in private_rows:
+                acl_raw = row["acl_updated_at"] or row["updated_at"]
+                acl_norm = _norm_ts(acl_raw)
+                if not acl_norm or acl_norm in {
+                    _norm_ts(row["created_at"]), _norm_ts(row["updated_at"]),
+                }:
+                    continue
+                if since and acl_norm <= since_norm:
+                    continue
+                handle.write(json.dumps({
+                    "kind": "acl_retraction", "id": row["id"],
+                    "acl_updated_at": acl_raw,
+                }) + "\n")
+                counts["acl_retractions"] += 1
         link_where, link_params = ("WHERE updated_at > ?", [since]) if since else ("", [])
         for row in store.conn.execute(f"SELECT * FROM memory_links {link_where}", link_params):
             # A link is only meaningful if both endpoints are in the bundle;
@@ -288,6 +321,7 @@ def import_bundle(
     path = Path(path).expanduser()
     stats = {
         "memories_added": 0, "memories_updated": 0, "memories_skipped": 0,
+        "acl_retractions_applied": 0,
         "links_added": 0, "links_merged": 0, "profiles_upserted": 0,
         "tombstones_applied": 0, "teams_upserted": 0, "projects_upserted": 0,
         "org_tombstones_applied": 0, "org_records_rejected": 0,
@@ -308,6 +342,8 @@ def import_bundle(
                         store, entry, stats,
                         source_peer=source_peer, trusted=trusted, local_agents=local_agents,
                     )
+                elif kind == "acl_retraction":
+                    _apply_acl_retraction(store, entry, stats)
                 elif kind == "link":
                     _merge_link(store, entry, stats)
                 elif kind == "profile":
@@ -356,12 +392,19 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
 
     if not trusted:
         # Anti-impersonation: a semi-trusted peer cannot stand up a NEW memory
-        # authored by one of our local agents. Genuine shared/global memory
-        # under the peer's own owner ids still flows; every import records its
-        # origin in source.synced_from so it is never mistaken for local.
-        if existing is None and entry.get("owner") in local_agents:
-            stats["memories_skipped"] += 1
-            return
+        # authored by one of our local agents. It also cannot inject a NEW
+        # globally-visible record under a foreign owner. Permitted direct,
+        # team, and project grants still flow; every import records its origin
+        # in source.synced_from so it is never mistaken for local.
+        if existing is None:
+            incoming_visibility = _visibility_values(entry.get("visibility"))
+            if (
+                entry.get("owner") in local_agents
+                or incoming_visibility is None
+                or "global" in incoming_visibility
+            ):
+                stats["memories_skipped"] += 1
+                return
         entry["source"] = _tag_source(entry.get("source"), source_peer)
 
     # Old bundles (pre-ACL-clock) carry no acl_updated_at; treat it as the
@@ -421,17 +464,50 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
     stats["memories_updated" if changed else "memories_skipped"] += 1
 
 
+def _visibility_values(value) -> set[str] | None:
+    """Parse a serialized ACL without accepting non-list/non-string shapes."""
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(item, str) for item in parsed):
+        return None
+    return set(parsed)
+
+
 def _acl_change_allowed(incoming_vis, existing_vis, trusted: bool) -> bool:
     """A trusted import may set any visibility; an untrusted peer may only SHRINK
     it (propagate a revoke), never widen it (block visibility escalation)."""
     if trusted:
         return True
-    try:
-        inc = set(json.loads(incoming_vis) if isinstance(incoming_vis, str) else (incoming_vis or []))
-        ex = set(json.loads(existing_vis) if isinstance(existing_vis, str) else (existing_vis or []))
-    except (ValueError, TypeError):
+    inc = _visibility_values(incoming_vis)
+    ex = _visibility_values(existing_vis)
+    if inc is None or ex is None:
         return False  # unparseable ACL from an untrusted peer — refuse
     return inc <= ex
+
+
+def _apply_acl_retraction(store, entry: dict, stats: dict) -> None:
+    """Apply a content-free final visibility revoke to an existing memory."""
+    memory_id = entry.get("id")
+    incoming_raw = entry.get("acl_updated_at")
+    if not memory_id or not incoming_raw or _ts_too_future(incoming_raw):
+        return
+    existing = store.conn.execute(
+        "SELECT updated_at, acl_updated_at FROM memories WHERE id = ?",
+        (memory_id,),
+    ).fetchone()
+    if existing is None:
+        return
+    incoming = _norm_ts(incoming_raw)
+    current = _norm_ts(existing["acl_updated_at"] or existing["updated_at"])
+    if not incoming or incoming <= current:
+        return
+    store.conn.execute(
+        "UPDATE memories SET visibility = '[]', acl_updated_at = ? WHERE id = ?",
+        (incoming_raw, memory_id),
+    )
+    stats["acl_retractions_applied"] += 1
 
 
 def _tag_source(source, peer: str | None) -> str:

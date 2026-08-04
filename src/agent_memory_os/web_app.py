@@ -313,19 +313,33 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         # Fleet admin signatures (v1.6): an alternative to bearer tokens for
         # cross-node operations. The console signs each request with its
         # Ed25519 key; this node verifies against the PUBLIC keys the local
-        # operator granted (fleet_admins). Content-bearing routes additionally
-        # require the 'read-private' capability — a manage-only admin can
-        # operate the node but never read memory content.
+        # operator granted (fleet_admins). Authorization is method+route based:
+        # content reads need 'read-private', mutations need 'manage', and a
+        # mutation that returns a private record needs both.
         FLEET_FRESHNESS_S = 120
-        FLEET_CONTENT_PREFIXES = (
-            "/api/memories", "/api/search", "/api/recall", "/api/context-pack",
+        FLEET_CONTENT_READ_PREFIXES = (
+            "/api/memories", "/api/search", "/api/context-pack",
             "/api/orchestrate", "/api/archive", "/api/graph", "/api/sync/export",
         )
 
-        def _fleet_required_cap(path: str) -> str:
-            if any(path.startswith(p) for p in FLEET_CONTENT_PREFIXES):
-                return "read-private"
-            return "manage"
+        def _fleet_required_caps(method: str, path: str) -> frozenset[str]:
+            if method == "GET":
+                if path == "/api/maintenance/orphans":
+                    # The orphan inventory is an administrative inspection that
+                    # includes snippets of otherwise inaccessible content.
+                    return frozenset(("manage", "read-private"))
+                if any(path.startswith(prefix) for prefix in FLEET_CONTENT_READ_PREFIXES):
+                    return frozenset(("read-private",))
+                return frozenset(("manage",))
+            if method == "PATCH" and path.startswith("/api/memories/"):
+                return frozenset(("manage", "read-private"))
+            if (
+                method == "POST"
+                and path.startswith("/api/archive/")
+                and path.endswith("/restore")
+            ):
+                return frozenset(("manage", "read-private"))
+            return frozenset(("manage",))
 
         async def _fleet_authorizes(request) -> tuple[bool, str, str]:
             """(allowed, key_id, deny_reason) for a signed fleet request."""
@@ -354,9 +368,12 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 request.method, target, body, timestamp, nonce)
             if not _crypto.fleet_verify(admin["public_key"], message, signature):
                 return False, key_id, "invalid signature"
-            required = _fleet_required_cap(request.url.path)
-            if required not in admin["caps"]:
-                return False, key_id, f"capability '{required}' not granted"
+            required = _fleet_required_caps(request.method, request.url.path)
+            missing = sorted(required - set(admin["caps"]))
+            if missing:
+                label = "capability" if len(missing) == 1 else "capabilities"
+                names = ", ".join(f"'{cap}'" for cap in missing)
+                return False, key_id, f"{label} {names} not granted"
             # Consume the nonce LAST — only a fully valid signature may burn
             # it, and the atomic insert makes concurrent replays lose.
             with lock:
@@ -364,7 +381,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                     return False, key_id, "replayed nonce"
                 # Every accepted mutation and every content read is auditable
                 # on the node it happened on.
-                if request.method not in safe_methods or required == "read-private":
+                if request.method not in safe_methods or "read-private" in required:
                     client.store.audit_fleet_op(f"{request.method} {target}", key_id)
             return True, key_id, ""
 
