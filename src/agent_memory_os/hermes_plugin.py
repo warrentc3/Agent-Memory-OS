@@ -143,7 +143,10 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
         self._active = (kwargs.get("agent_context") or "primary") == "primary"
 
         home = self._config.get("home") or None
-        self._client = MemoryClient(home=home)
+        # Hermes initializes the provider on the gateway thread but can execute
+        # prefetch/tool hooks on an agent worker thread. The provider owns this
+        # connection for its lifetime, so permit that cross-thread handoff.
+        self._client = MemoryClient(home=home, check_same_thread=False)
         try:
             self._client.store.touch_agent(self._agent_id)
         except Exception:  # noqa: BLE001 - registry is best-effort
@@ -178,18 +181,24 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Recall a context pack for the turn. Local SQLite — fast enough sync."""
-        if self._client is None or not (query or "").strip():
+        if not (query or "").strip():
             return ""
-        try:
-            pack = self._client.context_pack(
-                query,
-                requester_agent_id=self._agent_id,
-                limit=int(self._config.get("prefetch_limit", 8)),
-                max_tokens=int(self._config.get("prefetch_max_tokens", 900)),
-            )
-        except Exception as exc:  # noqa: BLE001 - degrade to no recall
-            logger.warning("AgentMemoryOS prefetch failed: %s", exc)
-            return ""
+        # check_same_thread=False permits the gateway-to-worker handoff; this
+        # lock additionally prevents concurrent hooks from sharing one SQLite
+        # connection at the same instant.
+        with self._lock:
+            if self._client is None:
+                return ""
+            try:
+                pack = self._client.context_pack(
+                    query,
+                    requester_agent_id=self._agent_id,
+                    limit=int(self._config.get("prefetch_limit", 8)),
+                    max_tokens=int(self._config.get("prefetch_max_tokens", 900)),
+                )
+            except Exception as exc:  # noqa: BLE001 - degrade to no recall
+                logger.warning("AgentMemoryOS prefetch failed: %s", exc)
+                return ""
         if not pack or not pack.strip():
             return ""
         return (
@@ -290,21 +299,22 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
         ]
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs: Any) -> str:
-        if self._client is None:
-            return json.dumps({"error": "AgentMemoryOS provider not initialized"})
-        try:
-            if tool_name == "amos_search":
-                return self._tool_search(args)
-            if tool_name == "amos_add":
-                return self._tool_add(args)
-            if tool_name == "amos_share":
-                return self._tool_share(args)
-        except ValueError as exc:  # share-resolution errors are user-facing
-            return json.dumps({"error": str(exc)})
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("AgentMemoryOS tool %s failed: %s", tool_name, exc)
-            return json.dumps({"error": f"{tool_name} failed: {exc}"})
-        return json.dumps({"error": f"Unknown tool: {tool_name}"})
+        with self._lock:
+            if self._client is None:
+                return json.dumps({"error": "AgentMemoryOS provider not initialized"})
+            try:
+                if tool_name == "amos_search":
+                    return self._tool_search(args)
+                if tool_name == "amos_add":
+                    return self._tool_add(args)
+                if tool_name == "amos_share":
+                    return self._tool_share(args)
+            except ValueError as exc:  # share-resolution errors are user-facing
+                return json.dumps({"error": str(exc)})
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("AgentMemoryOS tool %s failed: %s", tool_name, exc)
+                return json.dumps({"error": f"{tool_name} failed: {exc}"})
+            return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
     def _tool_search(self, args: Dict[str, Any]) -> str:
         query = (args.get("query") or "").strip()
@@ -392,53 +402,55 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
         same entry do not duplicate. Only 'add'/'replace' are mirrored; removal
         stays manual — the store has its own decay/consolidation lifecycle.
         """
-        if self._client is None or not self._active:
-            return
-        if not self._config.get("mirror_builtin", True):
-            return
-        if action not in ("add", "replace") or not (content or "").strip():
-            return
-        memory_id = _mirror_id(target, content.strip())
-        if memory_id in self._mirrored:
-            return
-        try:
-            if self._client.get(memory_id) is None:  # idempotent across restarts
-                self._client.add(
-                    content.strip(),
-                    id=memory_id,
-                    owner=self._agent_id,
-                    type="preference" if target == "user" else "note",
-                    visibility=[],
-                    source={"system": MIRROR_SYSTEM, "target": target,
-                            "action": action},
-                )
-            self._mirrored.add(memory_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("builtin-memory mirror skipped: %s", exc)
+        with self._lock:
+            if self._client is None or not self._active:
+                return
+            if not self._config.get("mirror_builtin", True):
+                return
+            if action not in ("add", "replace") or not (content or "").strip():
+                return
+            memory_id = _mirror_id(target, content.strip())
+            if memory_id in self._mirrored:
+                return
+            try:
+                if self._client.get(memory_id) is None:  # idempotent across restarts
+                    self._client.add(
+                        content.strip(),
+                        id=memory_id,
+                        owner=self._agent_id,
+                        type="preference" if target == "user" else "note",
+                        visibility=[],
+                        source={"system": MIRROR_SYSTEM, "target": target,
+                                "action": action},
+                    )
+                self._mirrored.add(memory_id)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("builtin-memory mirror skipped: %s", exc)
 
     def on_delegation(self, task: str, result: str, *,
                       child_session_id: str = "", **kwargs: Any) -> None:
         """Store what was delegated and what came back, as an episodic note."""
-        if self._client is None or not self._active:
-            return
-        if not self._config.get("capture_delegations", True):
-            return
-        task = (task or "").strip()
-        result = (result or "").strip()
-        if not task or not result:
-            return
-        try:
-            self._client.add(
-                f"Delegated task: {task[:400]}\nOutcome: {result[:1200]}",
-                owner=self._agent_id,
-                type="note",
-                visibility=[],
-                importance=0.3,
-                source={"system": DELEGATION_SYSTEM,
-                        "child_session_id": child_session_id},
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("delegation capture skipped: %s", exc)
+        with self._lock:
+            if self._client is None or not self._active:
+                return
+            if not self._config.get("capture_delegations", True):
+                return
+            task = (task or "").strip()
+            result = (result or "").strip()
+            if not task or not result:
+                return
+            try:
+                self._client.add(
+                    f"Delegated task: {task[:400]}\nOutcome: {result[:1200]}",
+                    owner=self._agent_id,
+                    type="note",
+                    visibility=[],
+                    importance=0.3,
+                    source={"system": DELEGATION_SYSTEM,
+                            "child_session_id": child_session_id},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("delegation capture skipped: %s", exc)
 
     # -- setup surface --------------------------------------------------------
 
