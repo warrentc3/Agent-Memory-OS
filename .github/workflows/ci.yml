@@ -21,7 +21,7 @@ jobs:
       - name: Install package with test extras
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[dev,api]" httpx numpy
+          pip install -e ".[dev,api,mcp]" httpx numpy
       - name: Install semantic extra (turbovec)
         if: runner.os != 'Windows'
         run: pip install -e ".[semantic]"
@@ -30,6 +30,22 @@ jobs:
       - name: Validation harness (quick)
         if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.12'
         run: python scripts/validation_run.py --quick
+
+  mcp-v1-source-fallback:
+    # Packaged installs use MCP v2. Keep the documented source-checkout fallback
+    # executable until it is intentionally removed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install maintained MCP v1 line without the v2 package extra
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,api]" "mcp>=1,<2" httpx numpy
+      - name: Run MCP v1 compatibility gates
+        run: pytest tests/test_mcp_sharing.py tests/test_server_json_and_mcp.py tests/test_mcp_v2_threading.py
 
   upgrade-path:
     # Prove a DB written by the last PUBLISHED release migrates forward under the

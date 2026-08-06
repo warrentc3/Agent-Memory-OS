@@ -4,8 +4,10 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [Unreleased]
+## [1.8.2] — 2026-08-07
 
+- **Hermes and MCP worker-thread safety.** Hermes creates providers on the gateway thread and performs hooks on worker threads; MCP Python SDK v2 likewise runs synchronous tools in AnyIO worker threads. Both integrations now enable cross-thread SQLite handoff and serialize all access to their shared connection, with regression coverage for handoff and concurrent-call safety.
+- **MCP Python SDK v2 support.** The high-level server uses `MCPServer`, packaged MCP installs require `mcp>=2.0.0,<3`, stdio round trips accept v2 snake-case result fields, and source checkouts retain a v1 import fallback.
 - **Fix: the self-update relaunch log is now visible in the console log
   viewer.** The pidfile relaunch (`agent-memory update` on a non-service
   install) wrote `<home>/web.log`, a root-level name the Tools → Logs
