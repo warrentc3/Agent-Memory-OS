@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sys
+import threading
 import types
 
 import pytest
@@ -76,6 +77,74 @@ def test_add_search_roundtrip_and_prefetch(provider):
     assert "blue-green" in pack
     assert pack.startswith("Recalled from AgentMemoryOS")
     assert provider.prefetch("") == ""  # empty query -> no injection
+
+
+def test_prefetch_can_handoff_from_initialize_thread_to_worker(provider):
+    """Hermes initializes on the gateway thread and recalls on an agent worker."""
+    provider.handle_tool_call(
+        "amos_add",
+        {"content": "Cross-thread handoff uses blue-green rollout.",
+         "type": "procedure"},
+    )
+    result: dict[str, object] = {}
+
+    def recall_from_worker() -> None:
+        try:
+            result["pack"] = provider.prefetch("blue-green rollout")
+        except Exception as exc:  # pragma: no cover - asserted below
+            result["error"] = exc
+
+    worker = threading.Thread(target=recall_from_worker)
+    worker.start()
+    worker.join(timeout=5)
+
+    assert not worker.is_alive()
+    assert result.get("error") is None
+    assert "blue-green" in str(result.get("pack", ""))
+
+
+def test_prefetch_serializes_shared_connection_access(provider, monkeypatch):
+    """Concurrent hooks must not operate on one SQLite connection together."""
+    provider.handle_tool_call(
+        "amos_add", {"content": "Serialized recall uses blue-green rollout."},
+    )
+    original = provider._client.context_pack
+    first_entered = threading.Event()
+    second_entered = threading.Event()
+    state_lock = threading.Lock()
+    active = 0
+    max_active = 0
+
+    def observed_context_pack(*args, **kwargs):
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+            is_first = active == 1
+        if is_first:
+            first_entered.set()
+            second_entered.wait(timeout=0.2)
+        else:
+            second_entered.set()
+        try:
+            return original(*args, **kwargs)
+        finally:
+            with state_lock:
+                active -= 1
+
+    monkeypatch.setattr(provider._client, "context_pack", observed_context_pack)
+    workers = [
+        threading.Thread(target=provider.prefetch, args=("blue-green rollout",))
+        for _ in range(2)
+    ]
+    for worker in workers:
+        worker.start()
+    assert first_entered.wait(timeout=1)
+    for worker in workers:
+        worker.join(timeout=5)
+
+    assert all(not worker.is_alive() for worker in workers)
+    assert max_active == 1
 
 
 def test_acl_prefetch_excludes_other_agents_private(provider):
