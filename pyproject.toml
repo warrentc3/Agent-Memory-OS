@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "agent-memory-os"
-version = "1.8.1"
+version = "1.8.2"
 description = "Local-first, MCP-native memory engine for AI agents with RAM cache and context-budgeted recall."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -19,11 +19,11 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-mcp = ["mcp>=1.0.0"]
+mcp = ["mcp>=2.0.0,<3"]
 api = ["fastapi>=0.115", "uvicorn>=0.30"]
 semantic = ["numpy>=1.26", "turbovec>=0.7,<1.0"]
 secure-sync = ["cryptography>=42"]
-full = ["mcp>=1.0.0", "fastapi>=0.115", "uvicorn>=0.30", "numpy>=1.26", "turbovec>=0.7,<1.0", "cryptography>=42"]
+full = ["mcp>=2.0.0,<3", "fastapi>=0.115", "uvicorn>=0.30", "numpy>=1.26", "turbovec>=0.7,<1.0", "cryptography>=42"]
 dev = ["pytest>=8.0", "cryptography>=42"]
 
 [project.scripts]

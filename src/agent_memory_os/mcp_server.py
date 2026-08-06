@@ -52,15 +52,37 @@ def _share_to_visibility(share: str | None, *, teams: list[str], projects: list[
 
 def create_server():  # pragma: no cover - optional integration scaffold
     try:
-        from mcp.server.fastmcp import FastMCP
+        try:
+            # MCP Python SDK v2 (current stable API). getattr keeps static
+            # analysis compatible with development environments still on v1.
+            from mcp import server as mcp_server
+            MCPServer = getattr(mcp_server, "MCPServer")
+        except (ImportError, AttributeError):
+            # Keep source checkouts usable with the maintained v1 SDK line;
+            # packaged installs require v2 through the `mcp` extra below.
+            from mcp.server.fastmcp import FastMCP as MCPServer
         from pydantic import Field
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError("Install agent-memory-os[mcp] to run the MCP server") from exc
 
     import os
+    import threading
+    from functools import wraps
 
-    mcp = FastMCP("agent-memory-os")
-    client = MemoryClient()
+    mcp = MCPServer("agent-memory-os")
+    # MCP SDK v2 executes synchronous handlers in AnyIO worker threads. Allow
+    # that gateway-to-worker handoff, then serialize all tool access because a
+    # single SQLite connection must never be used concurrently.
+    client = MemoryClient(check_same_thread=False)
+    client_lock = threading.Lock()
+
+    def _serialized_tool(func):
+        @wraps(func)
+        def wrapped(*args, **kwargs):
+            with client_lock:
+                return func(*args, **kwargs)
+
+        return wrapped
     # Each connected agent declares WHO it is via env, so a project can mix
     # Claude Code / Codex / OpenClaw / Hermes profiles against one store and
     # every read/write carries the right identity and team ACL.
@@ -76,6 +98,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         )
 
     @mcp.tool()
+    @_serialized_tool
     def memory_add(
         content: Annotated[str, Field(description="The fact to remember, as a self-contained sentence (e.g. 'The user prefers dark mode.'). Write it so it makes sense on its own in a future session.")],
         owner: Annotated[
@@ -132,6 +155,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         return {"id": rec.id, "content": rec.content, "visibility": rec.visibility}
 
     @mcp.tool()
+    @_serialized_tool
     def memory_search(
         query: Annotated[str, Field(description="Natural-language search query. Matches by keyword AND by association (linked memories surface even without shared words).")],
         owner: Annotated[str | None, Field(description="Optional filter to a single owner id. Leave unset to search everything this agent may see.")] = None,
@@ -151,6 +175,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         ]
 
     @mcp.tool()
+    @_serialized_tool
     def memory_context_pack(
         query: Annotated[str, Field(description="The task or question to gather relevant memories for.")],
         owner: Annotated[str | None, Field(description="Optional filter to a single owner id. Leave unset to include everything this agent may see.")] = None,
@@ -168,6 +193,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         )
 
     @mcp.tool()
+    @_serialized_tool
     def memory_link(
         src_id: Annotated[str, Field(description="Id of the source memory (from memory_add/memory_search).")],
         dst_id: Annotated[str, Field(description="Id of the destination memory to associate with the source.")],
@@ -204,6 +230,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         }
 
     @mcp.tool()
+    @_serialized_tool
     def memory_recall_feedback(
         memory_ids: Annotated[list[str], Field(description="Ids of memories that were just recalled together, whose usefulness you are reporting.")],
         create_colinks: Annotated[bool, Field(description="If true, create weak 'co_recalled' links between the given memories that weren't already linked.")] = False,
@@ -229,6 +256,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         )
 
     @mcp.tool()
+    @_serialized_tool
     def memory_update(
         memory_id: Annotated[str, Field(description="Id of the memory to modify.")],
         content: Annotated[str | None, Field(description="New content text. Omit to leave unchanged.")] = None,
@@ -260,6 +288,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         return {"id": rec.id, "content": rec.content, "updated_at": rec.updated_at}
 
     @mcp.tool()
+    @_serialized_tool
     def memory_share(
         memory_id: Annotated[str, Field(description="Id of the memory whose visibility you want to change.")],
         share: Annotated[str, Field(description="New audience: 'private' (owner only), 'global' (all agents), 'team' or 'team:<id>', 'project' or 'project:<id>', or 'agent:<id>'.")] = "private",
@@ -292,6 +321,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         return {"id": rec.id, "visibility": rec.visibility}
 
     @mcp.tool()
+    @_serialized_tool
     def memory_consolidate(
         owner: Annotated[
             str | None,
@@ -321,6 +351,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
             return {"error": str(exc)}
 
     @mcp.tool()
+    @_serialized_tool
     def memory_offload_context(
         session_id: Annotated[str, Field(description="Stable id for the working session this snapshot belongs to (used to reload later).")],
         snapshot_data: Annotated[dict, Field(description="Arbitrary JSON object capturing the working context to park (open files, plan, decisions, TODOs, etc.).")],
@@ -341,6 +372,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         return {"snapshot_id": snapshot_id, "session_id": session_id}
 
     @mcp.tool()
+    @_serialized_tool
     def memory_orchestrate_context(
         task: Annotated[str, Field(description="The task you are about to work on; drives which memories are gathered.")],
         session_id: Annotated[str | None, Field(description="Optional session id. Pass the same id across calls to skip memories already delivered this session (iterative deepening).")] = None,
@@ -371,6 +403,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
         }
 
     @mcp.tool()
+    @_serialized_tool
     def memory_snapshot_diff(
         session_id: Annotated[str, Field(description="Session id whose two most recent snapshots should be compared.")],
     ) -> dict:
@@ -389,6 +422,7 @@ def create_server():  # pragma: no cover - optional integration scaffold
             return {"error": str(exc)}
 
     @mcp.tool()
+    @_serialized_tool
     def memory_reload_context(
         session_id: Annotated[str, Field(description="Session id to restore working context for.")],
         snapshot_id: Annotated[str | None, Field(description="Specific snapshot to reload. Omit to reload the most recent snapshot for the session.")] = None,

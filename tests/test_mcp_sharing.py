@@ -54,8 +54,13 @@ def test_share_invalid_target():
 
 def _extract(result):
     import json
-    if getattr(result, "structuredContent", None):
-        sc = result.structuredContent
+    # MCP SDK v2 exposes snake_case model fields; v1 used the wire-name
+    # camelCase attribute. Accept both so the round-trip test pins behavior
+    # across the migration boundary.
+    sc = getattr(result, "structured_content", None)
+    if sc is None:
+        sc = getattr(result, "structuredContent", None)
+    if sc:
         return sc.get("result", sc)
     return json.loads(result.content[0].text)
 
