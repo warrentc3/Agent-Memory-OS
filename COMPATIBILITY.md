@@ -24,10 +24,27 @@ AgentMemoryOS follows [Semantic Versioning](https://semver.org/) from `1.0.0`.
    this is a permanent guarantee: a database written by any `1.x` opens and
    upgrades under any newer `1.y`. Migrations are forward-only; we do not promise
    *down*-grades (keep a backup before a MAJOR upgrade — `backup --keep`).
-5. **Sync bundle format** — the current bundle is **version 3**. Import accepts
-   bundle versions `1`, `2`, and `3`, so a newer node can always read an older
-   node's bundle. A new bundle version is introduced only when needed and old
-   versions stay readable across the current MAJOR.
+5. **Sync bundle format** — the current bundle is **version 4**. Import accepts
+   bundle versions `1`, `2`, `3`, and `4`, so a newer node can read bundles
+   written by older nodes. A new bundle version is introduced only when needed
+   and old versions stay readable across the current MAJOR. Historical bundle
+   contracts are immutable; see
+   [the bundle contract](src/agent_memory_os/sync_bundles/CONTRACT.md).
+
+### Timestamp compatibility
+
+Timestamp-bearing fields on new or updated SDK records and HTTP create/update
+requests use one canonical representation:
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`. Offset, naive, malformed, and ambiguous text is
+not a valid active write.
+
+Database migration 22 converts supported legacy timestamp spellings to the
+canonical representation. Persisted values that cannot be converted without
+inventing semantics remain stored and can still be hydrated through the
+read-lenient compatibility path; that does not make those spellings valid for
+new writes. Bundle versions 1 through 3 retain their version-owned timestamp
+decoders and produce canonical records before merge. Bundle version 4 accepts
+canonical timestamps only.
 
 ## Not covered (may change in any release)
 

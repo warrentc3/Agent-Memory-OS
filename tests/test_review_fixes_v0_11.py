@@ -11,7 +11,13 @@ from agent_memory_os.context_pack import approx_tokens
 
 def test_authority_track_does_not_double_penalize_metadata(tmp_path):
     """D5: a low-confidence authority memory that matches the query still
-    surfaces via the authority track (its lexical score isn't squared away)."""
+    surfaces via the authority track (its lexical score isn't squared away).
+
+    Lineage:
+    main: introduced b89b53f1@db-schema-v10.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add(
         "deployment rollback runbook procedure",
@@ -27,10 +33,14 @@ def test_authority_track_does_not_double_penalize_metadata(tmp_path):
 
 
 def test_archived_memory_restores_with_its_links(tmp_path):
-    """D7: restore brings the memory back WITH its association edges."""
+    """D7: restore brings the memory back WITH its association edges.
+
+    Lineage:
+    main: introduced b89b53f1@db-schema-v10.
+    """
     client = MemoryClient(home=tmp_path)
     hub = client.add("hub memory about migrations", visibility=["global"],
-                     expires_at="2000-01-01T00:00:00+00:00")
+                     expires_at="2000-01-01T00:00:00.000000Z")
     neighbor = client.add("neighbor memory about migrations", visibility=["global"])
     client.link(hub.id, neighbor.id, relation="related_to", weight=0.9)
 
@@ -47,7 +57,11 @@ def test_archived_memory_restores_with_its_links(tmp_path):
 
 
 def test_deidentified_share_does_not_leak_owner_via_audit_or_tags(tmp_path):
-    """D10: the recipient-visible copy carries neither the owner's id nor tags."""
+    """D10: the recipient-visible copy carries neither the owner's id nor tags.
+
+    Lineage:
+    main: introduced b89b53f1@db-schema-v10.
+    """
     client = MemoryClient(home=tmp_path)
     mem = client.add("secret plan by alice", owner="alice", visibility=[],
                      tags=["alice-personal", "confidential"])
@@ -62,7 +76,11 @@ def test_deidentified_share_does_not_leak_owner_via_audit_or_tags(tmp_path):
 
 
 def test_approx_tokens_counts_cjk_densely():
-    """D12: CJK text is not undercounted 4x."""
+    """D12: CJK text is not undercounted 4x.
+
+    Lineage:
+    main: introduced b89b53f1@db-schema-v10.
+    """
     latin = "the quick brown fox jumps over"      # ~30 chars
     cjk = "这是一段中文记忆内容需要正确估算长度"       # 18 CJK chars
     assert approx_tokens(cjk) >= 18                # ~1 token/char, not /4
@@ -70,7 +88,11 @@ def test_approx_tokens_counts_cjk_densely():
 
 
 def test_token_file_is_created_private(tmp_path):
-    """D13: the token file is never world-readable, even briefly."""
+    """D13: the token file is never world-readable, even briefly.
+
+    Lineage:
+    main: introduced b89b53f1@db-schema-v10.
+    """
     from agent_memory_os.tokens import create_token, token_path
     create_token(tmp_path)
     path = token_path(tmp_path)
@@ -81,7 +103,11 @@ def test_token_file_is_created_private(tmp_path):
 
 def test_supersedes_pair_gets_no_corecall_colink(tmp_path):
     """D14: a pair joined only by supersedes is never re-associated by a
-    co_recalled colink."""
+    co_recalled colink.
+
+    Lineage:
+    main: introduced b89b53f1@db-schema-v10.
+    """
     client = MemoryClient(home=tmp_path)
     old = client.add("old deploy target is port 8000", visibility=["global"])
     new = client.add("new deploy target is port 9000", visibility=["global"])
@@ -96,7 +122,11 @@ def test_supersedes_pair_gets_no_corecall_colink(tmp_path):
 
 
 def test_custom_half_life_survives_feedback_tuning(tmp_path):
-    """D6: feedback scales the CONFIGURED base, not the type default."""
+    """D6: feedback scales the CONFIGURED base, not the type default.
+
+    Lineage:
+    main: introduced 0d0e080c@db-schema-v11.
+    """
     client = MemoryClient(home=tmp_path)
     # 'note' type-base is 30d; user pins 365d.
     m = client.add("note with a custom half-life", type="note",
@@ -116,7 +146,11 @@ def test_custom_half_life_survives_feedback_tuning(tmp_path):
 
 def test_orchestrator_falls_back_dropped_section_hit_to_task(tmp_path):
     """D11: a warning-type top hit that doesn't fit the warnings cap still
-    appears in the task section instead of vanishing."""
+    appears in the task section instead of vanishing.
+
+    Lineage:
+    main: introduced 0d0e080c@db-schema-v11.
+    """
     client = MemoryClient(home=tmp_path)
     # ~34 tokens: over the 14% warnings cap (~18) but within the 46% task cap
     # (+surplus) at max_tokens=128.
@@ -130,7 +164,11 @@ def test_orchestrator_falls_back_dropped_section_hit_to_task(tmp_path):
 
 
 def test_agents_toml_reapply_preserves_unspecified_fields(tmp_path):
-    """D15: a partial agents.toml entry keeps console-set metadata."""
+    """D15: a partial agents.toml entry keeps console-set metadata.
+
+    Lineage:
+    main: introduced 0d0e080c@db-schema-v11.
+    """
     from agent_memory_os.agents_config import apply_agents_config
     client = MemoryClient(home=tmp_path)
     client.register_agent("cc-main", kind="claude-code",
@@ -151,7 +189,11 @@ def test_agents_toml_reapply_preserves_unspecified_fields(tmp_path):
 
 
 def test_sync_all_peers_accepts_a_lock(tmp_path, monkeypatch):
-    """D9: sync runs with the shared lock passed in (held only around DB ops)."""
+    """D9: sync runs with the shared lock passed in (held only around DB ops).
+
+    Lineage:
+    main: introduced 0d0e080c@db-schema-v11.
+    """
     import threading
 
     from agent_memory_os import sync as sync_module
@@ -173,7 +215,11 @@ def test_sync_all_peers_accepts_a_lock(tmp_path, monkeypatch):
 
 
 def test_teams_cache_has_a_ttl(tmp_path):
-    """D8: the team-ACL cache is time-bounded, not pinned until restart."""
+    """D8: the team-ACL cache is time-bounded, not pinned until restart.
+
+    Lineage:
+    main: introduced b89b53f1@db-schema-v10.
+    """
     client = MemoryClient(home=tmp_path)
     assert client.store._TEAMS_CACHE_TTL_SECONDS > 0
     client.register_agent("neo", kind="hermes", teams=["apollo"])

@@ -19,6 +19,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .constants import SYSTEMD_RESTART_DELAY_SECONDS
 from .tokens import resolve_home
 
 SERVICE_LABEL = "com.agent-memory-os.web"
@@ -95,7 +96,7 @@ After=network.target
 [Service]
 ExecStart={exec_start}
 Restart=on-failure
-RestartSec=3
+RestartSec={SYSTEMD_RESTART_DELAY_SECONDS}
 
 [Install]
 WantedBy=default.target
@@ -121,7 +122,7 @@ def _unit_path(platform: str) -> Path:
 
 
 def _run(command: list[str]) -> subprocess.CompletedProcess:
-    return subprocess.run(command, capture_output=True, text=True)
+    return subprocess.run(command, capture_output=True, text=True, check=False)
 
 
 def _run_required(command: list[str]) -> subprocess.CompletedProcess:
@@ -250,7 +251,8 @@ def _uid() -> int:
 
     # os.getuid does not exist on Windows; only reachable there in dry-run
     # previews of the darwin flow, where any stable placeholder is fine.
-    return os.getuid() if hasattr(os, "getuid") else 0
+    getuid = getattr(os, "getuid", None)
+    return getuid() if getuid is not None else 0
 
 
 def status_info(*, platform: str = sys.platform) -> dict:
@@ -316,7 +318,7 @@ def systemd_self_update(*, pip_runner=None, killer=None) -> bool:
 
     run = pip_runner or (lambda: subprocess.run(
         [sys.executable, "-m", "pip", "install", "--upgrade", "agent-memory-os"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, check=False,
     ))
     result = run()
     if getattr(result, "returncode", 1) != 0:

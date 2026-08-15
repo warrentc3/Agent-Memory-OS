@@ -6,6 +6,9 @@ from agent_memory_os.client import MemoryClient
 
 
 def test_update_requires_matching_owner(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18; dfc218f7@db-schema-v19.
+    """
     client = MemoryClient(home=tmp_path)
     alice = client.add("Alice owns this memory.", owner="alice")
 
@@ -22,6 +25,9 @@ def test_update_requires_matching_owner(tmp_path):
 
 
 def test_link_requires_both_memories_to_be_owned(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18; dfc218f7@db-schema-v19.
+    """
     client = MemoryClient(home=tmp_path)
     alice = client.add("Alice's decision.", owner="alice", visibility=["global"])
     alice_detail = client.add("Alice's supporting detail.", owner="alice")
@@ -40,6 +46,9 @@ def test_link_requires_both_memories_to_be_owned(tmp_path):
 
 
 def test_context_offload_preserves_an_existing_transaction(tmp_path):
+    """Lineage:
+    main: introduced dfc218f7@db-schema-v19.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.conn.execute("BEGIN")
 
@@ -51,6 +60,9 @@ def test_context_offload_preserves_an_existing_transaction(tmp_path):
 
 
 def test_recall_feedback_does_not_mutate_shared_foreign_memory(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     alice = client.add(
         "Alice's shared checklist.",
@@ -78,6 +90,9 @@ def test_recall_feedback_does_not_mutate_shared_foreign_memory(tmp_path):
 
 
 def test_auto_reinforcement_does_not_mutate_shared_foreign_memory(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     alice = client.add(
         "Alice's shared reinforcement sentinel.",
@@ -104,6 +119,9 @@ def test_auto_reinforcement_does_not_mutate_shared_foreign_memory(tmp_path):
 
 
 def test_consolidation_is_restricted_to_requester_owner(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     for owner in ("alice", "bob"):
         client.add("Duplicate owned memory.", owner=owner)
@@ -120,6 +138,9 @@ def test_consolidation_is_restricted_to_requester_owner(tmp_path):
 
 
 def test_snapshots_are_isolated_by_owner_session_and_record_type(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     session_id = "shared-session-label"
     alice_first = client.offload_context(
@@ -177,6 +198,9 @@ def test_snapshots_are_isolated_by_owner_session_and_record_type(tmp_path):
 
 
 def test_orchestration_isolates_snapshot_pointer_and_delivery_state(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     session_id = "same-harness-session-label"
     shared = client.add(
@@ -221,6 +245,9 @@ def test_orchestration_isolates_snapshot_pointer_and_delivery_state(tmp_path):
 
 
 def test_snapshot_rotation_keeps_limit_per_owner_and_session(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     session_id = "shared-rotation-label"
     for step in range(6):

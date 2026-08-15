@@ -19,8 +19,13 @@ import socket
 import urllib.request
 from dataclasses import dataclass, field
 
+from .constants import (
+    DISCOVERY_HEALTH_PROBE_TIMEOUT_MULTIPLIER,
+    DISCOVERY_PORT_PROBE_TIMEOUT_SECONDS,
+)
+
 DEFAULT_PORT_RANGE = range(8000, 8021)
-PROBE_TIMEOUT = 0.5
+PROBE_TIMEOUT = DISCOVERY_PORT_PROBE_TIMEOUT_SECONDS
 
 
 @dataclass(slots=True)
@@ -52,7 +57,11 @@ def _port_open(host: str, port: int, timeout: float = PROBE_TIMEOUT) -> bool:
         return False
 
 
-def probe_node(url: str, *, timeout: float = PROBE_TIMEOUT * 4) -> NodeProbe:
+def probe_node(
+    url: str,
+    *,
+    timeout: float = PROBE_TIMEOUT * DISCOVERY_HEALTH_PROBE_TIMEOUT_MULTIPLIER,
+) -> NodeProbe:
     """Probe one URL's `/healthz`. Never raises; failures land in `detail`."""
     from urllib.parse import urlparse
 
@@ -61,7 +70,7 @@ def probe_node(url: str, *, timeout: float = PROBE_TIMEOUT * 4) -> NodeProbe:
     probe = NodeProbe(url=f"{parsed.scheme}://{parsed.netloc}", port=port)
     request = urllib.request.Request(f"{probe.url}/healthz", method="GET")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except Exception as exc:  # noqa: BLE001 - probing must not raise
         probe.detail = str(exc)
@@ -110,7 +119,10 @@ def scan_local_nodes(
             continue
         if not _port_open(host, port, timeout=timeout):
             continue
-        probe = probe_node(f"http://{host}:{port}", timeout=timeout * 4)
+        probe = probe_node(
+            f"http://{host}:{port}",
+            timeout=timeout * DISCOVERY_HEALTH_PROBE_TIMEOUT_MULTIPLIER,
+        )
         if probe.is_amos:
             found.append(probe)
     return found

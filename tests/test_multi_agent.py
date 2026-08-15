@@ -9,6 +9,9 @@ from agent_memory_os.web_app import create_app
 
 
 def test_agent_registry_crud_and_validation(tmp_path):
+    """Lineage:
+    main: introduced 4436ea6d@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
 
     with pytest.raises(ValueError):
@@ -31,7 +34,11 @@ def test_agent_registry_crud_and_validation(tmp_path):
 
 
 def test_project_memory_visible_to_registered_team_members(tmp_path):
-    """The core scenario: a mixed fleet shares project memory via one team."""
+    """The core scenario: a mixed fleet shares project memory via one team.
+
+    Lineage:
+    main: introduced 4436ea6d@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     fleet = {
         "cc-main": "claude-code",
@@ -69,6 +76,9 @@ def test_project_memory_visible_to_registered_team_members(tmp_path):
 
 
 def test_team_memory_flows_through_pack_and_orchestrator(tmp_path):
+    """Lineage:
+    main: introduced 4436ea6d@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     client.register_agent("claw-1", kind="openclaw", teams=["apollo"])
     client.add(
@@ -84,6 +94,9 @@ def test_team_memory_flows_through_pack_and_orchestrator(tmp_path):
 
 
 def test_web_api_agents_endpoints(tmp_path):
+    """Lineage:
+    main: introduced 4436ea6d@db-schema-v8; f3b6a55f@db-schema-v16.
+    """
     web = TestClient(create_app(home=tmp_path))
 
     saved = web.post("/api/agents", json={
@@ -104,6 +117,9 @@ def test_web_api_agents_endpoints(tmp_path):
 
 
 def test_team_scoped_bundle_export(tmp_path):
+    """Lineage:
+    main: introduced 4436ea6d@db-schema-v8; 06cb42f7@db-schema-v9.
+    """
     host = MemoryClient(home=tmp_path / "src")
     host.register_agent("neo", kind="hermes", teams=["apollo"])
     host.register_agent("stranger", kind="custom", teams=["zeus"])

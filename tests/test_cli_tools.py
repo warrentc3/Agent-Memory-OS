@@ -2,11 +2,11 @@ import subprocess
 import sys
 
 import pytest
+from fastapi.testclient import TestClient
 
 from agent_memory_os import MemoryClient
 from agent_memory_os.tokens import load_token, token_path
 from agent_memory_os.web_app import create_app
-from fastapi.testclient import TestClient
 
 
 def run_cli(*args):
@@ -17,6 +17,9 @@ def run_cli(*args):
 
 
 def test_token_lifecycle(tmp_path):
+    """Lineage:
+    main: introduced d35750c0@pre-migration-registry; 23d674e1@db-schema-v4.
+    """
     home = str(tmp_path)
     created = run_cli("--home", home, "token", "create")
     assert created.returncode == 0
@@ -37,6 +40,9 @@ def test_token_lifecycle(tmp_path):
 
 
 def test_web_app_auto_loads_token_file(tmp_path):
+    """Lineage:
+    main: introduced d35750c0@pre-migration-registry.
+    """
     run_cli("--home", str(tmp_path), "token", "create")
     token = load_token(tmp_path)
 
@@ -50,6 +56,9 @@ def test_web_app_auto_loads_token_file(tmp_path):
 
 
 def test_backup_and_restore_roundtrip(tmp_path):
+    """Lineage:
+    main: introduced d35750c0@pre-migration-registry.
+    """
     home = tmp_path / "live"
     writer = MemoryClient(home=home)
     kept = writer.add("Survives the backup.", visibility=["global"])
@@ -75,6 +84,9 @@ def test_backup_and_restore_roundtrip(tmp_path):
 
 
 def test_doctor_reports_status(tmp_path):
+    """Lineage:
+    main: introduced d35750c0@pre-migration-registry.
+    """
     result = run_cli("--home", str(tmp_path), "doctor")
     assert "SQLite FTS5" in result.stdout
     assert "semantic" in result.stdout

@@ -9,10 +9,10 @@ against a real (tmp) AgentMemoryOS store.
 from __future__ import annotations
 
 import json
-from pathlib import Path
 import sys
 import threading
 import types
+from pathlib import Path
 
 import pytest
 
@@ -57,12 +57,18 @@ def provider(hermes_plugin, tmp_path, monkeypatch):
 
 
 def test_identity_and_availability(hermes_plugin, provider):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     assert provider.name == "agent-memory-os"
     assert provider.is_available() is True
     assert provider._agent_id == "hermes-bastet"  # derived from profile
 
 
 def test_add_search_roundtrip_and_prefetch(provider):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     out = json.loads(provider.handle_tool_call(
         "amos_add", {"content": "Deploys use blue-green rollout.",
                      "type": "procedure"}))
@@ -149,6 +155,9 @@ def test_prefetch_serializes_shared_connection_access(provider, monkeypatch):
 
 def test_acl_prefetch_excludes_other_agents_private(provider):
     # Another agent's PRIVATE memory in the same store must never surface.
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     provider._client.add(
         "topsecret rotation password procedure",
         owner="someone-else", visibility=[],
@@ -160,6 +169,9 @@ def test_acl_prefetch_excludes_other_agents_private(provider):
 
 
 def test_share_and_reshare(provider):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     out = json.loads(provider.handle_tool_call(
         "amos_add", {"content": "team runbook lives in /ops",
                      "share": "global"}))
@@ -177,12 +189,18 @@ def test_share_and_reshare(provider):
 
 
 def test_invalid_share_is_reported_not_raised(provider):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     out = json.loads(provider.handle_tool_call(
         "amos_add", {"content": "x", "share": "everyone"}))
     assert "error" in out
 
 
 def test_readonly_context_blocks_writes(hermes_plugin, tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15; 2cf92e51@db-schema-v17.
+    """
     monkeypatch.setenv("AGENT_MEMORY_HOME", str(tmp_path / "amos"))
     p = hermes_plugin.AgentMemoryOSProvider()
     p.initialize(
@@ -201,6 +219,9 @@ def test_readonly_context_blocks_writes(hermes_plugin, tmp_path, monkeypatch):
 
 
 def test_builtin_memory_mirror_is_idempotent(provider):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     provider.on_memory_write("add", "memory", "User prefers pnpm.")
     provider.on_memory_write("add", "memory", "User prefers pnpm.")  # replay
     provider._mirrored.clear()  # simulate process restart
@@ -222,6 +243,9 @@ def test_builtin_memory_mirror_is_idempotent(provider):
 
 
 def test_delegation_capture(provider):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     provider.on_delegation(
         "Audit the sync module for leaks", "No leaks found; 3 warnings.",
         child_session_id="sub-9",
@@ -239,6 +263,9 @@ def test_delegation_capture(provider):
 
 
 def test_tool_schemas_shape_and_prefix(provider):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     schemas = provider.get_tool_schemas()
     names = {s["name"] for s in schemas}
     assert names == {"amos_search", "amos_add", "amos_share"}
@@ -249,6 +276,9 @@ def test_tool_schemas_shape_and_prefix(provider):
 
 
 def test_config_file_overrides_and_save_config(hermes_plugin, tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     monkeypatch.delenv("AGENT_MEMORY_AGENT_ID", raising=False)
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir()
@@ -279,11 +309,17 @@ def test_config_file_overrides_and_save_config(hermes_plugin, tmp_path, monkeypa
 
 
 def test_backup_paths_points_at_store_home(provider, tmp_path):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     paths = provider.backup_paths()
     assert str(tmp_path / "amos") in paths
 
 
 def test_register_wires_provider(hermes_plugin):
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     class Ctx:
         provider = None
 
@@ -296,6 +332,9 @@ def test_register_wires_provider(hermes_plugin):
 
 
 def test_entry_point_declared():
+    """Lineage:
+    main: introduced 764b74cf@db-schema-v15.
+    """
     import importlib.metadata as md
     eps = md.entry_points()
     group = eps.select(group="hermes_agent.plugins") if hasattr(eps, "select") else eps.get("hermes_agent.plugins", [])
@@ -308,7 +347,11 @@ def test_entry_point_declared():
 
 def test_install_shim_passes_hermes_discovery_heuristic(hermes_plugin, tmp_path):
     """The shim must satisfy Hermes's `_is_memory_provider_dir` text scan
-    and carry a plugin.yaml with name/description for the setup picker."""
+    and carry a plugin.yaml with name/description for the setup picker.
+
+    Lineage:
+    main: introduced 78878585@db-schema-v15.
+    """
     report = hermes_plugin.install_shim(tmp_path)
     shim = tmp_path / "plugins" / "agent-memory-os"
     assert report["installed"] == str(shim)
@@ -329,7 +372,11 @@ def test_install_shim_passes_hermes_discovery_heuristic(hermes_plugin, tmp_path)
 
 def test_shim_loads_like_hermes_loader(hermes_plugin, tmp_path, monkeypatch):
     """Load the shim the way Hermes's _load_provider_from_dir does:
-    import __init__.py, call register(collector), expect a provider."""
+    import __init__.py, call register(collector), expect a provider.
+
+    Lineage:
+    main: introduced 78878585@db-schema-v15.
+    """
     import importlib.util
 
     hermes_plugin.install_shim(tmp_path)
@@ -350,6 +397,9 @@ def test_shim_loads_like_hermes_loader(hermes_plugin, tmp_path, monkeypatch):
 
 
 def test_uninstall_shim(hermes_plugin, tmp_path):
+    """Lineage:
+    main: introduced 78878585@db-schema-v15.
+    """
     hermes_plugin.install_shim(tmp_path)
     assert hermes_plugin.uninstall_shim(tmp_path) is True
     assert not (tmp_path / "plugins" / "agent-memory-os").exists()
@@ -357,6 +407,9 @@ def test_uninstall_shim(hermes_plugin, tmp_path):
 
 
 def test_cli_hermes_install_roundtrip(hermes_plugin, tmp_path, capsys):
+    """Lineage:
+    main: introduced 78878585@db-schema-v15; 550915c0@db-schema-v17.
+    """
     from agent_memory_os.cli import main
 
     rc = main(["hermes", "install", "--hermes-home", str(tmp_path), "--json"])

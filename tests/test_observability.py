@@ -17,6 +17,9 @@ def _client(tmp_path, token=None):
 
 def test_healthz_unauthenticated_ok(tmp_path):
     # Even with a token set, /healthz is outside /api/ and needs no auth.
+    """Lineage:
+    main: introduced 5ec91d84@db-schema-v15.
+    """
     client = _client(tmp_path, token="secret")
     r = client.get("/healthz")
     assert r.status_code == 200
@@ -25,6 +28,9 @@ def test_healthz_unauthenticated_ok(tmp_path):
 
 
 def test_metrics_prometheus_format_unauthenticated(tmp_path):
+    """Lineage:
+    main: introduced 5ec91d84@db-schema-v15.
+    """
     client = _client(tmp_path, token="secret")
     r = client.get("/metrics")
     assert r.status_code == 200
@@ -37,6 +43,9 @@ def test_metrics_prometheus_format_unauthenticated(tmp_path):
 
 
 def test_metrics_reflects_counts(tmp_path):
+    """Lineage:
+    main: introduced 5ec91d84@db-schema-v15.
+    """
     c = MemoryClient(home=tmp_path)
     c.store.register_agent("a1")
     c.store.create_team("t1"); c.store.create_team("t2")

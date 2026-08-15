@@ -16,10 +16,12 @@ from fastapi.testclient import TestClient
 from agent_memory_os import crypto, tokens
 from agent_memory_os.web_app import create_app
 
-
 # ---------- crypto unit ----------
 
 def test_encrypt_round_trip_and_detection():
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     ct = crypto.encrypt_bundle("line1\nline2\n", "mesh-secret")
     assert crypto.is_encrypted(ct)
     assert ct.startswith(crypto.ENVELOPE_PREFIX)
@@ -27,17 +29,26 @@ def test_encrypt_round_trip_and_detection():
 
 
 def test_wrong_key_is_rejected():
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     ct = crypto.encrypt_bundle("secret payload", "key-a")
     with pytest.raises(crypto.SyncCryptoError):
         crypto.decrypt_bundle(ct, "key-b")
 
 
 def test_plaintext_passes_through():
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     assert not crypto.is_encrypted('{"kind":"bundle"}')
     assert crypto.decrypt_bundle('{"kind":"bundle"}', "any") == '{"kind":"bundle"}'
 
 
 def test_sync_secret_env_beats_file(tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     crypto.save_sync_secret(tmp_path, "from-file")
     monkeypatch.delenv("AGENT_MEMORY_SYNC_KEY", raising=False)
     assert crypto.load_sync_secret(tmp_path) == "from-file"
@@ -48,6 +59,9 @@ def test_sync_secret_env_beats_file(tmp_path, monkeypatch):
 # ---------- sync token tier ----------
 
 def test_sync_token_tier_file_and_prefix(tmp_path):
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     full = tokens.create_token(tmp_path)
     sync = tokens.create_token(tmp_path, tier="sync")
     assert sync.startswith("amos_sync_")
@@ -57,6 +71,9 @@ def test_sync_token_tier_file_and_prefix(tmp_path):
 
 
 def test_sync_token_authorizes_only_federation_routes(tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     monkeypatch.delenv("AGENT_MEMORY_SYNC_KEY", raising=False)
     tokens.create_token(tmp_path)                       # full (admin)
     sync = tokens.create_token(tmp_path, tier="sync")   # federation-only
@@ -76,6 +93,9 @@ def test_sync_token_authorizes_only_federation_routes(tmp_path, monkeypatch):
 # ---------- encrypted export/import over the API ----------
 
 def test_export_is_encrypted_and_import_decrypts_with_shared_key(tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     monkeypatch.setenv("AGENT_MEMORY_SYNC_KEY", "shared-mesh-key")
     sync = tokens.create_token(tmp_path, tier="sync")
     client = TestClient(create_app(home=tmp_path))
@@ -92,6 +112,9 @@ def test_export_is_encrypted_and_import_decrypts_with_shared_key(tmp_path, monke
 
 
 def test_push_encrypts_payload_when_key_set(tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     monkeypatch.setenv("AGENT_MEMORY_SYNC_KEY", "mesh-key")
     from agent_memory_os import sync as syncmod
     from agent_memory_os.client import MemoryClient
@@ -112,6 +135,9 @@ def test_push_encrypts_payload_when_key_set(tmp_path, monkeypatch):
 
 
 def test_pull_decrypts_payload_when_key_matches(tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     monkeypatch.setenv("AGENT_MEMORY_SYNC_KEY", "mesh-key")
     from agent_memory_os import sync as syncmod
     from agent_memory_os.client import MemoryClient
@@ -127,6 +153,9 @@ def test_pull_decrypts_payload_when_key_matches(tmp_path, monkeypatch):
 
 
 def test_import_rejects_encrypted_bundle_without_key(tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 85ae6357@db-schema-v15.
+    """
     monkeypatch.delenv("AGENT_MEMORY_SYNC_KEY", raising=False)
     sync = tokens.create_token(tmp_path, tier="sync")
     client = TestClient(create_app(home=tmp_path))       # no mesh key configured

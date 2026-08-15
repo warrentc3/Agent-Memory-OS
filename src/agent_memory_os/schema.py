@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import InitVar, dataclass, field
-from datetime import datetime, timezone
-from typing import Any
 import json
 import uuid
+from dataclasses import InitVar, dataclass, field
+from typing import Any
 
+from .constants import (
+    DEFAULT_DECAY_HALF_LIFE_DAYS,
+    DEFAULT_DECAY_HALF_LIFE_FALLBACK_DAYS,
+)
 from .scoring import VALID_DECAY_POLICIES
-
+from .timestamp_converters import stamp_to_dt, utc_now_stamp
 
 PUBLIC_MEMORY_SCOPES = frozenset({"user", "agent", "project", "team", "global"})
 VALID_MEMORY_SCOPES = PUBLIC_MEMORY_SCOPES | {"profile"}
@@ -17,51 +20,16 @@ PUBLIC_MEMORY_TYPES = frozenset(
 VALID_MEMORY_TYPES = PUBLIC_MEMORY_TYPES | {"snapshot"}
 
 
-def normalize_iso_timestamp(value: str | None, *, field_name: str) -> str | None:
-    """Validate an ISO-8601 timestamp and canonicalize it to UTC.
-
-    Naive values retain the historical API interpretation of UTC. Explicit
-    offsets are converted as instants, so storage and lexical presentation no
-    longer depend on the caller's offset spelling.
-    """
-    if value is None:
-        return None
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field_name} must be an ISO-8601 timestamp")
+def _validate_stamp_field(value: str, *, field_name: str) -> str:
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        stamp_to_dt(value)
     except ValueError as exc:
-        raise ValueError(f"{field_name} must be an ISO-8601 timestamp") from exc
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(timezone.utc).isoformat()
-
-
-def utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
-
-
-def utc_now_micro() -> str:
-    """Microsecond-resolution UTC timestamp for clocks that must order events
-    within the same second (e.g. the ACL clock: a create then a revoke in one
-    second must still sort revoke-after-create). Sorts correctly against
-    second-resolution stamps: '…00+00:00' < '…00.5+00:00' because '+' < '.'."""
-    return datetime.now(timezone.utc).isoformat()
+        raise ValueError(f"{field_name} must be a canonical stamp") from exc
+    return value
 
 
 def new_memory_id() -> str:
     return "mem_" + uuid.uuid4().hex
-
-
-DEFAULT_DECAY_HALF_LIFE_DAYS = {
-    "preference": 180.0,
-    "fact": 90.0,
-    "procedure": 365.0,
-    "environment": 30.0,
-    "decision": 180.0,
-    "warning": 365.0,
-    "note": 30.0,
-}
 
 
 @dataclass(slots=True)
@@ -77,8 +45,8 @@ class MemoryRecord:
     confidence: float = 0.8
     importance: float = 0.5
     id: str = field(default_factory=new_memory_id)
-    created_at: str = field(default_factory=utc_now)
-    updated_at: str = field(default_factory=utc_now)
+    created_at: str = field(default_factory=utc_now_stamp)
+    updated_at: str = field(default_factory=utc_now_stamp)
     expires_at: str | None = None
     decay_policy: str = "exponential"
     decay_half_life_days: float | None = None
@@ -123,14 +91,22 @@ class MemoryRecord:
                     or not 0.0 <= value <= 1.0
                 ):
                     raise ValueError(f"{field_name} must be between 0.0 and 1.0")
-            self.expires_at = normalize_iso_timestamp(
-                self.expires_at,
-                field_name="expires_at",
-            )
+            for field_name in ("created_at", "updated_at"):
+                _validate_stamp_field(
+                    getattr(self, field_name),
+                    field_name=field_name,
+                )
+            for field_name in ("expires_at", "last_accessed_at"):
+                value = getattr(self, field_name)
+                if value is not None:
+                    _validate_stamp_field(value, field_name=field_name)
         if self.decay_policy not in VALID_DECAY_POLICIES:
             raise ValueError(f"decay_policy must be one of {sorted(VALID_DECAY_POLICIES)}")
         if self.decay_half_life_days is None:
-            self.decay_half_life_days = DEFAULT_DECAY_HALF_LIFE_DAYS.get(self.type, 30.0)
+            self.decay_half_life_days = DEFAULT_DECAY_HALF_LIFE_DAYS.get(
+                self.type,
+                DEFAULT_DECAY_HALF_LIFE_FALLBACK_DAYS,
+            )
         if self.decay_policy != "none" and self.decay_half_life_days <= 0:
             raise ValueError("decay_half_life_days must be positive")
         if self.access_count < 0:
@@ -203,8 +179,8 @@ class MemoryLink:
     dst_id: str
     relation: str = "related_to"
     weight: float = 0.5
-    created_at: str = field(default_factory=utc_now)
-    updated_at: str = field(default_factory=utc_now)
+    created_at: str = field(default_factory=utc_now_stamp)
+    updated_at: str = field(default_factory=utc_now_stamp)
     last_activated_at: str | None = None
     activation_count: int = 0
     source: dict[str, Any] = field(default_factory=dict)
@@ -219,6 +195,16 @@ class MemoryLink:
         self.weight = min(max(float(self.weight), 0.0), 1.0)
         if self.activation_count < 0:
             raise ValueError("activation_count must be non-negative")
+        for field_name in ("created_at", "updated_at"):
+            _validate_stamp_field(
+                getattr(self, field_name),
+                field_name=field_name,
+            )
+        if self.last_activated_at is not None:
+            _validate_stamp_field(
+                self.last_activated_at,
+                field_name="last_activated_at",
+            )
 
     def source_json(self) -> str:
         return json.dumps(self.source, ensure_ascii=False, sort_keys=True)

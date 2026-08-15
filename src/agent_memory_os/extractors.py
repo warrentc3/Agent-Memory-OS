@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Callable, Iterable
+from collections.abc import Callable
 
 from .schema import MemoryRecord
 
@@ -55,7 +55,7 @@ def make_llm_link_extractor(
                 if not isinstance(reply, str):
                     continue
                 pairs.extend(_parse_pairs(reply, known_ids))
-            except Exception:  # noqa: BLE001 - extractor must never break consolidation
+            except Exception:  # noqa: BLE001, S112 - extractor must never break consolidation
                 continue
         return pairs
 

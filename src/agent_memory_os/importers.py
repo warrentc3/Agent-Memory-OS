@@ -16,11 +16,20 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from .client import MemoryClient
+from .timestamp_converters import (
+    convert_iso_f_offset,
+    convert_iso_f_utc,
+    convert_iso_offset,
+    convert_iso_z,
+    convert_unix_time_utc,
+    detect_timestamp_shape,
+)
 
 SUPPORTED = ("mem0", "zep", "chatgpt")
 
@@ -49,7 +58,7 @@ class _Item:
 
 
 def _det_id(source: str, key: str) -> str:
-    return f"{source}_" + hashlib.sha256(f"{source}:{key}".encode("utf-8")).hexdigest()[:32]
+    return f"{source}_" + hashlib.sha256(f"{source}:{key}".encode()).hexdigest()[:32]
 
 
 def _first(d: dict, *names: str) -> Any:
@@ -60,28 +69,78 @@ def _first(d: dict, *names: str) -> Any:
     return None
 
 
-def _mem0_items(data: Any) -> Iterable[_Item]:
+def _mem0_created_at(
+    row: dict[str, Any],
+    *,
+    index: int,
+    key: str,
+    warnings: list[str],
+) -> str | None:
+    converters = {
+        "iso-z": convert_iso_z,
+        "iso-f-utc": convert_iso_f_utc,
+        "iso-offset": convert_iso_offset,
+        "iso-f-offset": convert_iso_f_offset,
+        "distance-from-epoch": convert_unix_time_utc,
+    }
+    for field_name in ("created_at", "createdAt", "timestamp"):
+        value = row.get(field_name)
+        if value is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            value_text = ""
+        else:
+            value_text = str(value)
+        try:
+            shape = detect_timestamp_shape(value_text)
+        except ValueError:
+            shape = None
+        converter = converters.get(shape) if shape is not None else None
+        if converter is not None:
+            try:
+                return converter(value_text)
+            except ValueError:
+                pass
+        warnings.append(
+            f"mem0 record {index} ({key}): {field_name} has an unsupported or "
+            "invalid timestamp shape; ignored"
+        )
+    return None
+
+
+def _mem0_items(data: Any, warnings: list[str]) -> Iterable[_Item]:
     """Mem0 export: a list of memory objects, or {"results":[...]} / {"memories":[...]}.
     Each object typically has `memory`/`text`/`content` plus `id`, `user_id`,
-    `metadata`, `created_at`."""
+    `metadata`, and a timestamp field such as `created_at`/`createdAt`/`timestamp`."""
     rows = data
     if isinstance(data, dict):
         rows = _first(data, "results", "memories", "data") or []
+    if not isinstance(rows, list):
+        warnings.append("mem0 export records must be a list; no records imported")
+        return
     for i, row in enumerate(rows or []):
         if not isinstance(row, dict):
+            warnings.append(f"mem0 record {i}: expected an object; skipped")
             continue
         content = _first(row, "memory", "text", "content")
         if not content:
+            warnings.append(f"mem0 record {i}: missing memory content; skipped")
             continue
         key = str(_first(row, "id", "hash") or f"idx{i:06d}")
+        created_at = _mem0_created_at(
+            row,
+            index=i,
+            key=key,
+            warnings=warnings,
+        )
         yield _Item(key=key, content=str(content), meta={
             "user_id": _first(row, "user_id", "agent_id"),
-            "created_at": _first(row, "created_at", "timestamp"),
+            "created_at": created_at,
             "metadata": row.get("metadata"),
         })
 
 
-def _zep_items(data: Any) -> Iterable[_Item]:
+def _zep_items(data: Any, warnings: list[str]) -> Iterable[_Item]:
     """Zep/Graphiti export: `facts` (edges with a `fact` string) and/or `messages`
     (with `content`/`role`). Accept a list or an object holding either."""
     facts = messages = None
@@ -90,27 +149,39 @@ def _zep_items(data: Any) -> Iterable[_Item]:
         messages = _first(data, "messages", "episodes")
     elif isinstance(data, list):
         facts = data
+    else:
+        warnings.append("zep export must be an object or list; no records imported")
+        return
+    if facts is not None and not isinstance(facts, list):
+        warnings.append("zep facts must be a list; facts skipped")
+        facts = []
+    if messages is not None and not isinstance(messages, list):
+        warnings.append("zep messages must be a list; messages skipped")
+        messages = []
     for i, row in enumerate(facts or []):
         if isinstance(row, dict):
             content = _first(row, "fact", "name", "summary", "content")
         else:
             content = row
         if not content:
+            warnings.append(f"zep fact {i}: missing content; skipped")
             continue
         key = str((isinstance(row, dict) and _first(row, "uuid", "id")) or f"fact{i:06d}")
         yield _Item(key=key, content=str(content), meta={"kind": "fact"})
     for i, row in enumerate(messages or []):
         if not isinstance(row, dict):
+            warnings.append(f"zep message {i}: expected an object; skipped")
             continue
         content = _first(row, "content", "message")
         if not content:
+            warnings.append(f"zep message {i}: missing content; skipped")
             continue
         key = str(_first(row, "uuid", "id") or f"msg{i:06d}")
         yield _Item(key=key, content=str(content),
                     meta={"kind": "message", "role": row.get("role")})
 
 
-def _chatgpt_items(data: Any) -> Iterable[_Item]:
+def _chatgpt_items(data: Any, warnings: list[str]) -> Iterable[_Item]:
     """ChatGPT export. Two shapes: the account `memory`/`user_memories` list, OR
     `conversations.json` (list of conversations with a `mapping` of message nodes).
     For conversations we import only messages tagged as user memory is unavailable,
@@ -124,27 +195,71 @@ def _chatgpt_items(data: Any) -> Iterable[_Item]:
         for i, row in enumerate(entries):
             content = row if isinstance(row, str) else (isinstance(row, dict) and _first(row, "content", "text", "memory"))
             if not content:
+                warnings.append(f"chatgpt memory {i}: missing content; skipped")
                 continue
             key = str((isinstance(row, dict) and _first(row, "id")) or f"mem{i:06d}")
             yield _Item(key=key, content=str(content), meta={"kind": "chatgpt-memory"})
         return
     # Shape B: conversations.json — extract user turns (the durable signal).
-    convs = data if isinstance(data, list) else _first(data, "conversations") or []
+    if isinstance(data, list):
+        convs = data
+    elif isinstance(data, dict):
+        convs = _first(data, "conversations") or []
+    else:
+        warnings.append("chatgpt export must be an object or list; no records imported")
+        return
+    if not isinstance(convs, list):
+        warnings.append("chatgpt conversations must be a list; no records imported")
+        return
     for c, conv in enumerate(convs or []):
         if not isinstance(conv, dict):
+            warnings.append(f"chatgpt conversation {c}: expected an object; skipped")
             continue
         title = conv.get("title") or ""
-        mapping = conv.get("mapping") or {}
+        mapping = conv.get("mapping")
+        if mapping is None:
+            mapping = {}
+        if not isinstance(mapping, dict):
+            warnings.append(
+                f"chatgpt conversation {c}: mapping must be an object; skipped"
+            )
+            continue
         for node_id, node in mapping.items():
             msg = (node or {}).get("message") if isinstance(node, dict) else None
             if not isinstance(msg, dict):
+                warnings.append(
+                    f"chatgpt conversation {c} node {node_id}: "
+                    "message must be an object; skipped"
+                )
                 continue
-            role = (msg.get("author") or {}).get("role")
+            author = msg.get("author")
+            role = author.get("role") if isinstance(author, dict) else None
+            if not isinstance(role, str):
+                warnings.append(
+                    f"chatgpt conversation {c} node {node_id}: "
+                    "message role is missing; skipped"
+                )
+                continue
             if role != "user":
                 continue
-            parts = ((msg.get("content") or {}).get("parts")) or []
+            message_content = msg.get("content")
+            parts = (
+                message_content.get("parts")
+                if isinstance(message_content, dict)
+                else None
+            )
+            if not isinstance(parts, list):
+                warnings.append(
+                    f"chatgpt conversation {c} node {node_id}: "
+                    "user content parts must be a list; skipped"
+                )
+                continue
             text = " ".join(p for p in parts if isinstance(p, str)).strip()
             if not text:
+                warnings.append(
+                    f"chatgpt conversation {c} node {node_id}: "
+                    "user content is empty; skipped"
+                )
                 continue
             yield _Item(key=str(msg.get("id") or f"{c}:{node_id}"), content=text,
                         meta={"kind": "chatgpt-conversation", "title": title, "role": role})
@@ -175,9 +290,12 @@ def import_export(
     except json.JSONDecodeError as exc:
         raise ValueError(f"{path} is not valid JSON: {exc}") from exc
 
-    for item in _PARSERS[source](data):
+    for item in _PARSERS[source](data, report.warnings):
         content = item.content.strip()
         if not content:
+            report.warnings.append(
+                f"{source} record ({item.key}): content is blank after trimming; skipped"
+            )
             continue
         report.scanned += 1
         mem_id = _det_id(source, item.key)

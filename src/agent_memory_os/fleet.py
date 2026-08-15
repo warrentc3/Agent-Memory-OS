@@ -22,8 +22,9 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from . import crypto
+from .constants import FLEET_HTTP_TIMEOUT_SECONDS
 
-DEFAULT_TIMEOUT = 10
+DEFAULT_TIMEOUT = FLEET_HTTP_TIMEOUT_SECONDS
 
 
 class FleetKeyMissing(RuntimeError):
@@ -39,7 +40,7 @@ def _http_request(
         url.rstrip("/") + target, data=body or None, headers=headers, method=method,
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.status, response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         return exc.code, exc.read().decode("utf-8", errors="replace")

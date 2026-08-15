@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Sequence
-import os
-from datetime import datetime, timezone
 import json
+import os
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
-from .candidates import CandidateProvider
 from .cache import LRUCache
-from .context_pack import ContextPackReport, build_context_pack, build_context_pack_report
-from .db import LEGACY_CONTEXT_OWNER, MemoryStore, RETENTION_MIN_HALF_LIVES
+from .candidates import CandidateProvider
+from .context_pack import (
+    ContextPackReport,
+    build_context_pack,
+    build_context_pack_report,
+)
+from .db import LEGACY_CONTEXT_OWNER, RETENTION_MIN_HALF_LIVES, MemoryStore
 from .schema import MemoryLink, MemoryRecord, RecallProfile, SearchResult
+from .timestamp_converters import stamp_to_dt
+
 
 class MemoryClient:
     def __init__(
@@ -24,7 +30,8 @@ class MemoryClient:
         check_same_thread: bool = True,
         semantic: str | None = None,
     ):
-        home_path = Path(home or os.getenv("AGENT_MEMORY_HOME", "~/.agent-memory")).expanduser()
+        configured_home = home or os.getenv("AGENT_MEMORY_HOME") or "~/.agent-memory"
+        home_path = Path(configured_home).expanduser()
         self.home = home_path
         self.store = MemoryStore(
             home_path / "memories.db",
@@ -344,8 +351,7 @@ class MemoryClient:
         def state_of(record) -> dict:
             raw = record.content
             prefix = f"session_id:{session_id}\n"
-            if raw.startswith(prefix):
-                raw = raw[len(prefix):]
+            raw = raw.removeprefix(prefix)
             return json.loads(raw)
 
         latest = state_of(records[0])
@@ -804,9 +810,7 @@ class MemoryClient:
                 raise ValueError(f"No snapshots found for session {session_id}")
 
         # The content carries a session_id prefix for FTS searchability
-        raw_content = record.content
-        if raw_content.startswith(f"session_id:{session_id}\n"):
-            raw_content = raw_content[len(f"session_id:{session_id}\n"):]
+        raw_content = record.content.removeprefix(f"session_id:{session_id}\n")
 
         return json.loads(raw_content)
 
@@ -835,7 +839,7 @@ class MemoryClient:
         idx = ERATripletIndex() 
         
         for res in seeds:
-            ts = datetime.fromisoformat(res.record.updated_at.replace('Z', '+00:00')).timestamp()
+            ts = stamp_to_dt(res.record.updated_at).timestamp()
             idx.add_chunk(MemoryChunk(id=res.record.id, text=res.record.content, timestamp=ts))
             
         resonant_ids = idx.resonance_cluster(seed_ids, hops=resonance_hops)

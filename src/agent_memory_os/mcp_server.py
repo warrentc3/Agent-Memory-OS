@@ -55,13 +55,15 @@ def create_server():  # pragma: no cover - optional integration scaffold
         try:
             # MCP Python SDK v2 (current stable API). getattr keeps static
             # analysis compatible with development environments still on v1.
-            from mcp import server as mcp_server
+            from mcp import server as mcp_server  # type: ignore[import-not-found]
             MCPServer = getattr(mcp_server, "MCPServer")
         except (ImportError, AttributeError):
             # Keep source checkouts usable with the maintained v1 SDK line;
             # packaged installs require v2 through the `mcp` extra below.
-            from mcp.server.fastmcp import FastMCP as MCPServer
-        from pydantic import Field
+            from mcp.server.fastmcp import (  # type: ignore[import-not-found]
+                FastMCP as MCPServer,
+            )
+        from pydantic import Field  # type: ignore[import-not-found]
     except Exception as exc:  # noqa: BLE001
         raise RuntimeError("Install agent-memory-os[mcp] to run the MCP server") from exc
 

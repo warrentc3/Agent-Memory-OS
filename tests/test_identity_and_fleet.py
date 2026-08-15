@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +13,11 @@ from agent_memory_os.client import MemoryClient
 
 
 def test_default_node_name_differs_per_account(tmp_path, monkeypatch):
-    """Two accounts using the default home must not get the same node name."""
+    """Two accounts using the default home must not get the same node name.
+
+    Lineage:
+    main: introduced f3b6a55f@db-schema-v16.
+    """
     import getpass
 
     from agent_memory_os.settings import default_node_name
@@ -26,6 +30,9 @@ def test_default_node_name_differs_per_account(tmp_path, monkeypatch):
 
 
 def test_rename_agent_migrates_everything(tmp_path):
+    """Lineage:
+    main: introduced f3b6a55f@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     s = client.store
     s.register_agent("old-bot", display_name="Old", kind="custom")
@@ -62,6 +69,9 @@ def test_rename_agent_migrates_everything(tmp_path):
 
 
 def test_update_peer_name(tmp_path):
+    """Lineage:
+    main: introduced f3b6a55f@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.add_peer("http://127.0.0.1:9001", policy="shared", name="old-name")
     assert client.store.update_peer_name("http://127.0.0.1:9001", "renamed-node") is True
@@ -83,6 +93,9 @@ def web(tmp_path):
 
 
 def test_node_rename_api_and_healthz_version(web):
+    """Lineage:
+    main: introduced f3b6a55f@db-schema-v16.
+    """
     http = web["http"]
     health = http.get("/healthz").json()
     assert health.get("version")  # team update needs cross-node versions
@@ -96,11 +109,17 @@ def test_node_rename_api_and_healthz_version(web):
 
 
 def test_agents_registry_is_seeded_for_first_run(web):
+    """Lineage:
+    main: introduced f3b6a55f@db-schema-v16.
+    """
     agents = web["http"].get("/api/agents").json()["agents"]
     assert agents, "member picker must have at least the node's own agent"
 
 
 def test_agent_rename_api(web):
+    """Lineage:
+    main: introduced f3b6a55f@db-schema-v16.
+    """
     http = web["http"]
     http.post("/api/agents", json={"id": "bot-a", "kind": "custom"})
     r = http.post("/api/agents/rename", json={"old_id": "bot-a", "new_id": "bot-b"})
@@ -110,7 +129,11 @@ def test_agent_rename_api(web):
 
 
 def test_team_update_authorization_gate(tmp_path, monkeypatch):
-    """Sync token may hit update-run ONLY with the operator opt-in."""
+    """Sync token may hit update-run ONLY with the operator opt-in.
+
+    Lineage:
+    main: introduced f3b6a55f@db-schema-v16; 550915c0@db-schema-v17; ef6d8dbf@db-schema-v20.
+    """
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient as HttpClient
 
@@ -142,6 +165,9 @@ def test_team_update_authorization_gate(tmp_path, monkeypatch):
 
 
 def test_path_show_and_install(tmp_path, monkeypatch, capsys):
+    """Lineage:
+    main: introduced f3b6a55f@db-schema-v16; 550915c0@db-schema-v17.
+    """
     from agent_memory_os import cli
 
     monkeypatch.setattr(sys, "platform", "linux")
@@ -164,7 +190,11 @@ def test_path_show_and_install(tmp_path, monkeypatch, capsys):
 
 
 def test_redeemed_by_records_the_actual_agent(tmp_path, monkeypatch):
-    """The audit column stores the joiner's agent id, not a 'pending' stub."""
+    """The audit column stores the joiner's agent id, not a 'pending' stub.
+
+    Lineage:
+    main: introduced 7a5acb4d@db-schema-v16.
+    """
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient as HttpClient
 
@@ -194,6 +224,9 @@ def test_redeemed_by_records_the_actual_agent(tmp_path, monkeypatch):
 
 
 def test_path_install_replaces_stale_line(tmp_path, monkeypatch, capsys):
+    """Lineage:
+    main: introduced 7a5acb4d@db-schema-v16; 550915c0@db-schema-v17.
+    """
     from agent_memory_os import cli
 
     monkeypatch.setattr(sys, "platform", "linux")

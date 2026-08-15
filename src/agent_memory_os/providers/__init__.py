@@ -2,4 +2,5 @@
 
 from __future__ import annotations
 
-__all__ = ["turbovec"]
+# Expose the optional submodule without importing its dependencies eagerly.
+__all__ = ["turbovec"]  # pyright: ignore[reportUnsupportedDunderAll]

@@ -3,6 +3,9 @@ import sys
 
 
 def test_cli_add_search_pack(tmp_path):
+    """Lineage:
+    main: introduced d02c22b5@pre-migration-registry.
+    """
     base = [sys.executable, "-m", "agent_memory_os.cli", "--home", str(tmp_path)]
     add = subprocess.run(base + ["add", "Reports use UTC+8 Taipei timestamps", "--owner", "bastet-agent", "--tag", "reports"], check=True, text=True, capture_output=True)
     assert add.stdout.strip().startswith("mem_")

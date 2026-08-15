@@ -20,6 +20,9 @@ def _seed(tmp_path):
 
 
 def test_usage_summary_four_cards(tmp_path):
+    """Lineage:
+    main: introduced 10024de7@db-schema-v15.
+    """
     _seed(tmp_path)
     r = TestClient(create_app(home=tmp_path)).get("/api/usage")
     assert r.status_code == 200
@@ -33,6 +36,9 @@ def test_usage_summary_four_cards(tmp_path):
 
 
 def test_update_check_shape(tmp_path):
+    """Lineage:
+    main: introduced 10024de7@db-schema-v15.
+    """
     _seed(tmp_path)
     r = TestClient(create_app(home=tmp_path)).get("/api/maintenance/update-check")
     assert r.status_code == 200
@@ -42,12 +48,18 @@ def test_update_check_shape(tmp_path):
 
 
 def test_update_run_requires_confirm(tmp_path):
+    """Lineage:
+    main: introduced 10024de7@db-schema-v15.
+    """
     _seed(tmp_path)
     client = TestClient(create_app(home=tmp_path))
     assert client.post("/api/maintenance/update-run").status_code == 400
 
 
 def test_readonly_token_allows_get_blocks_mutation(tmp_path):
+    """Lineage:
+    main: introduced 10024de7@db-schema-v15.
+    """
     _seed(tmp_path)
     app = create_app(home=tmp_path, token="FULL", readonly_token="RO")
     client = TestClient(app)
@@ -66,7 +78,11 @@ def test_readonly_token_allows_get_blocks_mutation(tmp_path):
 
 
 def test_page_shell_has_new_ui_elements(tmp_path):
-    """The served HTML shell includes the Phase-E additions."""
+    """The served HTML shell includes the Phase-E additions.
+
+    Lineage:
+    main: introduced 10024de7@db-schema-v15.
+    """
     _seed(tmp_path)
     html = TestClient(create_app(home=tmp_path)).get("/").text
     for marker in ('id="version-badge"', 'id="usage-cards"', 'id="btn-maint-update"',
@@ -76,6 +92,9 @@ def test_page_shell_has_new_ui_elements(tmp_path):
 
 
 def test_readonly_token_file_autoloads(tmp_path):
+    """Lineage:
+    main: introduced 10024de7@db-schema-v15.
+    """
     from agent_memory_os import tokens
 
     _seed(tmp_path)

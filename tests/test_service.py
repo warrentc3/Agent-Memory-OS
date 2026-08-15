@@ -1,5 +1,5 @@
-from pathlib import Path
 import subprocess
+from pathlib import Path
 
 import pytest
 
@@ -23,6 +23,9 @@ def config(tmp_path):
 
 
 def test_launchd_plist_runs_at_load_and_keeps_alive(config):
+    """Lineage:
+    main: introduced 23d674e1@db-schema-v4.
+    """
     plist = render_launchd_plist(config)
 
     assert SERVICE_LABEL in plist
@@ -33,6 +36,9 @@ def test_launchd_plist_runs_at_load_and_keeps_alive(config):
 
 
 def test_systemd_unit_restarts_and_targets_default(config):
+    """Lineage:
+    main: introduced 23d674e1@db-schema-v4.
+    """
     unit = render_systemd_unit(config)
 
     assert "ExecStart=/opt/py/bin/python3 -m agent_memory_os.web_app" in unit
@@ -42,6 +48,9 @@ def test_systemd_unit_restarts_and_targets_default(config):
 
 
 def test_schtasks_command_is_onlogon(config):
+    """Lineage:
+    main: introduced 23d674e1@db-schema-v4; 68e82ed2@db-schema-v16.
+    """
     command = build_schtasks_create(config)
 
     assert command[:2] == ["schtasks", "/Create"]
@@ -56,6 +65,9 @@ def test_schtasks_command_is_onlogon(config):
 
 @pytest.mark.parametrize("platform", ["darwin", "linux", "win32"])
 def test_install_and_uninstall_dry_run_all_platforms(config, platform):
+    """Lineage:
+    main: introduced 23d674e1@db-schema-v4.
+    """
     actions = install(config, platform=platform, dry_run=True)
     removals = uninstall(platform=platform, dry_run=True)
 
@@ -73,11 +85,17 @@ def test_install_and_uninstall_dry_run_all_platforms(config, platform):
 
 
 def test_install_rejects_unknown_platform(config):
+    """Lineage:
+    main: introduced 23d674e1@db-schema-v4.
+    """
     with pytest.raises(RuntimeError):
         install(config, platform="plan9", dry_run=True)
 
 
 def test_windows_install_propagates_required_command_failure(config, monkeypatch):
+    """Lineage:
+    main: introduced 176124d4@db-schema-v17.
+    """
     def fail(command):
         return subprocess.CompletedProcess(command, 1, "", "access denied")
 
@@ -88,6 +106,9 @@ def test_windows_install_propagates_required_command_failure(config, monkeypatch
 
 
 def test_cli_service_install_reports_native_failure(tmp_path, monkeypatch, capsys):
+    """Lineage:
+    main: introduced 176124d4@db-schema-v17.
+    """
     def fail(*args, **kwargs):
         raise RuntimeError("native manager refused install")
 
@@ -109,6 +130,9 @@ def test_cli_service_install_reports_native_failure(tmp_path, monkeypatch, capsy
 
 
 def test_systemd_self_update_kills_only_on_success():
+    """Lineage:
+    main: introduced ef6d8dbf@db-schema-v20.
+    """
     from agent_memory_os.service import systemd_self_update
 
     killed = []
@@ -134,8 +158,11 @@ def test_systemd_self_update_kills_only_on_success():
 
 
 def test_update_run_uses_in_process_path_under_systemd(tmp_path, monkeypatch):
-    import threading
+    """Lineage:
+    main: introduced ef6d8dbf@db-schema-v20.
+    """
     import subprocess
+    import threading
 
     from fastapi.testclient import TestClient
 

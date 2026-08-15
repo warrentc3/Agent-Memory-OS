@@ -722,3 +722,35 @@ v1.7 makes it govern MUTATION and per-session state too.
 - Unset identity remains the legacy administrative mode — deliberate: the SDK
   and single-tenant deployments keep their semantics, and isolation engages
   exactly when an identity is declared.
+
+## Unreleased: Timestamp ubiquity and sync bundle v4
+
+Active timestamp-bearing state has one write representation:
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`. Ordinary SDK construction and updates and HTTP
+create/update requests require that exact UTC, six-digit form; current database
+writes and bundle v4 exports emit it. Compatibility converters are named by
+their input shape; their breadth does not widen the active write contract.
+
+- **Write-strict, read-lenient remains the persistence boundary.** Migration 22
+  converts supported legacy values across live and archived memories and
+  links, recall profiles, teams, projects, pairing invites, and memory and
+  organization tombstones. It backfills missing ACL clocks, converts supported
+  Mem0 provenance timestamps, and normalizes empty link-activation values to
+  `NULL`. Values that cannot be converted without inventing semantics remain
+  unchanged and can still hydrate through the compatibility read path.
+- **Historical migrations retain version ownership.** Each migration lives in
+  its own module. Earlier migrations keep the DDL, parsing, and timestamp
+  behavior their schema version introduced; the current strict helper is not
+  projected backward into an older migration.
+- **Expiry preserves microsecond ordering.** Canonical stamps compare lexically
+  at full precision. Retained noncanonical compatibility values use SQLite's
+  instant-based date functions instead of being treated as canonical text.
+- **Content and ACL state converge on independent clocks.** Content merges by
+  `updated_at`; visibility merges by `acl_updated_at`. Incremental export
+  considers both clocks, and untrusted first-seen ACL clocks remain subject to
+  the future-skew limit.
+- **Sync bundle v4 is the current wire contract.** Exports write v4; imports
+  continue to decode versions 1 through 3 through their immutable compatibility
+  contracts. The schemas, codecs, ordering rules, conversion behavior, and
+  version history are governed by
+  [`sync_bundles/CONTRACT.md`](src/agent_memory_os/sync_bundles/CONTRACT.md).

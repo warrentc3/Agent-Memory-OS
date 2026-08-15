@@ -278,14 +278,20 @@ The `project:apollo-web` peer bundle carries only that project's shared
 memories (and its members' profiles), so project memory never reaches a node
 whose agents aren't project members.
 
-Merge rules (identical for files, HTTP, and mesh): memories & profiles —
-last-writer-wins on normalized `updated_at` with a content tie-break so
-same-second edits converge; links — strongest weight / highest activation /
-latest activation. **Deletions propagate** via tombstones (a purged/deleted
-memory will not resurrect from a peer). Imports from a non-`full` peer record
-`source.synced_from` and cannot impersonate your local agents. Unreachable
-peers fail individually. Pair `service install` with a cron/timer entry running
-`sync auto` for a continuously converging federation.
+Merge rules (identical for files, HTTP, and mesh): memory content converges on
+`updated_at`, visibility converges independently on `acl_updated_at`, and
+profiles use last-writer-wins. Links keep the strongest weight, highest
+activation count, and latest activation. **Deletions propagate** via
+tombstones (a purged/deleted memory will not resurrect from a peer). Imports
+from a non-`full` peer record `source.synced_from` and cannot impersonate your
+local agents. Unreachable peers fail individually. Pair `service install` with
+a cron/timer entry running `sync auto` for a continuously converging
+federation.
+
+Exports write sync bundle v4. Imports accept versions 1 through 4; legacy
+versions are decoded through their version-owned compatibility contracts before
+merge. Version 4 requires canonical timestamps and strict record shapes. See
+the [sync bundle contract](../src/agent_memory_os/sync_bundles/CONTRACT.md).
 
 ---
 
@@ -314,6 +320,12 @@ client.offload_context({...}, session_id="s1"); client.reload_context("s1")
 client.snapshot_diff("s1")
 client.export_bundle("out.jsonl", team="apollo"); client.import_bundle("in.jsonl")
 ```
+
+Timestamp-bearing fields on new or updated records use the exact UTC form
+`YYYY-MM-DDTHH:MM:SS.ffffffZ`. The SDK and HTTP API reject offset, naive, and
+reduced-precision spellings at active write boundaries. Existing databases and
+legacy bundles retain their documented compatibility paths during migration and
+import.
 
 For LLM-backed link extraction:
 `agent_memory_os.extractors.make_llm_link_extractor(complete_fn)`.

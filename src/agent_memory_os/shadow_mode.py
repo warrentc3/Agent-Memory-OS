@@ -7,13 +7,19 @@ primary response source.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from collections import Counter, defaultdict
 import json
+from collections import Counter, defaultdict
+from collections.abc import Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean, median
-from typing import Iterable, Any
+from typing import Any
+
+from .constants import (
+    SHADOW_P99_LATENCY_PAUSE_MILLISECONDS,
+    SHADOW_P99_LATENCY_TARGET_MILLISECONDS,
+)
+from .timestamp_converters import utc_now_stamp
 
 
 @dataclass(frozen=True)
@@ -22,8 +28,8 @@ class ShadowModePolicy:
 
     phase: str = "Phase 1: Silent Mirroring"
     recall_target: float = 0.95
-    p99_latency_target_ms: float = 200.0
-    p99_latency_pause_ms: float = 500.0
+    p99_latency_target_ms: float = SHADOW_P99_LATENCY_TARGET_MILLISECONDS
+    p99_latency_pause_ms: float = SHADOW_P99_LATENCY_PAUSE_MILLISECONDS
 
 
 class ShadowRecallMonitor:
@@ -52,7 +58,7 @@ class ShadowRecallMonitor:
         go_no_go = self._go_no_go(top_k_hit_rate, float(candidate_latency_ms), acl_leakage)
 
         record: dict[str, Any] = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": utc_now_stamp(),
             "phase": self.policy.phase,
             "query": query,
             "legacy_count": len(legacy),
@@ -195,7 +201,7 @@ def _read_jsonl_records(path: Path) -> list[dict[str, Any]]:
 
 
 def _sum_import_reports(records: list[dict[str, Any]]) -> dict[str, int]:
-    totals = defaultdict(int)
+    totals: defaultdict[str, int] = defaultdict(int)
     for record in records:
         report = record.get("import_report")
         if not isinstance(report, dict):

@@ -33,6 +33,9 @@ def seeded_client(tmp_path) -> tuple[MemoryClient, dict]:
 
 
 def test_orchestrator_buckets_and_proactive_recall(tmp_path):
+    """Lineage:
+    main: introduced c213e8b4@db-schema-v4.
+    """
     client, records = seeded_client(tmp_path)
 
     result = client.orchestrate_context(
@@ -52,6 +55,9 @@ def test_orchestrator_buckets_and_proactive_recall(tmp_path):
 
 
 def test_orchestrator_session_iterative_deepening(tmp_path):
+    """Lineage:
+    main: introduced c213e8b4@db-schema-v4; bd659853@db-schema-v18.
+    """
     client, records = seeded_client(tmp_path)
     client.offload_context(
         {"step": 3, "notes": "mid-release"},
@@ -79,6 +85,9 @@ def test_orchestrator_session_iterative_deepening(tmp_path):
 
 
 def test_orchestrator_respects_small_budgets(tmp_path):
+    """Lineage:
+    main: introduced c213e8b4@db-schema-v4.
+    """
     client, _ = seeded_client(tmp_path)
     for i in range(20):
         client.add(f"Deploy detail number {i} for the staging pipeline.", visibility=["global"])
@@ -91,6 +100,9 @@ def test_orchestrator_respects_small_budgets(tmp_path):
 
 
 def test_retention_rotates_session_snapshots(tmp_path):
+    """Lineage:
+    main: introduced c213e8b4@db-schema-v4.
+    """
     client = MemoryClient(home=tmp_path)
     for step in range(7):
         client.offload_context({"step": step}, session_id="long-run")
@@ -105,6 +117,9 @@ def test_retention_rotates_session_snapshots(tmp_path):
 
 
 def test_web_api_orchestrate_with_session_dedup(tmp_path):
+    """Lineage:
+    main: introduced c213e8b4@db-schema-v4.
+    """
     app = create_app(home=tmp_path)
     web = TestClient(app)
     relevant = web.post(
@@ -127,7 +142,10 @@ def test_web_api_orchestrate_with_session_dedup(tmp_path):
 
 
 def test_task_type_emphasis_shifts_budgets(tmp_path):
-    from agent_memory_os.orchestrator import budget_split_for, DEFAULT_BUDGET_SPLIT
+    """Lineage:
+    main: introduced 3e6931ca@db-schema-v4.
+    """
+    from agent_memory_os.orchestrator import DEFAULT_BUDGET_SPLIT, budget_split_for
 
     risky, risky_emphasis = budget_split_for("delete the staging database and rollback")
     howto, howto_emphasis = budget_split_for("how to configure the deploy pipeline")
@@ -149,6 +167,9 @@ def test_task_type_emphasis_shifts_budgets(tmp_path):
 
 
 def test_snapshot_diff_reports_state_changes(tmp_path):
+    """Lineage:
+    main: introduced 3e6931ca@db-schema-v4.
+    """
     client = MemoryClient(home=tmp_path)
     client.offload_context(
         {"phase": "build", "attempts": 1, "worker": "neo"}, session_id="diff-1"

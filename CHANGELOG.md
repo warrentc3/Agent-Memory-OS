@@ -4,6 +4,26 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [Unreleased]
+
+- **Canonical timestamps across active state.** New and updated timestamp
+  fields now use the fixed UTC form `YYYY-MM-DDTHH:MM:SS.ffffffZ` across the
+  SDK, database, HTTP API, browser console, importers, and synchronization.
+  Migration 22 converts supported legacy values while preserving unsupported
+  persisted values for read-lenient compatibility; historical migrations keep
+  their version-owned behavior. Canonical expiry comparisons retain full
+  microsecond precision.
+- **Versioned sync-bundle contracts.** Exports now write strict bundle v4;
+  imports retain immutable compatibility decoders for v1-v3. Each version has
+  a JSON Schema and codec, and bundle conversion validates ordering, reports
+  compatibility conversions, installs atomically, and never overwrites its
+  target.
+- **Sync timestamp convergence fixes.** Content and ACL changes use independent
+  clocks, ACL-only changes participate in incremental export, scoped project
+  synchronization carries and validates its narrowed parent team, and link and
+  profile eligibility follows current scope. Invalid cursors and remote HTTP
+  failures now preserve useful client-facing errors.
+
 ## [1.8.2] — 2026-08-07
 
 - **Hermes and MCP worker-thread safety.** Hermes creates providers on the gateway thread and performs hooks on worker threads; MCP Python SDK v2 likewise runs synchronous tools in AnyIO worker threads. Both integrations now enable cross-thread SQLite handoff and serialize all access to their shared connection, with regression coverage for handoff and concurrent-call safety.

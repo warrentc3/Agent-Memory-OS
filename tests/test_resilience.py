@@ -11,7 +11,6 @@ from agent_memory_os import MemoryClient
 from agent_memory_os.cli import _rotate_backups
 from agent_memory_os.sync import export_bundle, import_bundle
 
-
 # ---------- bundle import: malformed input must never corrupt state ----------
 
 def _seed(tmp_path):
@@ -36,6 +35,9 @@ def _snapshot(store):
     "\x00\x01\x02 binary garbage\n",
 ])
 def test_malformed_bundle_line_rolls_back_atomically(tmp_path, bad):
+    """Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    """
     c = _seed(tmp_path)
     before = _snapshot(c.store)
     path = tmp_path / "bad.jsonl"
@@ -48,7 +50,11 @@ def test_malformed_bundle_line_rolls_back_atomically(tmp_path, bad):
 
 def test_malformed_members_field_inserts_no_garbage(tmp_path):
     """A bundle with members as a bare string must not iterate into per-character
-    members (it should coerce to empty), and must not raise."""
+    members (it should coerce to empty), and must not raise.
+
+    Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    """
     c = _seed(tmp_path)
     c.store.create_team("t")
     path = tmp_path / "m.jsonl"
@@ -64,6 +70,9 @@ def test_malformed_members_field_inserts_no_garbage(tmp_path):
 
 
 def test_bad_header_rejected(tmp_path):
+    """Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    """
     c = _seed(tmp_path)
     path = tmp_path / "h.jsonl"
     path.write_text(json.dumps({"kind": "notbundle", "version": 3}) + "\n", encoding="utf-8")
@@ -72,6 +81,9 @@ def test_bad_header_rejected(tmp_path):
 
 
 def test_unknown_bundle_version_rejected(tmp_path):
+    """Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    """
     c = _seed(tmp_path)
     path = tmp_path / "v.jsonl"
     path.write_text(json.dumps({"kind": "bundle", "version": 999}) + "\n", encoding="utf-8")
@@ -80,7 +92,11 @@ def test_unknown_bundle_version_rejected(tmp_path):
 
 
 def test_oversized_and_unicode_fields_do_not_crash(tmp_path):
-    """A huge content field and exotic unicode must import cleanly, not crash."""
+    """A huge content field and exotic unicode must import cleanly, not crash.
+
+    Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    """
     c = _seed(tmp_path)
     src = MemoryClient(home=tmp_path / "src")
     src.store.register_agent("a1")
@@ -93,6 +109,9 @@ def test_oversized_and_unicode_fields_do_not_crash(tmp_path):
 
 
 def test_unknown_entry_kind_is_ignored(tmp_path):
+    """Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    """
     c = _seed(tmp_path)
     before = _snapshot(c.store)
     path = tmp_path / "u.jsonl"
@@ -109,7 +128,12 @@ def test_unknown_entry_kind_is_ignored(tmp_path):
 
 def test_migrations_apply_forward_and_preserve_data(tmp_path):
     """A DB created at an older schema (acl clock absent, user_version reset)
-    migrates forward on reopen with data intact and integrity holding."""
+    migrates forward on reopen with data intact and integrity holding.
+
+    Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    direct migration binding: v15.
+    """
     c = MemoryClient(home=tmp_path)
     c.store.register_agent("a1")
     c.store.create_team("t"); c.store.add_team_member("t", "a1")
@@ -138,6 +162,9 @@ def test_migrations_apply_forward_and_preserve_data(tmp_path):
 # ---------- backup rotation ----------
 
 def test_rotate_backups_keeps_newest(tmp_path):
+    """Lineage:
+    main: introduced 827bd2bf@db-schema-v15.
+    """
     import os
     import time
 
@@ -160,7 +187,11 @@ def test_rotate_backups_keeps_newest(tmp_path):
 
 def test_rotate_backups_never_deletes_live_db(tmp_path):
     """CRITICAL: rotation must never delete the live memories.db, even when the
-    backup name prefix collides with it (mem-*.db vs memories.db)."""
+    backup name prefix collides with it (mem-*.db vs memories.db).
+
+    Lineage:
+    main: introduced c3f6b6e2@db-schema-v15.
+    """
     live = tmp_path / "memories.db"; live.write_text("LIVE DATA")
     (tmp_path / "memories.db-wal").write_text("wal")
     for i in range(4):
@@ -173,7 +204,11 @@ def test_rotate_backups_never_deletes_live_db(tmp_path):
 
 def test_rotate_backups_prefix_series_memories_dash(tmp_path):
     """A backup series literally named 'memories-<date>.db' still rotates without
-    touching the live 'memories.db'."""
+    touching the live 'memories.db'.
+
+    Lineage:
+    main: introduced c3f6b6e2@db-schema-v15.
+    """
     live = tmp_path / "memories.db"; live.write_text("LIVE")
     import os
     import time

@@ -5,7 +5,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "verify_acl_identities.py"
 DOWNGRADE_SCRIPT = REPO_ROOT / "scripts" / "verify_downgrade_compatibility.py"
@@ -24,6 +23,9 @@ def run_verifier(tmp_path: Path, *args: str) -> dict:
 
 
 def test_verification_script_switches_identities_without_leaking_private_memory(tmp_path):
+    """Lineage:
+    main: introduced c8b5cc42@pre-migration-registry.
+    """
     report = run_verifier(tmp_path)
 
     by_identity = {item["identity"]: item for item in report["pulls"]}
@@ -47,6 +49,9 @@ def test_verification_script_switches_identities_without_leaking_private_memory(
 
 
 def test_verification_script_can_focus_one_identity(tmp_path):
+    """Lineage:
+    main: introduced c8b5cc42@pre-migration-registry.
+    """
     report = run_verifier(tmp_path, "--identity", "neo")
 
     assert [item["identity"] for item in report["pulls"]] == ["neo"]
@@ -54,6 +59,9 @@ def test_verification_script_can_focus_one_identity(tmp_path):
 
 
 def test_downgrade_compatibility_script_clears_local_fixture_matrix(tmp_path):
+    """Lineage:
+    main: introduced b9c26be5@pre-migration-registry.
+    """
     proc = subprocess.run(
         [sys.executable, str(DOWNGRADE_SCRIPT), "--home", str(tmp_path), "--matrix", "all"],
         cwd=REPO_ROOT,

@@ -35,6 +35,9 @@ def _team_setup(tmp_path):
 
 
 def test_remove_team_member_invalidates_cached_recall(tmp_path):
+    """Lineage:
+    main: introduced 0e0a0f5f@db-schema-v15.
+    """
     c = _team_setup(tmp_path)
     # prime the cache with bob's query WHILE he is a member
     assert TEAM_MEM in _texts(c, "bob", "incident apollo")
@@ -44,6 +47,9 @@ def test_remove_team_member_invalidates_cached_recall(tmp_path):
 
 
 def test_add_team_member_invalidates_cached_recall(tmp_path):
+    """Lineage:
+    main: introduced 0e0a0f5f@db-schema-v15.
+    """
     c = _team_setup(tmp_path)
     c.store.register_agent("carol")
     # prime: carol (not a member) cannot see the team memory
@@ -54,6 +60,9 @@ def test_add_team_member_invalidates_cached_recall(tmp_path):
 
 
 def test_remove_project_member_invalidates_cache_for_nonowner(tmp_path):
+    """Lineage:
+    main: introduced 0e0a0f5f@db-schema-v15.
+    """
     c = _team_setup(tmp_path)  # alice + bob on team apollo
     c.create_project("apollo-web", "apollo")
     c.add_project_member("apollo-web", "alice")
@@ -69,6 +78,9 @@ def test_remove_project_member_invalidates_cache_for_nonowner(tmp_path):
 
 
 def test_other_connection_visibility_revoke_invalidates_cached_recall(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     writer = MemoryClient(home=tmp_path)
     reader = MemoryClient(home=tmp_path)
     memory = writer.add(
@@ -92,6 +104,9 @@ def test_other_connection_visibility_revoke_invalidates_cached_recall(tmp_path):
 
 
 def test_other_connection_membership_revoke_invalidates_all_acl_caches(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     writer = MemoryClient(home=tmp_path)
     reader = MemoryClient(home=tmp_path)
     for agent_id in ("alice", "bob"):

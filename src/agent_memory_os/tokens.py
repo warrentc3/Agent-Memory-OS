@@ -44,7 +44,10 @@ def _resolve_tier(readonly: bool, tier: str | None) -> str:
 
 
 def resolve_home(home: str | Path | None) -> Path:
-    return Path(home or os.getenv("AGENT_MEMORY_HOME", "~/.agent-memory")).expanduser()
+    resolved_home = home or os.getenv("AGENT_MEMORY_HOME")
+    if resolved_home is None:
+        resolved_home = "~/.agent-memory"
+    return Path(resolved_home).expanduser()
 
 
 def token_path(home: str | Path | None, *, readonly: bool = False,

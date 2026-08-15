@@ -1,9 +1,12 @@
-import pytest
 import os
 import shutil
 import tempfile
 from pathlib import Path
+
+import pytest
+
 from agent_memory_os.client import MemoryClient
+
 
 @pytest.fixture
 def temp_memory_home():
@@ -20,6 +23,9 @@ def client(temp_memory_home):
 def test_dco_state_preservation(client):
     """
     Verify State Preservation: Save a complex state -> Offload -> Reload -> Compare.
+
+    Lineage:
+    main: introduced 3bf8b6f8@pre-migration-registry.
     """
     session_id = "session_alpha_123"
     complex_state = {
@@ -57,6 +63,9 @@ def test_dco_state_preservation(client):
 def test_dco_session_isolation(client):
     """
     Verify Session Isolation: Ensure session A's snapshot does not leak into session B.
+
+    Lineage:
+    main: introduced 3bf8b6f8@pre-migration-registry; bd659853@db-schema-v18.
     """
     session_a = "session_A"
     state_a = {"data": "Content for A"}
@@ -86,6 +95,9 @@ def test_dco_latest_snapshot_retrieval(client):
     """
     Verify Latest Snapshot Retrieval: Verify that calling reload_context without a 
     specific ID retrieves the most recent snapshot for that session.
+
+    Lineage:
+    main: introduced 3bf8b6f8@pre-migration-registry; bd659853@db-schema-v18.
     """
     session_id = "session_gamma"
     
@@ -109,6 +121,9 @@ def test_dco_latest_snapshot_retrieval(client):
 def test_dco_nonexistent_session(client):
     """
     Verify that requesting a snapshot for a session with no data raises ValueError.
+
+    Lineage:
+    main: introduced 3bf8b6f8@pre-migration-registry.
     """
     with pytest.raises(ValueError, match="No snapshots found for session"):
         client.reload_context(session_id="ghost_session")
@@ -116,6 +131,9 @@ def test_dco_nonexistent_session(client):
 def test_dco_nonexistent_snapshot_id(client):
     """
     Verify that requesting a non-existent snapshot ID raises ValueError.
+
+    Lineage:
+    main: introduced 3bf8b6f8@pre-migration-registry.
     """
     with pytest.raises(ValueError, match="Snapshot mem_invalid not found"):
         client.reload_context(session_id="any", snapshot_id="mem_invalid")

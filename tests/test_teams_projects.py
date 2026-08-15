@@ -1,6 +1,8 @@
 """First-class teams & projects (v0.13): membership, subset invariant, ACL,
 cascade, and project-scoped sync."""
 
+import json
+import re
 import tempfile
 
 import pytest
@@ -25,6 +27,9 @@ def _fixture(tmp_path):
 
 
 def test_team_vs_project_visibility(tmp_path):
+    """Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     c.add("team-wide apollo", owner="alice", visibility=["team:apollo"])
     c.add("apollo-web only", owner="alice", visibility=["project:apollo-web"])
@@ -40,6 +45,9 @@ def test_team_vs_project_visibility(tmp_path):
 
 
 def test_project_member_must_be_team_member(tmp_path):
+    """Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     c.store.register_agent("stranger", kind="hermes")
     with pytest.raises(ValueError, match="must be a member of team"):
@@ -47,6 +55,9 @@ def test_project_member_must_be_team_member(tmp_path):
 
 
 def test_leaving_team_cascades_out_of_projects(tmp_path):
+    """Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     assert "alice" in c.store.get_project("apollo-web")["members"]
     c.store.remove_team_member("apollo", "alice")
@@ -55,6 +66,9 @@ def test_leaving_team_cascades_out_of_projects(tmp_path):
 
 
 def test_delete_team_cascades_projects(tmp_path):
+    """Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     assert c.store.delete_team("apollo") is True
     assert c.store.get_project("apollo-web") is None
@@ -62,6 +76,9 @@ def test_delete_team_cascades_projects(tmp_path):
 
 
 def test_removing_agent_clears_memberships(tmp_path):
+    """Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     c.store.remove_agent("bob")
     assert "bob" not in c.store.get_team("apollo")["members"]
@@ -69,6 +86,9 @@ def test_removing_agent_clears_memberships(tmp_path):
 
 
 def test_project_scoped_export_excludes_other_scopes(tmp_path):
+    """Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     c.add("team apollo memo", owner="alice", visibility=["team:apollo"])
     proj = c.add("apollo-web secret", owner="alice", visibility=["project:apollo-web"])
@@ -82,7 +102,11 @@ def test_project_scoped_export_excludes_other_scopes(tmp_path):
 
 
 def test_register_agent_reconciles_team_membership(tmp_path):
-    """Declaring an agent's teams sets its membership (agents.toml behaviour)."""
+    """Declaring an agent's teams sets its membership (agents.toml behaviour).
+
+    Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     c = MemoryClient(home=tmp_path)
     c.store.register_agent("neo", kind="hermes", teams=["apollo", "zeus"])
     assert set(c.store.teams_for("neo")) == {"apollo", "zeus"}
@@ -95,18 +119,39 @@ def test_register_agent_reconciles_team_membership(tmp_path):
 
 def test_migration_backfills_teams_from_agent_teams(tmp_path):
     """A DB created before migration 13 keeps its flat agent.teams as real
-    team memberships after upgrade (simulated by register during this schema)."""
+    team memberships after upgrade (simulated by register during this schema).
+
+    Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    time-helper: changed 99c0dfe6@db-schema-v21.
+    direct migration binding: v13.
+    """
     c = MemoryClient(home=tmp_path)
     c.store.register_agent("mizuki", kind="hermes", teams=["ops"])
     # membership resolves through the join table, and ACL honours it
     c.add("ops note", owner="x", visibility=["team:ops"])
     hits = c.search("ops note", requester_agent_id="mizuki")
     assert any("ops note" in h.record.content for h in hits)
+    team = c.store.get_team("ops")
+    assert re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        r"\.[0-9]{6}Z",
+        team["created_at"],
+    )
+    assert re.fullmatch(
+        r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+        r"\.[0-9]{6}Z",
+        team["updated_at"],
+    )
 
 
 def test_create_project_cannot_repoint_to_another_team(tmp_path):
     """Review R1: re-pointing a project at a different team would break the
-    subset invariant — it must be rejected."""
+    subset invariant — it must be rejected.
+
+    Lineage:
+    main: introduced d328588d@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     c.store.create_team("zeus")
     with pytest.raises(ValueError, match="already exists under team"):
@@ -116,7 +161,11 @@ def test_create_project_cannot_repoint_to_another_team(tmp_path):
 
 
 def test_register_agent_none_teams_preserves_membership(tmp_path):
-    """Review R2: a metadata-only re-registration must not wipe memberships."""
+    """Review R2: a metadata-only re-registration must not wipe memberships.
+
+    Lineage:
+    main: introduced d328588d@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     assert set(c.store.teams_for("alice")) == {"apollo"}
     assert "alice" in c.store.get_project("apollo-web")["members"]
@@ -130,6 +179,9 @@ def test_register_agent_none_teams_preserves_membership(tmp_path):
 
 
 def test_web_agent_edit_without_teams_preserves_membership(tmp_path):
+    """Lineage:
+    main: introduced d328588d@db-schema-v13.
+    """
     web = TestClient(create_app(home=tmp_path))
     web.post("/api/agents", json={"id": "alice", "kind": "hermes"})
     web.post("/api/teams", json={"id": "apollo"})
@@ -141,7 +193,11 @@ def test_web_agent_edit_without_teams_preserves_membership(tmp_path):
 
 def test_deleting_scope_strips_grant_no_id_reuse_resurrection(tmp_path):
     """Review R5: deleting a team/project revokes its visibility grant so a
-    reused id can't resurrect read access to the old scope's memory."""
+    reused id can't resurrect read access to the old scope's memory.
+
+    Lineage:
+    main: introduced d328588d@db-schema-v13.
+    """
     c = _fixture(tmp_path)
     m = c.add("acme team secret", owner="alice", visibility=["team:apollo"])
     c.store.delete_team("apollo")
@@ -155,7 +211,11 @@ def test_deleting_scope_strips_grant_no_id_reuse_resurrection(tmp_path):
 
 
 def test_share_to_project_via_web(tmp_path):
-    """Review R3: project sharing must be reachable via the web API."""
+    """Review R3: project sharing must be reachable via the web API.
+
+    Lineage:
+    main: introduced d328588d@db-schema-v13.
+    """
     web = TestClient(create_app(home=tmp_path))
     web.post("/api/agents", json={"id": "alice", "kind": "hermes"})
     web.post("/api/teams", json={"id": "apollo"})
@@ -177,7 +237,11 @@ def _sync(src, dst, tmp_path, name="b.jsonl"):
 
 def test_org_structure_syncs_and_converges(tmp_path):
     """G2: teams/projects/memberships federate; additions AND removals and
-    deletions all converge across nodes."""
+    deletions all converge across nodes.
+
+    Lineage:
+    main: introduced 7ebc3daf@db-schema-v14.
+    """
     A = MemoryClient(home=tmp_path / "a")
     B = MemoryClient(home=tmp_path / "b")
     for n in ("alice", "bob"):
@@ -212,7 +276,11 @@ def test_org_structure_syncs_and_converges(tmp_path):
 
 def test_synced_org_makes_project_acl_consistent_cross_node(tmp_path):
     """After org sync, a project:<id> memory synced to B resolves for the same
-    member it did on A."""
+    member it did on A.
+
+    Lineage:
+    main: introduced 7ebc3daf@db-schema-v14.
+    """
     A = MemoryClient(home=tmp_path / "a")
     B = MemoryClient(home=tmp_path / "b")
     A.store.register_agent("alice", kind="hermes")
@@ -226,7 +294,11 @@ def test_synced_org_makes_project_acl_consistent_cross_node(tmp_path):
 
 
 def test_org_tombstone_blocks_resurrection(tmp_path):
-    """A deleted team can't be resurrected by an older team record in a bundle."""
+    """A deleted team can't be resurrected by an older team record in a bundle.
+
+    Lineage:
+    main: introduced 7ebc3daf@db-schema-v14.
+    """
     A = MemoryClient(home=tmp_path / "a")
     B = MemoryClient(home=tmp_path / "b")
     A.store.register_agent("alice", kind="hermes")
@@ -242,7 +314,54 @@ def test_org_tombstone_blocks_resurrection(tmp_path):
     assert B.store.get_team("apollo") is None     # tombstone wins
 
 
+def test_org_tombstone_conflict_keeps_latest_stamp(tmp_path):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced working-tree@db-schema-v22.
+    """
+    target = MemoryClient(home=tmp_path / "target")
+    target.store.conn.execute(
+        "INSERT INTO org_tombstones(kind, id, deleted_at) VALUES (?, ?, ?)",
+        ("team", "apollo", "2026-08-10T12:00:00.000000Z"),
+    )
+    target.store.conn.commit()
+    bundle = tmp_path / "org-tombstone.jsonl"
+
+    def import_tombstone(deleted_at: str) -> None:
+        bundle.write_text(
+            json.dumps({"kind": "bundle", "version": 4})
+            + "\n"
+            + json.dumps(
+                {
+                    "kind": "org_tombstone",
+                    "tomb_kind": "team",
+                    "id": "apollo",
+                    "deleted_at": deleted_at,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        target.import_bundle(bundle)
+
+    import_tombstone("2026-08-10T13:00:00.000000Z")
+    assert target.store.conn.execute(
+        "SELECT deleted_at FROM org_tombstones WHERE kind = ? AND id = ?",
+        ("team", "apollo"),
+    ).fetchone()[0] == "2026-08-10T13:00:00.000000Z"
+
+    import_tombstone("2026-08-10T11:00:00.000000Z")
+    assert target.store.conn.execute(
+        "SELECT deleted_at FROM org_tombstones WHERE kind = ? AND id = ?",
+        ("team", "apollo"),
+    ).fetchone()[0] == "2026-08-10T13:00:00.000000Z"
+    target.close()
+
+
 def test_membership_changes_are_audited(tmp_path):
+    """Lineage:
+    main: introduced 7ebc3daf@db-schema-v14.
+    """
     c = MemoryClient(home=tmp_path)
     c.store.register_agent("alice", kind="hermes")
     c.store.create_team("apollo")
@@ -257,7 +376,11 @@ def test_orphan_memory_detection_and_cleanup(tmp_path):
     """An orphan is reachable by NOBODY: its scope no longer exists AND its owner
     is not a live agent. A live owner or an existing (even empty) scope keeps a
     memory recoverable, so it must never be flagged — deleting it would be data
-    loss (the v0.14-review data-loss fix)."""
+    loss (the v0.14-review data-loss fix).
+
+    Lineage:
+    main: introduced 3586caed@db-schema-v14; bc2608c9@db-schema-v14.
+    """
     c = MemoryClient(home=tmp_path)
     c.store.register_agent("alice", kind="hermes")
     c.store.create_team("apollo"); c.store.add_team_member("apollo", "alice")
@@ -289,6 +412,9 @@ def test_orphan_memory_detection_and_cleanup(tmp_path):
 
 
 def test_maintenance_scan_and_vacuum(tmp_path):
+    """Lineage:
+    main: introduced 3586caed@db-schema-v14.
+    """
     c = MemoryClient(home=tmp_path)
     c.add("x", visibility=["global"])
     scan = c.maintenance_scan()
@@ -298,6 +424,9 @@ def test_maintenance_scan_and_vacuum(tmp_path):
 
 
 def test_update_command_detects_deployment(monkeypatch, capsys):
+    """Lineage:
+    main: introduced 3586caed@db-schema-v14.
+    """
     from agent_memory_os import cli
     monkeypatch.setattr(cli, "_pypi_latest", lambda pkg: "999.0.0")
     rc = cli.main(["update", "--check"])
@@ -307,6 +436,9 @@ def test_update_command_detects_deployment(monkeypatch, capsys):
 
 
 def test_teams_projects_api(tmp_path):
+    """Lineage:
+    main: introduced 2136c163@db-schema-v13.
+    """
     web = TestClient(create_app(home=tmp_path))
     for a in ("alice", "bob"):
         web.post("/api/agents", json={"id": a, "kind": "hermes"})

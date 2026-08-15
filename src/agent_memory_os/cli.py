@@ -3,8 +3,21 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from typing import cast
 
 from .client import MemoryClient
+from .constants import (
+    PAIRING_INVITE_TTL_SECONDS,
+    PROCESS_ELAPSED_QUERY_TIMEOUT_SECONDS,
+    PROCESS_LIST_TIMEOUT_SECONDS,
+    PYPI_REQUEST_TIMEOUT_SECONDS,
+    SCHEDULED_TASK_QUERY_TIMEOUT_SECONDS,
+    STALE_PROCESS_START_SLACK_SECONDS,
+    TEAM_UPDATE_REQUEST_TIMEOUT_SECONDS,
+    WEB_RESTART_LIVENESS_DELAY_SECONDS,
+    WEB_RESTART_POLL_ATTEMPTS,
+    WEB_RESTART_POLL_INTERVAL_SECONDS,
+)
 from .golden_recall import evaluate_golden_queries, load_golden_query_cases
 from .hermes_importer import import_hermes_memory_files
 from .importers import SUPPORTED as IMPORT_SOURCES
@@ -128,7 +141,11 @@ def build_parser() -> argparse.ArgumentParser:
         "target", nargs="?", default=None,
         help="Bundle .jsonl path (export/import) or peer base URL (pull/push); omit for auto/genkey",
     )
-    sync.add_argument("--since", default=None, help="Only records updated after this ISO timestamp")
+    sync.add_argument(
+        "--since",
+        default=None,
+        help="Only records updated after this canonical stamp",
+    )
     sync.add_argument("--peer-token", default=None, help="Sync-scoped bearer token of the peer's Web API")
     sync.add_argument("--team", default=None, help="Export only one team/project's shared memory")
 
@@ -156,8 +173,15 @@ def build_parser() -> argparse.ArgumentParser:
     team.add_argument("team_id", nargs="?", default=None)
     team.add_argument("agent_id", nargs="?", default=None)
     team.add_argument("--name", default="", help="Display name (create)")
-    team.add_argument("--ttl", type=int, default=600,
-                      help="invite: pairing-code lifetime in seconds (default 600)")
+    team.add_argument(
+        "--ttl",
+        type=int,
+        default=PAIRING_INVITE_TTL_SECONDS,
+        help=(
+            "invite: pairing-code lifetime in seconds "
+            f"(default {PAIRING_INVITE_TTL_SECONDS})"
+        ),
+    )
 
     join = sub.add_parser(
         "join",
@@ -538,7 +562,9 @@ def _cmd_team_update(client, own_version: str) -> int:
             headers={"Authorization": f"Bearer {token}"} if token else {},
         )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:  # noqa: S310
+            with urllib.request.urlopen(
+                request, timeout=TEAM_UPDATE_REQUEST_TIMEOUT_SECONDS
+            ) as response:
                 payload = _json.loads(response.read().decode("utf-8"))
             print(f"  {label}: {peer_ver or '?'} → update started ({payload.get('status', 'ok')})")
         except Exception as exc:  # noqa: BLE001
@@ -701,7 +727,10 @@ def _cmd_doctor(args) -> int:
         spec = f"agent-memory-os[{','.join(missing_extras)}]"
         if args.install:
             print(f"installing: {spec}")
-            result = subprocess.run([sys.executable, "-m", "pip", "install", spec])
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", spec],
+                check=False,
+            )
             return result.returncode
         print()
         print(f"install everything missing with: pip install '{spec}'")
@@ -726,7 +755,7 @@ def _cmd_doctor(args) -> int:
             names = ", ".join(f"{n.node_name} ({n.url})" for n in others[:3])
             print(f"[info] {len(others)} other AgentMemoryOS node(s) on this host: {names}")
             print("       to share memory: agent-memory neighbors  →  team invite / join")
-    except Exception:  # noqa: BLE001 - a hint must never fail doctor
+    except Exception:  # noqa: BLE001, S110 - a hint must never fail doctor
         pass
     print("all good.")
     return 0
@@ -858,7 +887,10 @@ def _pypi_latest(pkg: str) -> str | None:
     global _PYPI_LAST_ERROR
     import urllib.request
     try:
-        with urllib.request.urlopen(f"https://pypi.org/pypi/{pkg}/json", timeout=6) as resp:
+        with urllib.request.urlopen(
+            f"https://pypi.org/pypi/{pkg}/json",
+            timeout=PYPI_REQUEST_TIMEOUT_SECONDS,
+        ) as resp:
             _PYPI_LAST_ERROR = None
             return json.load(resp)["info"]["version"]
     except Exception as exc:  # noqa: BLE001 - offline / unreachable is a normal outcome
@@ -881,10 +913,14 @@ def _running_amos_processes() -> list[tuple[int, str, str]]:
             out = subprocess.check_output(
                 ["powershell", "-NoProfile", "-Command",
                  'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId)`t$($_.CommandLine)" }'],
-                text=True, timeout=10)
+                text=True, timeout=PROCESS_LIST_TIMEOUT_SECONDS)
             rows = [line.split("\t", 1) for line in out.splitlines() if "\t" in line]
         else:
-            out = subprocess.check_output(["ps", "-axo", "pid=,command="], text=True, timeout=10)
+            out = subprocess.check_output(
+                ["ps", "-axo", "pid=,command="],
+                text=True,
+                timeout=PROCESS_LIST_TIMEOUT_SECONDS,
+            )
             rows = [line.strip().split(None, 1) for line in out.splitlines() if line.strip()]
     except Exception:  # noqa: BLE001 - process listing is best-effort
         return []
@@ -956,7 +992,11 @@ def _proc_start_ts(pid: int) -> float | None:
     if sys.platform == "win32":
         return None  # unknown -> caller treats as not-provably-stale
     try:
-        out = subprocess.check_output(["ps", "-p", str(pid), "-o", "etime="], text=True, timeout=5)
+        out = subprocess.check_output(
+            ["ps", "-p", str(pid), "-o", "etime="],
+            text=True,
+            timeout=PROCESS_ELAPSED_QUERY_TIMEOUT_SECONDS,
+        )
     except Exception:  # noqa: BLE001
         return None
     elapsed = _parse_etime(out)
@@ -981,8 +1021,11 @@ def _stale_amos_processes() -> list[tuple[int, str, str]]:
     stale = []
     for pid, kind, cmd in _running_amos_processes():
         started = _proc_start_ts(pid)
-        # 90s slack absorbs ps's minute-resolution etime.
-        if started is not None and started < installed - 90:
+        # Slack absorbs ps's minute-resolution etime.
+        if (
+            started is not None
+            and started < installed - STALE_PROCESS_START_SLACK_SECONDS
+        ):
             stale.append((pid, kind, cmd))
     return stale
 
@@ -1020,12 +1063,12 @@ def _restart_web_from_pidfile(home) -> str:
         os.kill(pid, signal.SIGTERM)
     except OSError:
         return f"could not signal pid {pid} — restart the console manually"
-    for _ in range(40):  # up to ~10s for the port to be released
+    for _ in range(WEB_RESTART_POLL_ATTEMPTS):
         try:
             os.kill(pid, 0)
         except OSError:
             break
-        time.sleep(0.25)
+        time.sleep(WEB_RESTART_POLL_INTERVAL_SECONDS)
     stdout = subprocess.DEVNULL
     stderr = subprocess.DEVNULL
     try:
@@ -1043,7 +1086,8 @@ def _restart_web_from_pidfile(home) -> str:
                                  start_new_session=True)
     except Exception as exc:  # noqa: BLE001
         return f"relaunch failed ({exc}) — restart the console manually"
-    time.sleep(1.0)  # liveness: confirm the new process didn't immediately die
+    # Liveness: confirm the new process didn't immediately die.
+    time.sleep(WEB_RESTART_LIVENESS_DELAY_SECONDS)
     if child.poll() is not None:
         return (f"relaunched process exited (code {child.returncode}) — the old "
                 f"port may still be held; restart the console manually")
@@ -1061,7 +1105,9 @@ def _web_service_installed() -> bool:
         try:
             return subprocess.run(
                 ["schtasks", "/Query", "/TN", svc.SERVICE_NAME],
-                capture_output=True, timeout=10,
+                capture_output=True,
+                check=False,
+                timeout=SCHEDULED_TASK_QUERY_TIMEOUT_SECONDS,
             ).returncode == 0
         except Exception:  # noqa: BLE001
             return False
@@ -1258,7 +1304,7 @@ def main(argv: list[str] | None = None) -> int:
                 "node_name": settings.node_name, "host": settings.host, "port": settings.port,
             }, ensure_ascii=False, indent=2))
             return 0
-        if args.command == "agent":
+        if args.command == "agent":  # noqa: SIM102 - preserve command grouping
             if args.action == "rename":
                 if not (args.old_id and args.new_id):
                     print("agent rename requires <old_id> <new_id>"); return 2
@@ -1342,7 +1388,11 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.yes:
                     existing = {r["owner"]: r for r in client.owner_counts()}
                     row = existing.get(target)
-                    n = (row["memories"] + row["archived"]) if row else 0
+                    n = (
+                        cast(int, row["memories"]) + cast(int, row["archived"])
+                        if row
+                        else 0
+                    )
                     reply = input(
                         f"permanently delete ALL {n} memories owned by "
                         f"'{target}'? this cannot be undone [y/N]: ")
@@ -1381,8 +1431,9 @@ def main(argv: list[str] | None = None) -> int:
                     grant = client.store.grant_fleet_admin(args.value, caps)
                 except ValueError as exc:
                     print(f"error: {exc}"); return 2
-                print(f"granted fleet admin {grant['key_id']} caps={','.join(grant['caps'])}")
-                if "read-private" in grant["caps"]:
+                grant_caps = cast(list[str], grant["caps"])
+                print(f"granted fleet admin {grant['key_id']} caps={','.join(grant_caps)}")
+                if "read-private" in grant_caps:
                     print("note: read-private lets this key read ALL memory content on "
                           "this node, including private memories — every such read is "
                           "recorded in the org audit log")
@@ -1428,10 +1479,10 @@ def main(argv: list[str] | None = None) -> int:
                     elif not n["authorized"]:
                         mark, extra = "! unauthorized", n["detail"]
                     else:
-                        owners = len(n["owners"] or [])
+                        owner_count = len(n["owners"] or [])
                         mark = "✓ ok"
                         extra = (f"v{n['version']} — {n['memories']} memories, "
-                                 f"{n['links']} links, {owners} owners")
+                                 f"{n['links']} links, {owner_count} owners")
                     name = n["name"] or n["node_name"] or n["url"]
                     print(f"  {mark:15s} {name:20s} {n['url']}  {extra}")
                 if report["version_drift"]:

@@ -12,15 +12,24 @@ Covers the v1.3 theme end to end:
 from __future__ import annotations
 
 import json
+import re
 import socket
 import threading
+from datetime import UTC, datetime
 
 import pytest
 
+import agent_memory_os.db as db_module
 from agent_memory_os import pairing
+from agent_memory_os import service as svc
 from agent_memory_os.client import MemoryClient
 from agent_memory_os.discovery import probe_node, scan_local_nodes
-from agent_memory_os import service as svc
+from agent_memory_os.timestamp_converters import dt_to_stamp
+
+_CANONICAL_UTC_RE = (
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"\.[0-9]{6}Z"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -28,20 +37,35 @@ from agent_memory_os import service as svc
 # --------------------------------------------------------------------------- #
 
 def test_invite_issue_and_consume(tmp_path):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    time-helper: changed c8353b42@db-schema-v21.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.create_team("apollo")
     invite = pairing.issue_invite(client, "apollo", ttl_seconds=60)
     assert invite["code"].startswith(pairing.CODE_PREFIX)
+    assert re.fullmatch(_CANONICAL_UTC_RE, invite["expires_at"])
 
     code_hash = pairing._hash_code(invite["code"])
     got = client.store.consume_pairing_invite(code_hash, redeemed_by="node-b")
     assert got and got["team_id"] == "apollo"
+    row = client.store.conn.execute(
+        "SELECT created_at, expires_at, used_at FROM pairing_invites WHERE code_hash = ?",
+        (code_hash,),
+    ).fetchone()
+    assert re.fullmatch(_CANONICAL_UTC_RE, row["created_at"])
+    assert re.fullmatch(_CANONICAL_UTC_RE, row["expires_at"])
+    assert re.fullmatch(_CANONICAL_UTC_RE, row["used_at"])
     # single-use: a second redemption of the same code must fail
     assert client.store.consume_pairing_invite(code_hash, redeemed_by="node-c") is None
     client.close()
 
 
 def test_invite_expiry_and_unknown_team(tmp_path):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.create_team("apollo")
     with pytest.raises(ValueError, match="unknown team"):
@@ -59,7 +83,103 @@ def test_invite_expiry_and_unknown_team(tmp_path):
     client.close()
 
 
+def test_pairing_invite_ttl_computes_exact_expiry(tmp_path, monkeypatch):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced 4279c380@db-schema-v21.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
+    client = MemoryClient(home=tmp_path)
+    client.store.create_team("apollo")
+    fixed_now = datetime(2026, 8, 11, 12, 0, 0, 500000, tzinfo=UTC)
+    fixed_stamp = dt_to_stamp(fixed_now)
+    monkeypatch.setattr(db_module, "utc_now_dt", lambda: fixed_now)
+
+    explicit = client.store.create_pairing_invite(
+        "apollo",
+        "explicit-ttl",
+        ttl_seconds=60,
+    )
+    default = client.store.create_pairing_invite("apollo", "default-ttl")
+
+    assert explicit["expires_at"] == "2026-08-11T12:01:00.500000Z"
+    assert default["expires_at"] == "2026-08-11T12:10:00.500000Z"
+    rows = client.store.conn.execute(
+        "SELECT code_hash, created_at, expires_at FROM pairing_invites "
+        "ORDER BY code_hash"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        (
+            "default-ttl",
+            fixed_stamp,
+            "2026-08-11T12:10:00.500000Z",
+        ),
+        (
+            "explicit-ttl",
+            fixed_stamp,
+            "2026-08-11T12:01:00.500000Z",
+        ),
+    ]
+    client.close()
+
+
+def test_pairing_invite_redemption_uses_strict_expiry_boundary(
+    tmp_path,
+    monkeypatch,
+):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced 4279c380@db-schema-v21.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
+    client = MemoryClient(home=tmp_path)
+    client.store.create_team("apollo")
+    clock = {"now": datetime(2026, 8, 11, 12, 0, 0, 500000, tzinfo=UTC)}
+    monkeypatch.setattr(db_module, "utc_now_dt", lambda: clock["now"])
+    monkeypatch.setattr(db_module, "utc_now_stamp", lambda: dt_to_stamp(clock["now"]))
+    for code_hash in ("before-expiry", "at-expiry", "after-expiry"):
+        client.store.create_pairing_invite(
+            "apollo",
+            code_hash,
+            ttl_seconds=60,
+        )
+
+    clock["now"] = datetime(2026, 8, 11, 12, 1, 0, 499999, tzinfo=UTC)
+    redeemed = client.store.consume_pairing_invite(
+        "before-expiry",
+        redeemed_by="before-node",
+    )
+    assert redeemed is not None
+    assert redeemed["team_id"] == "apollo"
+
+    clock["now"] = datetime(2026, 8, 11, 12, 1, 0, 500000, tzinfo=UTC)
+    assert client.store.consume_pairing_invite(
+        "at-expiry",
+        redeemed_by="at-node",
+    ) is None
+
+    clock["now"] = datetime(2026, 8, 11, 12, 1, 0, 500001, tzinfo=UTC)
+    assert client.store.consume_pairing_invite(
+        "after-expiry",
+        redeemed_by="after-node",
+    ) is None
+    rows = client.store.conn.execute(
+        "SELECT code_hash, used_at FROM pairing_invites ORDER BY code_hash"
+    ).fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("after-expiry", None),
+        ("at-expiry", None),
+        ("before-expiry", "2026-08-11T12:01:00.499999Z"),
+    ]
+    client.close()
+
+
 def test_wrong_code_is_rejected(tmp_path):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.create_team("apollo")
     pairing.issue_invite(client, "apollo")
@@ -105,6 +225,9 @@ def _bridge_post(http):
 
 
 def test_join_full_exchange(inviter, tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16; 013a45cb@db-schema-v16.
+    """
     from agent_memory_os import crypto, tokens
 
     # The inviter uses an encrypted mesh.
@@ -166,6 +289,9 @@ def test_join_full_exchange(inviter, tmp_path, monkeypatch):
 
 
 def test_join_rejects_mismatched_sync_key(inviter, tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     from agent_memory_os import crypto
 
     crypto.save_sync_secret(inviter["home"], "amos_sk_key-A")
@@ -184,7 +310,11 @@ def test_join_rejects_mismatched_sync_key(inviter, tmp_path, monkeypatch):
 
 
 def test_redeem_endpoint_is_opaque_and_exempt(inviter):
-    """No bearer token needed; bad codes get one indistinguishable 403."""
+    """No bearer token needed; bad codes get one indistinguishable 403.
+
+    Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     http = inviter["http"]
     body = {"code": "amos_join_wrong-code-entirely",
             "envelope": pairing.encrypt_payload({"agent_id": "x"}, "amos_join_wrong-code-entirely")}
@@ -197,6 +327,9 @@ def test_redeem_endpoint_is_opaque_and_exempt(inviter):
 
 
 def test_redeem_garbage_envelope(inviter):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     invite = pairing.issue_invite(inviter["client"], "apollo")
     response = inviter["http"].post(
         pairing.REDEEM_PATH, json={"code": invite["code"], "envelope": "AMOSENC1:junk"})
@@ -236,6 +369,9 @@ def fake_amos_server():
 
 
 def test_probe_and_scan_find_amos_node(fake_amos_server):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     port = fake_amos_server
     probe = probe_node(f"http://127.0.0.1:{port}")
     assert probe.is_amos and probe.node_name == "other-account"
@@ -247,7 +383,11 @@ def test_probe_and_scan_find_amos_node(fake_amos_server):
 
 
 def test_scan_ignores_non_amos_listener():
-    """A listener that isn't AMOS (no /healthz `node`) is not reported."""
+    """A listener that isn't AMOS (no /healthz `node`) is not reported.
+
+    Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     import http.server
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -273,6 +413,9 @@ def test_scan_ignores_non_amos_listener():
 # --------------------------------------------------------------------------- #
 
 def test_windows_task_name_is_per_account(monkeypatch):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     import getpass
 
     monkeypatch.setattr(getpass, "getuser", lambda: "Alice Wu")
@@ -282,6 +425,9 @@ def test_windows_task_name_is_per_account(monkeypatch):
 
 
 def test_schtasks_uses_per_account_name(monkeypatch, tmp_path):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     import getpass
 
     monkeypatch.setattr(getpass, "getuser", lambda: "bob")
@@ -297,8 +443,14 @@ def test_schtasks_uses_per_account_name(monkeypatch, tmp_path):
 
 
 def test_service_install_persists_free_port(tmp_path, capsys):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     from agent_memory_os.cli import main
-    from agent_memory_os.settings import load_instance_settings, update_instance_settings
+    from agent_memory_os.settings import (
+        load_instance_settings,
+        update_instance_settings,
+    )
 
     # Occupy this home's configured port so install must move on.
     blocker = socket.socket()
@@ -322,6 +474,9 @@ def test_service_install_persists_free_port(tmp_path, capsys):
 # --------------------------------------------------------------------------- #
 
 def test_status_json_reports_service_and_peers(tmp_path, capsys):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     from agent_memory_os.cli import main
 
     client = MemoryClient(home=tmp_path)
@@ -338,6 +493,9 @@ def test_status_json_reports_service_and_peers(tmp_path, capsys):
 
 
 def test_neighbors_cli_lists_fake_node(tmp_path, capsys, fake_amos_server):
+    """Lineage:
+    main: introduced 68e82ed2@db-schema-v16.
+    """
     from agent_memory_os.cli import main
 
     port = fake_amos_server
@@ -349,7 +507,11 @@ def test_neighbors_cli_lists_fake_node(tmp_path, capsys, fake_amos_server):
 
 
 def test_redeem_rejects_plaintext_envelope(inviter):
-    """Envelope must be a real AMOSENC1 blob; plaintext JSON is refused."""
+    """Envelope must be a real AMOSENC1 blob; plaintext JSON is refused.
+
+    Lineage:
+    main: introduced 7a5acb4d@db-schema-v16.
+    """
     invite = pairing.issue_invite(inviter["client"], "apollo")
     r = inviter["http"].post(
         pairing.REDEEM_PATH,
@@ -368,7 +530,11 @@ def test_redeem_rejects_plaintext_envelope(inviter):
 
 def test_bad_code_does_not_burn_a_valid_invite(inviter, monkeypatch):
     """A wrong code must not consume anyone else's invite (decrypt/validate
-    happens before consume, and consume is keyed on the code's own hash)."""
+    happens before consume, and consume is keyed on the code's own hash).
+
+    Lineage:
+    main: introduced 7a5acb4d@db-schema-v16.
+    """
     invite = pairing.issue_invite(inviter["client"], "apollo")
     r = inviter["http"].post(
         pairing.REDEEM_PATH,
@@ -385,7 +551,11 @@ def test_bad_code_does_not_burn_a_valid_invite(inviter, monkeypatch):
 
 
 def test_join_refuses_plain_http_to_remote_host(tmp_path):
-    """Non-loopback http:// is refused unless allow_insecure."""
+    """Non-loopback http:// is refused unless allow_insecure.
+
+    Lineage:
+    main: introduced 7a5acb4d@db-schema-v16; 2cf92e51@db-schema-v17.
+    """
     from agent_memory_os import pairing as p
     home = tmp_path / "amos-join-guard"
     client = MemoryClient(home=home)
@@ -396,7 +566,11 @@ def test_join_refuses_plain_http_to_remote_host(tmp_path):
 
 
 def test_join_and_register_peer_is_atomic(tmp_path):
-    """A bad peer URL rolls back the whole join (no ghost team member)."""
+    """A bad peer URL rolls back the whole join (no ghost team member).
+
+    Lineage:
+    main: introduced 7a5acb4d@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.create_team("apollo")
     with pytest.raises(ValueError, match="peer URL"):

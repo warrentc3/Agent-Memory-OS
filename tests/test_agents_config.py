@@ -20,6 +20,9 @@ teams = ["apollo"]
 
 
 def test_agents_toml_declares_the_fleet_on_open(tmp_path):
+    """Lineage:
+    main: introduced 94742013@db-schema-v8.
+    """
     (tmp_path / "agents.toml").write_text(FLEET_TOML)
 
     client = MemoryClient(home=tmp_path)
@@ -39,6 +42,9 @@ def test_agents_toml_declares_the_fleet_on_open(tmp_path):
 
 
 def test_agents_toml_is_authoritative_for_listed_agents(tmp_path):
+    """Lineage:
+    main: introduced 94742013@db-schema-v8.
+    """
     (tmp_path / "agents.toml").write_text(FLEET_TOML)
     client = MemoryClient(home=tmp_path)
     # manual drift on a file-managed agent...
@@ -54,6 +60,9 @@ def test_agents_toml_is_authoritative_for_listed_agents(tmp_path):
 
 
 def test_agents_toml_errors_fail_fast_with_context(tmp_path):
+    """Lineage:
+    main: introduced 94742013@db-schema-v8.
+    """
     (tmp_path / "agents.toml").write_text("[agents.bad]\nkind = \"wizard\"\n")
     with pytest.raises(ValueError, match="agents.toml.*bad.*kind"):
         MemoryClient(home=tmp_path)
@@ -64,11 +73,17 @@ def test_agents_toml_errors_fail_fast_with_context(tmp_path):
 
 
 def test_missing_config_is_fine(tmp_path):
+    """Lineage:
+    main: introduced 94742013@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     assert client.configured_agents == []
 
 
 def test_web_ui_ships_five_locales():
+    """Lineage:
+    main: introduced 94742013@db-schema-v8.
+    """
     for locale in ('"zh-TW"', '"zh-CN"', '"ja"', '"ko"', '"en"'):
         assert locale in PAGE
     assert "locale-pick" in PAGE

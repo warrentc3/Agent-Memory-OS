@@ -1,19 +1,23 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from agent_memory_os import MemoryClient
+from agent_memory_os.timestamp_converters import dt_to_stamp, utc_now_dt
 
 
 def _future_iso(days: int = 1) -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    return dt_to_stamp(utc_now_dt() + timedelta(days=days))
 
 
 def _past_iso(days: int = 1) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return dt_to_stamp(utc_now_dt() - timedelta(days=days))
 
 
 def test_zero_fts_hits_can_fallback_to_allowed_recent_core_memory(tmp_path):
+    """Lineage:
+    main: introduced 06716fb0@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "Warm cocoa is the authoritative comfort ritual.",
@@ -33,6 +37,9 @@ def test_zero_fts_hits_can_fallback_to_allowed_recent_core_memory(tmp_path):
 
 
 def test_fallback_does_not_leak_private_memory(tmp_path):
+    """Lineage:
+    main: introduced 06716fb0@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "Mizuki private comfort memory must never leak.",
@@ -63,6 +70,11 @@ def test_fallback_does_not_leak_private_memory(tmp_path):
 
 
 def test_fallback_excludes_expired_memories(tmp_path):
+    """Lineage:
+    main: introduced 06716fb0@pre-migration-registry.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "Expired pinned comfort memory is invalid.",
@@ -95,6 +107,9 @@ def test_fallback_excludes_expired_memories(tmp_path):
 
 
 def test_index_rebuild_preserves_memory_ids_and_records(tmp_path):
+    """Lineage:
+    main: introduced 06716fb0@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     original = client.add(
         "Rebuild must preserve this source-of-truth record.",

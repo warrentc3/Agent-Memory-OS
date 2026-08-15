@@ -39,8 +39,17 @@ documented shapes and degrade gracefully.
 ### Mem0 (`--from mem0`)
 A JSON list of memory objects, or `{"results": [...]}` / `{"memories": [...]}`.
 Each object: a text field (`memory` / `text` / `content`) plus optional `id`,
-`user_id`, `metadata`, `created_at`. Produce it with the OSS SDK's
-`Memory.get_all(...)` (dump the returned list to JSON) or a platform export.
+`user_id`, `metadata`, and timestamp provenance. Timestamp fields are checked in
+`created_at`, `createdAt`, `timestamp` order. Their values are classified by shape;
+timezone-explicit ISO timestamps (`Z` or an explicit offset, with or without
+fractional seconds) and Unix epoch seconds are converted to AgentMemoryOS's
+canonical UTC stamp. Unsupported or invalid values produce a warning and the next
+timestamp field is tried.
+
+Current Python OSS `Memory.get_all(...)` and hosted Get Memories responses use a
+`{"results": [...]}` envelope. TypeScript OSS uses the same envelope with camel-case
+`createdAt`. Mem0's platform Memory Export feature produces a caller-defined schema,
+so its output is importable only when that schema produces compatible records.
 
 ### Zep / Graphiti (`--from zep`)
 A JSON object with `facts` (edges carrying a `fact`/`name`/`summary` string)

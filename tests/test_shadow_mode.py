@@ -1,4 +1,5 @@
 import json
+import re
 import subprocess
 import sys
 
@@ -6,6 +7,10 @@ from agent_memory_os.shadow_mode import ShadowRecallMonitor, summarize_shadow_lo
 
 
 def test_shadow_monitor_records_legacy_and_agent_memory_recall_comparison(tmp_path):
+    """Lineage:
+    main: introduced 246961e6@pre-migration-registry.
+    time-helper: changed 5551f7d6@db-schema-v21.
+    """
     log_path = tmp_path / "shadow_recall.jsonl"
     monitor = ShadowRecallMonitor(log_path=log_path)
 
@@ -22,16 +27,24 @@ def test_shadow_monitor_records_legacy_and_agent_memory_recall_comparison(tmp_pa
     assert record["latency_delta_ms"] == -32.5
     assert record["acl_zero_leakage"] is True
     assert record["phase"] == "Phase 1: Silent Mirroring"
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z",
+        record["timestamp"],
+    )
 
     lines = log_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
     persisted = json.loads(lines[0])
+    assert persisted["timestamp"] == record["timestamp"]
     assert persisted["query"] == "Who handles persistent memory?"
     assert persisted["legacy_count"] == 2
     assert persisted["candidate_count"] == 2
 
 
 def test_shadow_monitor_flags_no_go_on_acl_leakage(tmp_path):
+    """Lineage:
+    main: introduced 246961e6@pre-migration-registry.
+    """
     monitor = ShadowRecallMonitor(log_path=tmp_path / "shadow_recall.jsonl")
 
     record = monitor.compare_recall(
@@ -48,6 +61,9 @@ def test_shadow_monitor_flags_no_go_on_acl_leakage(tmp_path):
 
 
 def test_shadow_monitor_summarizes_kpis_from_jsonl(tmp_path):
+    """Lineage:
+    main: introduced 246961e6@pre-migration-registry; f1d603b4@pre-migration-registry.
+    """
     log_path = tmp_path / "shadow_recall.jsonl"
     monitor = ShadowRecallMonitor(log_path=log_path)
     monitor.compare_recall(
@@ -77,6 +93,9 @@ def test_shadow_monitor_summarizes_kpis_from_jsonl(tmp_path):
 
 
 def test_summarize_shadow_log_builds_evidence_pack_with_profiles_and_import_totals(tmp_path):
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     log_path = tmp_path / "shadow_recall.jsonl"
     records = [
         {
@@ -116,6 +135,9 @@ def test_summarize_shadow_log_builds_evidence_pack_with_profiles_and_import_tota
 
 
 def test_cli_shadow_summary_outputs_json_evidence_pack(tmp_path):
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     log_path = tmp_path / "shadow_recall.jsonl"
     log_path.write_text(
         json.dumps(

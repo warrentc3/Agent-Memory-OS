@@ -19,6 +19,9 @@ def _seed(client, owner, n=1, visibility=None):
 
 
 def test_owner_counts_lists_every_owner(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     _seed(client, "default", 2)
     _seed(client, "mizuki", 1)
@@ -29,6 +32,9 @@ def test_owner_counts_lists_every_owner(tmp_path):
 
 
 def test_owner_counts_flags_registered_agents(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.register_agent("mizuki", display_name="Mizuki", kind="custom")
     _seed(client, "mizuki", 1)
@@ -37,7 +43,11 @@ def test_owner_counts_flags_registered_agents(tmp_path):
 
 
 def test_reassign_owner_merges_into_existing(tmp_path):
-    """The gap rename_agent can't fill: fold 'default' into an EXISTING owner."""
+    """The gap rename_agent can't fill: fold 'default' into an EXISTING owner.
+
+    Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     _seed(client, "default", 3)
     _seed(client, "mizuki", 1)
@@ -49,6 +59,9 @@ def test_reassign_owner_merges_into_existing(tmp_path):
 
 
 def test_legacy_context_is_surfaced_and_classified_with_delivery_history(tmp_path):
+    """Lineage:
+    main: introduced dfc218f7@db-schema-v19.
+    """
     client = MemoryClient(home=tmp_path)
     snapshot_id = client.offload_context(
         {"step": 1},
@@ -83,6 +96,9 @@ def test_legacy_context_is_surfaced_and_classified_with_delivery_history(tmp_pat
 
 
 def test_reassign_owner_moves_agent_grants_and_bumps_acl(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     # a memory shared explicitly to agent:old
     client.add("shared note", owner="alice", visibility=["agent:old"])
@@ -97,6 +113,9 @@ def test_reassign_owner_moves_agent_grants_and_bumps_acl(tmp_path):
 
 
 def test_reassign_owner_rejects_identical_or_empty(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     with pytest.raises(ValueError):
         client.reassign_owner("x", "x")
@@ -105,6 +124,9 @@ def test_reassign_owner_rejects_identical_or_empty(tmp_path):
 
 
 def test_reassign_owner_renames_registry_row_when_target_free(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.register_agent("old", display_name="Old", kind="custom")
     _seed(client, "old", 1)
@@ -114,6 +136,9 @@ def test_reassign_owner_renames_registry_row_when_target_free(tmp_path):
 
 
 def test_reassign_owner_drops_registry_row_when_target_taken(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.register_agent("old", display_name="Old", kind="custom")
     client.store.register_agent("keep", display_name="Keep", kind="custom")
@@ -124,6 +149,9 @@ def test_reassign_owner_drops_registry_row_when_target_taken(tmp_path):
 
 
 def test_purge_owner_removes_all_owned(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     _seed(client, "mizuki", 3)
     result = client.purge_owner("mizuki")
@@ -132,6 +160,9 @@ def test_purge_owner_removes_all_owned(tmp_path):
 
 
 def test_purge_owner_removes_requester_delivery_history(tmp_path):
+    """Lineage:
+    main: introduced 1287c647@db-schema-v20.
+    """
     client = MemoryClient(home=tmp_path)
     shared = client.add(
         "Shared memory delivered to Bob.",
@@ -148,7 +179,11 @@ def test_purge_owner_removes_requester_delivery_history(tmp_path):
 
 def test_reassign_registers_unrecognized_target_by_default(tmp_path):
     """Moving memories to a fresh owner must leave them under a RECOGNIZED
-    identity, else they are hidden all over again (the original mizuki bug)."""
+    identity, else they are hidden all over again (the original mizuki bug).
+
+    Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     _seed(client, "default", 2)
     changed = client.reassign_owner("default", "brandnew")
@@ -160,6 +195,9 @@ def test_reassign_registers_unrecognized_target_by_default(tmp_path):
 
 
 def test_reassign_no_register_leaves_target_unregistered(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     _seed(client, "default", 1)
     changed = client.reassign_owner("default", "loose", register_target=False)
@@ -168,6 +206,9 @@ def test_reassign_no_register_leaves_target_unregistered(tmp_path):
 
 
 def test_reassign_into_existing_agent_does_not_reregister(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.register_agent("mizuki", display_name="Mizuki", kind="custom")
     _seed(client, "default", 1)
@@ -177,7 +218,11 @@ def test_reassign_into_existing_agent_does_not_reregister(tmp_path):
 
 def test_private_memory_readable_by_new_identity_after_rename(tmp_path):
     """Regression for 'after moving, can the memory still be read?': a PRIVATE
-    memory follows its owner and is readable by the new id, not the old."""
+    memory follows its owner and is readable by the new id, not the old.
+
+    Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.register_agent("old", display_name="Old", kind="custom")
     client.add("private to old", owner="old", visibility=[])
@@ -190,7 +235,11 @@ def test_private_memory_readable_by_new_identity_after_rename(tmp_path):
 
 
 def test_rename_agent_still_refuses_existing_target(tmp_path):
-    """reassign_owner merges; rename_agent must still refuse to merge."""
+    """reassign_owner merges; rename_agent must still refuse to merge.
+
+    Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.register_agent("keep", display_name="Keep", kind="custom")
     with pytest.raises(ValueError, match="already exists"):

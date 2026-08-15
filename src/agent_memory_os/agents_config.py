@@ -46,14 +46,18 @@ def load_agents_config(home: str | Path | None) -> list[dict]:
         raise ValueError(f"invalid {path}: {exc}") from exc
     agents = data.get("agents", {})
     if not isinstance(agents, dict):
-        raise ValueError(f"invalid {path}: [agents.<id>] tables expected")
+        raise ValueError(  # noqa: TRY004 - invalid TOML configuration value
+            f"invalid {path}: [agents.<id>] tables expected"
+        )
     entries = []
     for agent_id, fields in agents.items():
         if not isinstance(fields, dict):
-            raise ValueError(f"invalid {path}: [agents.{agent_id}] must be a table")
+            raise ValueError(  # noqa: TRY004 - invalid TOML configuration value
+                f"invalid {path}: [agents.{agent_id}] must be a table"
+            )
         teams = fields.get("teams", [])
         if isinstance(teams, str) or not isinstance(teams, (list, tuple)):
-            raise ValueError(
+            raise ValueError(  # noqa: TRY004 - invalid TOML configuration value
                 f"invalid {path}: [agents.{agent_id}] teams must be a list, "
                 f'e.g. teams = ["apollo", "ops"]'
             )
@@ -98,15 +102,28 @@ def apply_agents_config(store, home: str | Path | None) -> list[str]:
         existing = store.get_agent(entry["id"]) or {}
         specified = entry["_specified"]
 
-        def field(name, default):
-            return entry[name] if name in specified else existing.get(name, default)
-
         store.register_agent(
             entry["id"],
-            display_name=field("display_name", ""),
-            kind=field("kind", "custom"),
-            teams=field("teams", []),
-            notes=field("notes", ""),
+            display_name=(
+                entry["display_name"]
+                if "display_name" in specified
+                else existing.get("display_name", "")
+            ),
+            kind=(
+                entry["kind"]
+                if "kind" in specified
+                else existing.get("kind", "custom")
+            ),
+            teams=(
+                entry["teams"]
+                if "teams" in specified
+                else existing.get("teams", [])
+            ),
+            notes=(
+                entry["notes"]
+                if "notes" in specified
+                else existing.get("notes", "")
+            ),
         )
         applied.append(entry["id"])
     return applied

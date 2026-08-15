@@ -2,6 +2,9 @@ from agent_memory_os import MemoryClient, RecallProfile
 
 
 def test_link_crud_and_index_rebuild_survival(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("Staging deploy failed with database lock.", visibility=["global"])
     b = client.add("Snapshot rule: create a rollback snapshot before schema changes.", visibility=["global"])
@@ -22,6 +25,9 @@ def test_link_crud_and_index_rebuild_survival(tmp_path):
 
 
 def test_resonance_surfaces_linked_memory_missing_query_terms(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("Staging deploy failed with database lock.", visibility=["global"])
     b = client.add("Snapshot rule: create a rollback backup before schema changes.", visibility=["global"])
@@ -37,6 +43,9 @@ def test_resonance_surfaces_linked_memory_missing_query_terms(tmp_path):
 
 
 def test_resonance_private_neighbor_not_returned_and_not_traversable(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path, resonance_hops=2)
     a = client.add(
         "Team deploy checklist for staging releases.",
@@ -70,12 +79,17 @@ def test_resonance_private_neighbor_not_returned_and_not_traversable(tmp_path):
 
 
 def test_resonance_excludes_expired_neighbor(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("Staging deploy failed with database lock.", visibility=["global"])
     expired = client.add(
         "Old mitigation runbook that no longer applies.",
         visibility=["global"],
-        expires_at="2020-01-01T00:00:00+00:00",
+        expires_at="2020-01-01T00:00:00.000000Z",
     )
     client.link(a.id, expired.id, weight=0.9)
 
@@ -85,6 +99,9 @@ def test_resonance_excludes_expired_neighbor(tmp_path):
 
 
 def test_record_recall_reinforces_links_and_creates_colinks(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("Deploy checklist for staging.", visibility=["global"])
     b = client.add("Rollback snapshot rule.", visibility=["global"])
@@ -112,6 +129,9 @@ def test_record_recall_reinforces_links_and_creates_colinks(tmp_path):
 
 
 def test_recall_profile_reorders_types_per_agent_persona(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "Coffee brewing procedure: 92C water, 1:15 ratio, 3 minute steep.",
@@ -136,6 +156,9 @@ def test_recall_profile_reorders_types_per_agent_persona(tmp_path):
 
 
 def test_profile_never_reveals_hidden_memories(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "Private preference only for owner.",

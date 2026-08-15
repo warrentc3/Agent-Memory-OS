@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "AgentMemoryOS sync bundle v4 JSONL line",
+  "description": "Closed timestamp-ubiquity wire contract. Validate one JSONL line at a time.",
+  "oneOf": [
+    {"$ref": "#/$defs/header"},
+    {"$ref": "#/$defs/record"}
+  ],
+  "$defs": {
+    "stamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{6}Z$"
+    },
+    "optionalStamp": {
+      "anyOf": [
+        {"$ref": "#/$defs/stamp"},
+        {"type": "null"}
+      ]
+    },
+    "header": {
+      "type": "object",
+      "required": ["kind", "version"],
+      "properties": {
+        "kind": {"const": "bundle"},
+        "version": {"const": 4},
+        "node_name": {"type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "memory": {
+      "allOf": [
+        {"$ref": "../v001/bundle.schema.json#/$defs/memory"},
+        {
+          "required": ["acl_updated_at"],
+          "properties": {
+            "created_at": {"$ref": "#/$defs/stamp"},
+            "updated_at": {"$ref": "#/$defs/stamp"},
+            "acl_updated_at": {"$ref": "#/$defs/stamp"},
+            "expires_at": {"$ref": "#/$defs/optionalStamp"},
+            "last_accessed_at": {"$ref": "#/$defs/optionalStamp"}
+          }
+        }
+      ],
+      "propertyNames": {
+        "enum": [
+          "kind", "id", "owner", "scope", "type", "content", "summary",
+          "tags", "visibility", "source", "confidence", "importance",
+          "created_at", "updated_at", "acl_updated_at", "expires_at",
+          "decay_policy", "decay_half_life_days", "last_accessed_at",
+          "access_count", "pinned", "helpful_count", "unhelpful_count"
+        ]
+      }
+    },
+    "link": {
+      "allOf": [
+        {"$ref": "../v001/bundle.schema.json#/$defs/link"},
+        {
+          "properties": {
+            "created_at": {"$ref": "#/$defs/stamp"},
+            "updated_at": {"$ref": "#/$defs/stamp"},
+            "last_activated_at": {"$ref": "#/$defs/optionalStamp"}
+          }
+        }
+      ],
+      "propertyNames": {
+        "enum": [
+          "kind", "src_id", "dst_id", "relation", "weight", "created_at",
+          "updated_at", "last_activated_at", "activation_count", "source"
+        ]
+      }
+    },
+    "profile": {
+      "allOf": [
+        {"$ref": "../v001/bundle.schema.json#/$defs/profile"},
+        {"properties": {"updated_at": {"$ref": "#/$defs/stamp"}}}
+      ],
+      "propertyNames": {
+        "enum": ["kind", "agent_id", "type_weights", "scope_weights", "updated_at"]
+      }
+    },
+    "tombstone": {
+      "allOf": [
+        {"$ref": "../v002/bundle.schema.json#/$defs/tombstone"},
+        {"properties": {"deleted_at": {"$ref": "#/$defs/stamp"}}}
+      ],
+      "propertyNames": {"enum": ["kind", "id", "deleted_at"]}
+    },
+    "team": {
+      "allOf": [
+        {"$ref": "../v003/bundle.schema.json#/$defs/team"},
+        {
+          "properties": {
+            "updated_at": {"$ref": "#/$defs/stamp"},
+            "members": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      ],
+      "propertyNames": {"enum": ["kind", "id", "name", "updated_at", "members"]}
+    },
+    "project": {
+      "allOf": [
+        {"$ref": "../v003/bundle.schema.json#/$defs/project"},
+        {
+          "properties": {
+            "updated_at": {"$ref": "#/$defs/stamp"},
+            "members": {"type": "array", "items": {"type": "string"}}
+          }
+        }
+      ],
+      "propertyNames": {
+        "enum": ["kind", "id", "team_id", "name", "updated_at", "members"]
+      }
+    },
+    "orgTombstone": {
+      "allOf": [
+        {"$ref": "../v003/bundle.schema.json#/$defs/orgTombstone"},
+        {"properties": {"deleted_at": {"$ref": "#/$defs/stamp"}}}
+      ],
+      "propertyNames": {"enum": ["kind", "tomb_kind", "id", "deleted_at"]}
+    },
+    "record": {
+      "oneOf": [
+        {"$ref": "#/$defs/memory"},
+        {"$ref": "#/$defs/link"},
+        {"$ref": "#/$defs/profile"},
+        {"$ref": "#/$defs/tombstone"},
+        {"$ref": "#/$defs/team"},
+        {"$ref": "#/$defs/project"},
+        {"$ref": "#/$defs/orgTombstone"}
+      ]
+    }
+  }
+}

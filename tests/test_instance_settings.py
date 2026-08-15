@@ -10,6 +10,9 @@ from agent_memory_os.web_app import create_app
 
 
 def test_default_node_name_disambiguates_by_home(tmp_path):
+    """Lineage:
+    main: introduced 2de563fa@db-schema-v12.
+    """
     a = st.default_node_name(tmp_path / "alpha")
     b = st.default_node_name(tmp_path / "beta")
     assert a != b
@@ -17,6 +20,9 @@ def test_default_node_name_disambiguates_by_home(tmp_path):
 
 
 def test_settings_roundtrip_and_update(tmp_path):
+    """Lineage:
+    main: introduced 2de563fa@db-schema-v12.
+    """
     s = st.load_instance_settings(tmp_path)          # defaults
     assert s.port == 8000 and s.host == "127.0.0.1"
     st.update_instance_settings(tmp_path, node_name="mizuki-laptop", port=8123)
@@ -30,13 +36,20 @@ def test_settings_roundtrip_and_update(tmp_path):
 
 
 def test_client_exposes_node_name_from_settings(tmp_path):
+    """Lineage:
+    main: introduced 2de563fa@db-schema-v12.
+    """
     st.update_instance_settings(tmp_path, node_name="node-A")
     client = MemoryClient(home=tmp_path)
     assert client.node_name == "node-A"
 
 
 def test_env_overrides_settings_file(tmp_path, monkeypatch):
-    """12-factor: a container configures node/host/port purely via env."""
+    """12-factor: a container configures node/host/port purely via env.
+
+    Lineage:
+    main: introduced 48186428@db-schema-v12.
+    """
     st.update_instance_settings(tmp_path, node_name="from-file", port=8000)
     monkeypatch.setenv("AGENT_MEMORY_NODE_NAME", "from-env")
     monkeypatch.setenv("AGENT_MEMORY_WEB_PORT", "9090")
@@ -48,6 +61,9 @@ def test_env_overrides_settings_file(tmp_path, monkeypatch):
 
 
 def test_find_available_port_skips_taken(tmp_path):
+    """Lineage:
+    main: introduced 2de563fa@db-schema-v12; e94d7dc8@db-schema-v12.
+    """
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as taken:
         # Hold the port exclusively (no SO_REUSEADDR) so the probe must skip it
         # on every platform, Windows included.
@@ -60,6 +76,9 @@ def test_find_available_port_skips_taken(tmp_path):
 
 
 def test_api_node_reports_name(tmp_path):
+    """Lineage:
+    main: introduced 2de563fa@db-schema-v12.
+    """
     st.update_instance_settings(tmp_path, node_name="apollo-hub")
     web = TestClient(create_app(home=tmp_path))
     res = web.get("/api/node")
@@ -68,6 +87,9 @@ def test_api_node_reports_name(tmp_path):
 
 
 def test_peer_stores_and_lists_name(tmp_path):
+    """Lineage:
+    main: introduced 2de563fa@db-schema-v12.
+    """
     client = MemoryClient(home=tmp_path)
     client.store.add_peer("http://peer:8000", policy="shared", name="codex-box")
     peer = client.store.list_peers()[0]
@@ -78,6 +100,9 @@ def test_peer_stores_and_lists_name(tmp_path):
 
 
 def test_bundle_header_carries_node_name(tmp_path):
+    """Lineage:
+    main: introduced 2de563fa@db-schema-v12.
+    """
     st.update_instance_settings(tmp_path, node_name="origin-node")
     client = MemoryClient(home=tmp_path)
     client.add("shared thing", visibility=["global"])
@@ -89,7 +114,11 @@ def test_bundle_header_carries_node_name(tmp_path):
 
 
 def test_add_peer_auto_fetches_node_name(tmp_path, monkeypatch):
-    """POST /api/peers with no name pulls the peer's advertised node_name."""
+    """POST /api/peers with no name pulls the peer's advertised node_name.
+
+    Lineage:
+    main: introduced 2de563fa@db-schema-v12.
+    """
     st.update_instance_settings(tmp_path / "peer", node_name="the-peer")
     peer_app = TestClient(create_app(home=tmp_path / "peer"))
 

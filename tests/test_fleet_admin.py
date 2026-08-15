@@ -12,12 +12,19 @@ The trust model under test:
 
 from __future__ import annotations
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
 from agent_memory_os import crypto, tokens
 from agent_memory_os.client import MemoryClient
 from agent_memory_os.web_app import create_app
+
+_CANONICAL_UTC_RE = (
+    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"\.[0-9]{6}Z"
+)
 
 
 @pytest.fixture()
@@ -48,6 +55,9 @@ def _signed(http, keypair, method, target, body=b""):
 # --------------------------------------------------------------------------- #
 
 def test_keypair_roundtrip(tmp_path):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     keypair = crypto.generate_fleet_keypair()
     crypto.save_fleet_key(tmp_path, keypair)
     loaded = crypto.load_fleet_key(tmp_path)
@@ -58,6 +68,9 @@ def test_keypair_roundtrip(tmp_path):
 
 
 def test_grant_validates_caps(tmp_path):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     client = MemoryClient(home=tmp_path)
     keypair = crypto.generate_fleet_keypair()
     with pytest.raises(ValueError, match="unknown capabilities"):
@@ -68,6 +81,9 @@ def test_grant_validates_caps(tmp_path):
 
 
 def test_revoke_and_regrant(tmp_path):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     client = MemoryClient(home=tmp_path)
     keypair = crypto.generate_fleet_keypair()
     grant = client.store.grant_fleet_admin(keypair["public_key"], ["manage"])
@@ -80,21 +96,60 @@ def test_revoke_and_regrant(tmp_path):
     client.close()
 
 
+def test_fleet_nonce_prune_uses_canonical_zulu_cutoff(tmp_path):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced 22af9e1f@db-schema-v21.
+    """
+    client = MemoryClient(home=tmp_path)
+    client.store.conn.execute(
+        "INSERT INTO fleet_nonces(nonce, seen_at) VALUES (?, ?)",
+        ("old", "2000-01-01T00:00:00.000000Z"),
+    )
+    client.store.conn.execute(
+        "INSERT INTO fleet_nonces(nonce, seen_at) VALUES (?, ?)",
+        ("recent", "2999-01-01T00:00:00.000000Z"),
+    )
+    client.store.conn.commit()
+
+    assert client.store.consume_fleet_nonce("new", prune_older_than_s=600) is True
+
+    rows = {
+        row["nonce"]: row["seen_at"]
+        for row in client.store.conn.execute(
+            "SELECT nonce, seen_at FROM fleet_nonces ORDER BY nonce"
+        ).fetchall()
+    }
+    assert "old" not in rows
+    assert rows["recent"] == "2999-01-01T00:00:00.000000Z"
+    assert re.fullmatch(_CANONICAL_UTC_RE, rows["new"])
+    client.close()
+
+
 # --------------------------------------------------------------------------- #
 # Signed requests against the live app
 # --------------------------------------------------------------------------- #
 
 def test_signed_get_accepted_with_manage(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     response = _signed(node["http"], node["keypair"], "GET", "/api/stats")
     assert response.status_code == 200
     assert "total" in response.json()
 
 
 def test_unsigned_request_still_401(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     assert node["http"].get("/api/stats").status_code == 401
 
 
 def test_wrong_key_rejected(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     stranger = crypto.generate_fleet_keypair()  # never granted
     response = _signed(node["http"], stranger, "GET", "/api/stats")
     assert response.status_code == 403
@@ -102,6 +157,9 @@ def test_wrong_key_rejected(node):
 
 
 def test_tampered_signature_rejected(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     headers = crypto.fleet_sign_headers(node["keypair"], "GET", "/api/stats")
     headers["x-amos-fleet-signature"] = headers["x-amos-fleet-signature"][:-4] + "AAAA"
     response = node["http"].get("/api/stats", headers=headers)
@@ -111,6 +169,9 @@ def test_tampered_signature_rejected(node):
 
 def test_signature_bound_to_route_and_query(node):
     # A signature minted for one target must not authorize another.
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     headers = crypto.fleet_sign_headers(node["keypair"], "GET", "/api/stats")
     response = node["http"].get("/api/owners", headers=headers)
     assert response.status_code == 403
@@ -121,6 +182,9 @@ def test_signature_bound_to_route_and_query(node):
 
 
 def test_replayed_nonce_rejected(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     headers = crypto.fleet_sign_headers(node["keypair"], "GET", "/api/stats")
     assert node["http"].get("/api/stats", headers=headers).status_code == 200
     replay = node["http"].get("/api/stats", headers=headers)
@@ -129,6 +193,9 @@ def test_replayed_nonce_rejected(node):
 
 
 def test_expired_timestamp_rejected(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     headers = crypto.fleet_sign_headers(node["keypair"], "GET", "/api/stats")
     stale = str(int(headers["x-amos-fleet-timestamp"]) - 3600)
     message = crypto.fleet_canonical_message(
@@ -143,12 +210,18 @@ def test_expired_timestamp_rejected(node):
 
 def test_manage_cannot_read_content_routes(node):
     # /api/memories exposes memory content -> needs read-private.
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     response = _signed(node["http"], node["keypair"], "GET", "/api/memories")
     assert response.status_code == 403
     assert "read-private" in response.json()["detail"]
 
 
 def test_read_private_cap_unlocks_content_and_audits(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     client = MemoryClient(home=node["home"])
     client.store.grant_fleet_admin(node["keypair"]["public_key"],
                                    ["manage", "read-private"])
@@ -165,6 +238,9 @@ def test_read_private_cap_unlocks_content_and_audits(node):
 
 
 def test_signed_mutation_accepted_and_audited(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     body = b'{"old_owner": "alice", "new_owner": "bob"}'
     response = _signed(node["http"], node["keypair"], "POST",
                        "/api/owners/reassign", body)
@@ -176,6 +252,9 @@ def test_signed_mutation_accepted_and_audited(node):
 
 
 def test_revocation_is_immediate(node):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     client = MemoryClient(home=node["home"])
     client.store.revoke_fleet_admin(node["keypair"]["key_id"])
     client.close()
@@ -190,7 +269,11 @@ def test_revocation_is_immediate(node):
 def test_sync_bundle_cannot_carry_fleet_grants(tmp_path):
     """A malicious peer must not be able to grant itself fleet admin by
     crafting a bundle: the bundle format has no fleet_admins channel, and
-    import must leave the table untouched."""
+    import must leave the table untouched.
+
+    Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     from agent_memory_os.sync import export_bundle, import_bundle
 
     a = MemoryClient(home=tmp_path / "a")
@@ -265,6 +348,9 @@ def small_fleet(tmp_path, monkeypatch):
 
 
 def test_fleet_status_aggregates_and_degrades(small_fleet):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     from agent_memory_os.fleet import fleet_status
 
     report = fleet_status(small_fleet["console"], small_fleet["home"])
@@ -285,6 +371,9 @@ def test_fleet_status_aggregates_and_degrades(small_fleet):
 
 
 def test_fleet_trigger_sync_runs_on_granted_nodes(small_fleet):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     from agent_memory_os.fleet import fleet_trigger
 
     results = {r["name"]: r for r in
@@ -295,6 +384,9 @@ def test_fleet_trigger_sync_runs_on_granted_nodes(small_fleet):
 
 
 def test_fleet_trigger_single_node_and_unknown(small_fleet):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     from agent_memory_os.fleet import fleet_trigger
 
     results = fleet_trigger(small_fleet["console"], small_fleet["home"], "sync",
@@ -306,6 +398,9 @@ def test_fleet_trigger_single_node_and_unknown(small_fleet):
 
 
 def test_fleet_status_requires_console_key(tmp_path):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     from agent_memory_os.fleet import FleetKeyMissing, fleet_status
 
     client = MemoryClient(home=tmp_path)
@@ -319,6 +414,9 @@ def test_fleet_status_requires_console_key(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_web_fleet_status_unconfigured(tmp_path):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     app = create_app(home=tmp_path)
     http = TestClient(app)
     data = http.get("/api/fleet/status").json()
@@ -328,6 +426,9 @@ def test_web_fleet_status_unconfigured(tmp_path):
 
 def test_web_fleet_status_configured(small_fleet):
     # Serve a console app over the SAME home that holds the fleet key + peers.
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     app = create_app(home=small_fleet["home"])
     http = TestClient(app)
     data = http.get("/api/fleet/status").json()
@@ -339,6 +440,9 @@ def test_web_fleet_status_configured(small_fleet):
 
 
 def test_web_fleet_trigger_sync(small_fleet):
+    """Lineage:
+    main: introduced 3ee60059@db-schema-v17.
+    """
     app = create_app(home=small_fleet["home"])
     http = TestClient(app)
     r = http.post("/api/fleet/trigger",
@@ -351,6 +455,9 @@ def test_web_fleet_trigger_sync(small_fleet):
 
 
 def test_web_fleet_browse_requires_read_private_then_works(small_fleet):
+    """Lineage:
+    main: introduced 3e999695@db-schema-v17.
+    """
     app = create_app(home=small_fleet["home"])
     http = TestClient(app)
     # node-a granted manage only -> the target node refuses the content read
@@ -379,7 +486,11 @@ def test_web_fleet_browse_requires_read_private_then_works(small_fleet):
 
 def test_update_trigger_carries_confirm_echo():
     """update-run refuses without ?confirm=update; the console must supply it
-    (found live: fleet update failed fleet-wide with HTTP 400 without this)."""
+    (found live: fleet update failed fleet-wide with HTTP 400 without this).
+
+    Lineage:
+    main: introduced 500570f8@db-schema-v17.
+    """
     from agent_memory_os.fleet import TRIGGER_TARGETS
 
     method, path = TRIGGER_TARGETS["update"]
@@ -396,6 +507,9 @@ def _console_http(small_fleet):
 
 def test_fleet_proxy_forwards_get_and_post(small_fleet):
     # read-private needed for the remote memories read
+    """Lineage:
+    main: introduced d7c1c03c@db-schema-v20.
+    """
     grantor = MemoryClient(home=small_fleet["home"].parent / "node-a")
     grantor.store.grant_fleet_admin(small_fleet["keypair"]["public_key"],
                                     ["manage", "read-private"])
@@ -423,6 +537,9 @@ def test_fleet_proxy_forwards_get_and_post(small_fleet):
 
 
 def test_fleet_proxy_guard_rails(small_fleet):
+    """Lineage:
+    main: introduced d7c1c03c@db-schema-v20.
+    """
     http = _console_http(small_fleet)
     # unregistered target refused (no open forwarder)
     r = http.get("/api/fleet/proxy",
@@ -446,6 +563,9 @@ def test_fleet_proxy_guard_rails(small_fleet):
 def test_fleet_proxy_surfaces_remote_capability_denial(small_fleet):
     # node-a granted manage only in the fixture: content read denied REMOTELY,
     # and the console surfaces that status instead of masking it.
+    """Lineage:
+    main: introduced d7c1c03c@db-schema-v20.
+    """
     http = _console_http(small_fleet)
     r = http.get("/api/fleet/proxy",
                  params={"url": "http://node-a:8000", "path": "/api/memories"})

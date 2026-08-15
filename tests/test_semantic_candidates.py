@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from typing import cast
 
 from agent_memory_os import MemoryClient
 from agent_memory_os.candidates import Candidate, CandidateProvider
-
+from agent_memory_os.timestamp_converters import dt_to_stamp, utc_now_dt
 
 PRIVATE_SECRET = "PRIVATE semantic-only candidate must never leak."
 
@@ -89,7 +89,7 @@ class ExcessiveSemanticProvider:
 
 
 def _past_iso(days: int = 1) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    return dt_to_stamp(utc_now_dt() - timedelta(days=days))
 
 
 def _set_candidate_providers(client: MemoryClient, *providers: object) -> None:
@@ -97,6 +97,11 @@ def _set_candidate_providers(client: MemoryClient, *providers: object) -> None:
 
 
 def test_semantic_candidate_is_rejoined_from_sqlite(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
     client = MemoryClient(home=tmp_path)
     record = client.add(
         "SQLite authoritative content returned after semantic candidate rejoin.",
@@ -114,6 +119,9 @@ def test_semantic_candidate_is_rejoined_from_sqlite(tmp_path):
 
 
 def test_semantic_candidate_private_memory_does_not_leak_to_other_agent(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     private = client.add(
         PRIVATE_SECRET,
@@ -139,6 +147,9 @@ def test_semantic_candidate_private_memory_does_not_leak_to_other_agent(tmp_path
 
 
 def test_semantic_candidate_expired_memory_is_excluded(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     expired = client.add(
         "Expired semantic candidate must be filtered.",
@@ -163,6 +174,9 @@ def test_semantic_candidate_expired_memory_is_excluded(tmp_path):
 
 
 def test_semantic_candidate_duplicate_is_deduped_by_memory_id(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     record = client.add(
         "Duplicate semantic candidate should appear once.",
@@ -178,6 +192,9 @@ def test_semantic_candidate_duplicate_is_deduped_by_memory_id(tmp_path):
 
 
 def test_semantic_provider_failure_degrades_to_fts_and_fallback(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     safe = client.add(
         "FTS fallback remains available when semantic backend fails.",
@@ -194,6 +211,9 @@ def test_semantic_provider_failure_degrades_to_fts_and_fallback(tmp_path):
 
 
 def test_semantic_provider_iteration_failure_degrades_to_fts(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     safe = client.add(
         "FTS remains available when semantic provider stream fails.",
@@ -210,6 +230,9 @@ def test_semantic_provider_iteration_failure_degrades_to_fts(tmp_path):
 
 
 def test_semantic_provider_iteration_failure_discards_partial_valid_candidates(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     semantic = client.add(
         "Partial semantic result must be discarded when provider stream fails.",
@@ -232,6 +255,9 @@ def test_semantic_provider_iteration_failure_discards_partial_valid_candidates(t
 
 
 def test_hostile_provider_name_failure_degrades_to_fts(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     safe = client.add(
         "FTS survives hostile semantic provider name property.",
@@ -248,6 +274,9 @@ def test_hostile_provider_name_failure_degrades_to_fts(tmp_path):
 
 
 def test_duplicate_flood_semantic_candidates_are_raw_capped(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     safe = client.add(
         "Duplicate flood semantic candidate is capped.",
@@ -265,6 +294,9 @@ def test_duplicate_flood_semantic_candidates_are_raw_capped(tmp_path):
 
 
 def test_malformed_semantic_candidates_are_skipped_without_breaking_valid_candidate(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     valid = client.add(
         "Valid semantic candidate survives malformed sidecar output.",
@@ -281,6 +313,9 @@ def test_malformed_semantic_candidates_are_skipped_without_breaking_valid_candid
 
 
 def test_excessive_semantic_candidates_are_capped_and_do_not_break_fts(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     safe = client.add(
         "FTS survives excessive semantic sidecar candidates.",
@@ -297,6 +332,9 @@ def test_excessive_semantic_candidates_are_capped_and_do_not_break_fts(tmp_path)
 
 
 def test_context_pack_report_does_not_include_unauthorized_semantic_candidates(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     private = client.add(
         PRIVATE_SECRET,
@@ -325,6 +363,9 @@ def test_context_pack_report_does_not_include_unauthorized_semantic_candidates(t
 
 
 def test_orphan_semantic_candidate_is_ignored(tmp_path):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     public = client.add(
         "Only real SQLite rows can be returned.",

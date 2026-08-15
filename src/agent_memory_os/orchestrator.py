@@ -152,7 +152,6 @@ def orchestrate_context(
             placed.add(record.id)
         return picked
 
-    buckets: dict[str, list[str]] = {name: [] for name in SECTION_ORDER}
     # The task bucket is built AFTER warnings/procedures actually emit: a record
     # claimed by take_type but dropped by its section's token cap must still be
     # eligible for the task section (which has the largest share + surplus),

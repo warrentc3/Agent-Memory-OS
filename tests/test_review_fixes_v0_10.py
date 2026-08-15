@@ -10,13 +10,19 @@ from agent_memory_os import MemoryClient
 
 
 def test_purge_owner_also_destroys_archive_and_logs(tmp_path):
-    """Right-to-forget must reach the cold archive, not just active memories."""
+    """Right-to-forget must reach the cold archive, not just active memories.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
     client = MemoryClient(home=tmp_path)
     rec = client.add(
         "secret onboarding note",
         owner="alice",
         visibility=[],
-        expires_at="2000-01-01T00:00:00+00:00",  # already expired -> archivable
+        expires_at="2000-01-01T00:00:00.000000Z",  # already expired -> archivable
     )
     client.run_retention()  # moves the expired row into memories_archive
     assert any(a["id"] == rec.id for a in client.list_archived()), "precondition: archived"
@@ -30,7 +36,11 @@ def test_purge_owner_also_destroys_archive_and_logs(tmp_path):
 
 
 def test_share_and_revoke_do_not_reset_freshness_clock(tmp_path):
-    """A pure ACL change is not a content edit; updated_at must not move."""
+    """A pure ACL change is not a content edit; updated_at must not move.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     rec = client.add("stable fact", owner="alice", visibility=[])
     before = client.get(rec.id).updated_at
@@ -43,7 +53,11 @@ def test_share_and_revoke_do_not_reset_freshness_clock(tmp_path):
 
 
 def test_get_visible_enforces_acl(tmp_path):
-    """The single-memory fetch used by the web API honours the ACL gate."""
+    """The single-memory fetch used by the web API honours the ACL gate.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     rec = client.add("alice private", owner="alice", visibility=[])
 
@@ -56,7 +70,11 @@ def test_get_visible_enforces_acl(tmp_path):
 
 
 def test_semantic_signature_changes_on_in_place_edit(tmp_path):
-    """Same-second content edit must change the rebuild signature."""
+    """Same-second content edit must change the rebuild signature.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("first", visibility=["global"])
     client.add("second", visibility=["global"])
@@ -67,6 +85,9 @@ def test_semantic_signature_changes_on_in_place_edit(tmp_path):
 
 
 def test_semantic_signature_changes_on_same_length_same_second_edit(tmp_path):
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     memory = client.add("alpha", visibility=["global"])
     sig_before = client.store.semantic_signature()
@@ -77,7 +98,11 @@ def test_semantic_signature_changes_on_same_length_same_second_edit(tmp_path):
 
 
 def test_semantic_signature_stable_under_reinforcement(tmp_path):
-    """Reinforcement writes must NOT trigger a spurious index rebuild."""
+    """Reinforcement writes must NOT trigger a spurious index rebuild.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("reinforce me", visibility=["global"])
     sig_before = client.store.semantic_signature()
@@ -86,6 +111,9 @@ def test_semantic_signature_stable_under_reinforcement(tmp_path):
 
 
 def test_rotate_snapshots_never_archives_pinned(tmp_path):
+    """Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     keep = []
     for i in range(4):
@@ -103,7 +131,11 @@ def test_rotate_snapshots_never_archives_pinned(tmp_path):
 
 
 def test_resonance_search_returns_seeds(tmp_path):
-    """resonance_search must not raise AttributeError once a seed is found."""
+    """resonance_search must not raise AttributeError once a seed is found.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     client.add("database migration rollback plan", visibility=["global"])
     results = client.resonance_search("database migration")
@@ -112,6 +144,9 @@ def test_resonance_search_returns_seeds(tmp_path):
 
 
 def test_agents_config_rejects_string_teams(tmp_path):
+    """Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     (tmp_path / "agents.toml").write_text(
         '[agents.cc-main]\nkind = "claude-code"\nteams = "apollo"\n',
         encoding="utf-8",
@@ -121,7 +156,11 @@ def test_agents_config_rejects_string_teams(tmp_path):
 
 
 def test_agents_config_invalid_entry_applies_nothing(tmp_path):
-    """A bad entry aborts before any write: no half-registered fleet."""
+    """A bad entry aborts before any write: no half-registered fleet.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     (tmp_path / "agents.toml").write_text(
         '[agents.good]\nkind = "hermes"\nteams = ["apollo"]\n'
         '[agents.bad]\nkind = "clade-code"\n',  # typo -> invalid kind
@@ -137,7 +176,11 @@ def test_agents_config_invalid_entry_applies_nothing(tmp_path):
 
 
 def test_llm_extractor_survives_non_string_reply(tmp_path):
-    """A completion returning None must degrade to zero links, not crash."""
+    """A completion returning None must degrade to zero links, not crash.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     from agent_memory_os.extractors import make_llm_link_extractor
     from agent_memory_os.schema import MemoryRecord
 
@@ -147,7 +190,11 @@ def test_llm_extractor_survives_non_string_reply(tmp_path):
 
 
 def test_import_bundle_rolls_back_on_corrupt_line(tmp_path):
-    """A truncated bundle must not leave half-merged rows behind."""
+    """A truncated bundle must not leave half-merged rows behind.
+
+    Lineage:
+    main: introduced 9dfab3ad@db-schema-v8.
+    """
     client = MemoryClient(home=tmp_path)
     bundle = tmp_path / "corrupt.jsonl"
     bundle.write_text(

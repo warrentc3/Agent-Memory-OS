@@ -65,6 +65,9 @@ def _labels(records):
 
 @pytest.mark.parametrize("who", sorted(EXPECTED_VIEW))
 def test_browse_and_search_show_exactly_the_entitled_set(org, who):
+    """Lineage:
+    main: introduced b89ea0f8@db-schema-v20.
+    """
     client, _ = org
     want = EXPECTED_VIEW[who]
     assert _labels(client.list_recent(requester_agent_id=who, limit=50)) == want
@@ -75,7 +78,11 @@ def test_browse_and_search_show_exactly_the_entitled_set(org, who):
 
 @pytest.mark.parametrize("who", sorted(EXPECTED_VIEW))
 def test_direct_id_probing_matches_the_same_matrix(org, who):
-    """get_visible must agree with search — an id in hand grants nothing."""
+    """get_visible must agree with search — an id in hand grants nothing.
+
+    Lineage:
+    main: introduced b89ea0f8@db-schema-v20.
+    """
     client, memories = org
     want = EXPECTED_VIEW[who]
     for label, memory_id in memories.items():
@@ -84,6 +91,9 @@ def test_direct_id_probing_matches_the_same_matrix(org, who):
 
 
 def test_project_membership_requires_team_membership(org):
+    """Lineage:
+    main: introduced b89ea0f8@db-schema-v20.
+    """
     client, _ = org
     with pytest.raises(ValueError):
         client.store.add_project_member("P1", "b1")  # b1 is in T2, not T1
@@ -91,7 +101,11 @@ def test_project_membership_requires_team_membership(org):
 
 def test_leaving_the_team_revokes_team_and_project_views_of_others(org):
     """The cascade: project membership dies with team membership — but only
-    for OTHERS' memories; ownership of one's own writes is never revoked."""
+    for OTHERS' memories; ownership of one's own writes is never revoked.
+
+    Lineage:
+    main: introduced b89ea0f8@db-schema-v20.
+    """
     client, memories = org
     store = client.store
     # a4 joins T1+P1b so a3 has a foreign project memory to lose sight of.
@@ -114,7 +128,11 @@ def test_leaving_the_team_revokes_team_and_project_views_of_others(org):
 def test_caller_asserted_team_id_never_grants_project_memories(org):
     """requester_team_id is SDK-trust-level (the caller already holds admin
     access); it may widen TEAM visibility but must never reach projects —
-    project membership resolves exclusively from the registry."""
+    project membership resolves exclusively from the registry.
+
+    Lineage:
+    main: introduced b89ea0f8@db-schema-v20.
+    """
     client, memories = org
     client.store.register_agent("stranger", teams=[])
     assert client.get_visible(memories["team T1"], requester_agent_id="stranger",

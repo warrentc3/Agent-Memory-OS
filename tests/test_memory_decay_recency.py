@@ -1,19 +1,23 @@
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 import pytest
 
 from agent_memory_os import MemoryClient, MemoryRecord
+from agent_memory_os.timestamp_converters import dt_to_stamp, utc_now_dt
 
 
 def iso_days_ago(days: int) -> str:
-    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+    return dt_to_stamp(utc_now_dt() - timedelta(days=days))
 
 
 def iso_days_from_now(days: int) -> str:
-    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat(timespec="seconds")
+    return dt_to_stamp(utc_now_dt() + timedelta(days=days))
 
 
 def test_decay_fields_default_to_safe_values():
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     rec = MemoryRecord(content="Default decay metadata")
 
     assert rec.decay_policy == "exponential"
@@ -24,16 +28,25 @@ def test_decay_fields_default_to_safe_values():
 
 
 def test_invalid_decay_policy_is_rejected():
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     with pytest.raises(ValueError, match="decay_policy"):
         MemoryRecord(content="bad", decay_policy="forever")
 
 
 def test_non_positive_decay_half_life_is_rejected():
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     with pytest.raises(ValueError, match="decay_half_life_days"):
         MemoryRecord(content="bad", decay_policy="linear", decay_half_life_days=0)
 
 
 def test_recent_memory_ranks_above_stale_similar_memory(tmp_path):
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "ranking-token deployment fact recent",
@@ -66,6 +79,9 @@ def test_recent_memory_ranks_above_stale_similar_memory(tmp_path):
 
 
 def test_important_old_memory_can_beat_recent_low_importance_memory(tmp_path):
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "priority-token architectural decision",
@@ -95,6 +111,9 @@ def test_important_old_memory_can_beat_recent_low_importance_memory(tmp_path):
 
 
 def test_expired_memory_is_never_returned_even_if_important(tmp_path):
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "expiry-token active fact",

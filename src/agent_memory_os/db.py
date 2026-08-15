@@ -1,10 +1,5 @@
 from __future__ import annotations
 
-from collections import defaultdict
-from dataclasses import replace
-from pathlib import Path
-from datetime import datetime, timedelta, timezone
-from typing import DefaultDict, Sequence
 import hashlib
 import json
 import math
@@ -12,107 +7,96 @@ import re
 import sqlite3
 import time
 import uuid
+from collections import defaultdict
+from collections.abc import Sequence
+from dataclasses import replace
+from datetime import datetime, timedelta
+from pathlib import Path
+from typing import ClassVar, cast
 
 from .candidates import Candidate, CandidateProvider
-from .schema import (
+from .constants import (
+    DASHBOARD_ACTIVITY_WINDOW_DAYS,
+    DECAY_FEEDBACK_MAX_HALF_LIFE_DAYS,
+    DECAY_FEEDBACK_MAX_MULTIPLIER,
+    DECAY_FEEDBACK_MIN_HALF_LIFE_DAYS,
+    DECAY_FEEDBACK_MIN_MULTIPLIER,
+    DECAY_FEEDBACK_ROUND_DIGITS,
+    DECAY_FEEDBACK_UPDATE_THRESHOLD_DAYS,
     DEFAULT_DECAY_HALF_LIFE_DAYS,
+    DEFAULT_DECAY_HALF_LIFE_FALLBACK_DAYS,
+    FLEET_NONCE_RETENTION_SECONDS,
+    LEGACY_CONTEXT_OWNER,
+    LINK_DECAY_HALF_LIFE_DAYS,
+    MEMBERSHIP_CACHE_TTL_SECONDS,
+    PAIRING_INVITE_TTL_SECONDS,
+    RETENTION_MIN_HALF_LIVES,
+    SNAPSHOT_RETENTION_COUNT_PER_SESSION,
+    SQLITE_BUSY_TIMEOUT_MILLISECONDS,
+)
+from .database_schema import SCHEMA
+from .migrations import MIGRATIONS
+from .schema import (
     MemoryLink,
     MemoryRecord,
     RecallProfile,
     SearchResult,
-    normalize_iso_timestamp,
-    utc_now,
-    utc_now_micro,
 )
 from .scoring import effective_score, freshness_factor, reinforcement_factor
-
+from .timestamp_converters import (
+    days_distance_from_dt_stamp,
+    dt_to_stamp,
+    seconds_distance_from_now_stamp,
+    seconds_distance_to_dt_stamp,
+    stamp_distance_from_dt_days,
+    stamp_to_dt,
+    utc_now_dt,
+    utc_now_stamp,
+)
 
 MAX_SEMANTIC_CANDIDATES = 500
 MAX_RESONANCE_CANDIDATES = 200
 RESONANCE_HOP_DECAY = 0.6
 RESONANCE_MAX_EDGES_PER_NODE = 8
 RESONANCE_CONVERGENCE_CAP = 2.0
-LINK_DECAY_HALF_LIFE_DAYS = 90.0
 CO_RECALL_WEIGHT_STEP = 0.05
 CO_RECALL_WEAKEN_STEP = 0.1
-LEGACY_CONTEXT_OWNER = "__legacy_unscoped_context__"
 CO_RECALL_INITIAL_WEIGHT = 0.2
 NEGATIVE_FEEDBACK_CONFIDENCE_STEP = 0.05
 SUPERSEDED_SCORE_PENALTY = 0.4
 
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS memories (
-  id TEXT PRIMARY KEY,
-  owner TEXT NOT NULL,
-  scope TEXT NOT NULL,
-  type TEXT NOT NULL,
-  content TEXT NOT NULL,
-  summary TEXT NOT NULL,
-  tags TEXT NOT NULL DEFAULT '[]',
-  visibility TEXT NOT NULL DEFAULT '[]',
-  source TEXT NOT NULL DEFAULT '{}',
-  confidence REAL NOT NULL DEFAULT 0.8,
-  importance REAL NOT NULL DEFAULT 0.5,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  expires_at TEXT,
-  decay_policy TEXT NOT NULL DEFAULT 'exponential',
-  decay_half_life_days REAL NOT NULL DEFAULT 30.0,
-  last_accessed_at TEXT,
-  access_count INTEGER NOT NULL DEFAULT 0,
-  pinned INTEGER NOT NULL DEFAULT 0
-);
-CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
-  id UNINDEXED,
-  owner UNINDEXED,
-  scope,
-  type,
-  content,
-  summary,
-  tags,
-  tokenize = 'unicode61'
-);
-CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-  INSERT INTO memories_fts(id, owner, scope, type, content, summary, tags)
-  VALUES (new.id, new.owner, new.scope, new.type, new.content, new.summary, new.tags);
-END;
-CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
-  DELETE FROM memories_fts WHERE id = old.id;
-END;
-CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
-  DELETE FROM memories_fts WHERE id = old.id;
-  INSERT INTO memories_fts(id, owner, scope, type, content, summary, tags)
-  VALUES (new.id, new.owner, new.scope, new.type, new.content, new.summary, new.tags);
-END;
-CREATE TABLE IF NOT EXISTS memory_links (
-  src_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-  dst_id TEXT NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
-  relation TEXT NOT NULL DEFAULT 'related_to',
-  weight REAL NOT NULL DEFAULT 0.5,
-  created_at TEXT NOT NULL,
-  updated_at TEXT NOT NULL,
-  last_activated_at TEXT,
-  activation_count INTEGER NOT NULL DEFAULT 0,
-  source TEXT NOT NULL DEFAULT '{}',
-  PRIMARY KEY (src_id, dst_id, relation)
-);
-CREATE INDEX IF NOT EXISTS memory_links_src ON memory_links(src_id);
-CREATE INDEX IF NOT EXISTS memory_links_dst ON memory_links(dst_id);
-CREATE TABLE IF NOT EXISTS recall_profiles (
-  agent_id TEXT PRIMARY KEY,
-  type_weights TEXT NOT NULL DEFAULT '{}',
-  scope_weights TEXT NOT NULL DEFAULT '{}',
-  updated_at TEXT NOT NULL
-);
-"""
+_CANONICAL_STAMP_GLOB = (
+    "[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]"
+    "T[0-9][0-9]:[0-9][0-9]:[0-9][0-9]."
+    "[0-9][0-9][0-9][0-9][0-9][0-9]Z"
+)
+
+
+def _live_expiry_sql(column: str = "expires_at") -> str:
+    # Canonical stamps sort chronologically as text at full microsecond
+    # precision. Migration v20 can retain offset ISO text, so only those
+    # noncanonical spellings use SQLite's instant-based compatibility path.
+    return (
+        f"({column} IS NULL OR CASE "
+        f"WHEN {column} GLOB '{_CANONICAL_STAMP_GLOB}' THEN {column} > ? "
+        f"ELSE julianday({column}) > julianday(?) END)"
+    )
+
+
+def _expired_expiry_sql(column: str = "expires_at") -> str:
+    return (
+        f"({column} IS NOT NULL AND CASE "
+        f"WHEN {column} GLOB '{_CANONICAL_STAMP_GLOB}' THEN {column} <= ? "
+        f"ELSE julianday({column}) <= julianday(?) END)"
+    )
+
 
 AUTO_LINK_WEIGHT = 0.3
 AUTO_LINK_LIMIT = 5
 CONSOLIDATION_MIN_CLUSTER_WEIGHT = 0.6
 CONSOLIDATION_MIN_ACTIVATIONS = 3
 CONSOLIDATION_MIN_CLUSTER_SIZE = 3
-RETENTION_MIN_HALF_LIVES = 4.0
 
 
 def _is_local_url(url: str) -> bool:
@@ -122,482 +106,6 @@ def _is_local_url(url: str) -> bool:
 
     host = (urlparse(url).hostname or "").lower()
     return host in ("localhost", "127.0.0.1", "::1", "0.0.0.0") or host.endswith(".localhost")
-
-
-def _migration_decay_columns(conn: sqlite3.Connection) -> None:
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(memories)")}
-    columns = {
-        "decay_policy": "TEXT NOT NULL DEFAULT 'exponential'",
-        "decay_half_life_days": "REAL NOT NULL DEFAULT 30.0",
-        "last_accessed_at": "TEXT",
-        "access_count": "INTEGER NOT NULL DEFAULT 0",
-        "pinned": "INTEGER NOT NULL DEFAULT 0",
-    }
-    for name, definition in columns.items():
-        if name not in existing:
-            conn.execute(f"ALTER TABLE memories ADD COLUMN {name} {definition}")
-
-
-def _migration_fix_fts_triggers(conn: sqlite3.Connection) -> None:
-    # Legacy AFTER UPDATE/DELETE triggers used the FTS5 'delete' command,
-    # which is invalid on regular FTS5 tables and raised 'SQL logic error'
-    # on every update_content()/delete().
-    rows = conn.execute(
-        "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name IN ('memories_ad', 'memories_au')"
-    ).fetchall()
-    broken = [row["name"] for row in rows if "'delete'" in (row["sql"] or "")]
-    if not broken:
-        return
-    for name in broken:
-        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
-    conn.executescript(SCHEMA)
-
-
-def _migration_archive_table(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS memories_archive (
-          id TEXT PRIMARY KEY,
-          owner TEXT NOT NULL,
-          scope TEXT NOT NULL,
-          type TEXT NOT NULL,
-          content TEXT NOT NULL,
-          summary TEXT NOT NULL,
-          tags TEXT NOT NULL DEFAULT '[]',
-          visibility TEXT NOT NULL DEFAULT '[]',
-          source TEXT NOT NULL DEFAULT '{}',
-          confidence REAL NOT NULL DEFAULT 0.8,
-          importance REAL NOT NULL DEFAULT 0.5,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          expires_at TEXT,
-          decay_policy TEXT NOT NULL DEFAULT 'exponential',
-          decay_half_life_days REAL NOT NULL DEFAULT 30.0,
-          last_accessed_at TEXT,
-          access_count INTEGER NOT NULL DEFAULT 0,
-          pinned INTEGER NOT NULL DEFAULT 0,
-          archived_at TEXT NOT NULL,
-          archive_reason TEXT NOT NULL
-        )
-        """
-    )
-
-
-def _migration_session_recall_log(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS session_recall_log (
-          session_id TEXT NOT NULL,
-          memory_id TEXT NOT NULL,
-          delivered_at TEXT NOT NULL,
-          PRIMARY KEY (session_id, memory_id)
-        )
-        """
-    )
-
-
-def _migration_session_recall_owner(conn: sqlite3.Connection) -> None:
-    """Scope iterative-delivery state by requester identity.
-
-    Existing rows predate requester-aware orchestration and remain under the
-    empty owner, which preserves the legacy/admin SDK view.
-    """
-    tables = {
-        row["name"]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table'"
-        ).fetchall()
-    }
-    if "session_recall_log" not in tables and "session_recall_log_v2" in tables:
-        conn.execute("ALTER TABLE session_recall_log_v2 RENAME TO session_recall_log")
-        return
-    columns = {
-        row["name"]
-        for row in conn.execute("PRAGMA table_info(session_recall_log)").fetchall()
-    }
-    if "owner" in columns:
-        return
-    conn.execute("DROP TABLE IF EXISTS session_recall_log_v2")
-    conn.execute(
-        """
-        CREATE TABLE session_recall_log_v2 (
-          owner TEXT NOT NULL DEFAULT '',
-          session_id TEXT NOT NULL,
-          memory_id TEXT NOT NULL,
-          delivered_at TEXT NOT NULL,
-          PRIMARY KEY (owner, session_id, memory_id)
-        )
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO session_recall_log_v2(owner, session_id, memory_id, delivered_at)
-        SELECT '', session_id, memory_id, delivered_at FROM session_recall_log
-        """
-    )
-    conn.execute("DROP TABLE session_recall_log")
-    conn.execute("ALTER TABLE session_recall_log_v2 RENAME TO session_recall_log")
-
-
-def _migration_mark_legacy_context(conn: sqlite3.Connection) -> None:
-    """Preserve pre-requester context as explicitly unscoped legacy state.
-
-    No migration-time identity is authoritative for a shared database. Marking
-    legacy rows avoids falsely assigning them while allowing requester-aware
-    readers to retain the same session continuity the old unscoped model had.
-    """
-    conn.execute(
-        "UPDATE memories SET owner = ? WHERE type = 'snapshot' AND owner = 'default'",
-        (LEGACY_CONTEXT_OWNER,),
-    )
-    conn.execute(
-        "UPDATE memories_archive SET owner = ? "
-        "WHERE type = 'snapshot' AND owner = 'default'",
-        (LEGACY_CONTEXT_OWNER,),
-    )
-    conn.execute(
-        "UPDATE session_recall_log SET owner = ? WHERE owner = ''",
-        (LEGACY_CONTEXT_OWNER,),
-    )
-
-
-def _migration_canonicalize_expiry_timestamps(conn: sqlite3.Connection) -> None:
-    """Canonicalize previously accepted ISO-8601 expiry spellings.
-
-    Python accepts forms such as basic-format dates that SQLite julianday()
-    does not. Rewriting parsable values keeps the instant-based SQL gates
-    compatible with records written before canonical storage was enforced.
-    """
-    for table in ("memories", "memories_archive"):
-        rows = conn.execute(
-            f"SELECT id, expires_at FROM {table} WHERE expires_at IS NOT NULL"
-        ).fetchall()
-        for row in rows:
-            try:
-                normalized = normalize_iso_timestamp(
-                    row["expires_at"],
-                    field_name="expires_at",
-                )
-            except ValueError:
-                # Preserve values outside the previously accepted Python ISO
-                # contract; this migration must not invent expiry semantics.
-                continue
-            if normalized != row["expires_at"]:
-                conn.execute(
-                    f"UPDATE {table} SET expires_at = ? WHERE id = ?",
-                    (normalized, row["id"]),
-                )
-
-
-def _migration_memory_audit(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS memory_audit (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          memory_id TEXT NOT NULL,
-          actor TEXT NOT NULL,
-          action TEXT NOT NULL,
-          detail TEXT NOT NULL DEFAULT '',
-          at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS memory_audit_memory ON memory_audit(memory_id)")
-
-
-def _migration_feedback_counts(conn: sqlite3.Connection) -> None:
-    existing = {row["name"] for row in conn.execute("PRAGMA table_info(memories)")}
-    for name in ("helpful_count", "unhelpful_count"):
-        if name not in existing:
-            conn.execute(f"ALTER TABLE memories ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
-    archive_existing = {row["name"] for row in conn.execute("PRAGMA table_info(memories_archive)")}
-    for name in ("helpful_count", "unhelpful_count"):
-        if name not in archive_existing:
-            conn.execute(f"ALTER TABLE memories_archive ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
-
-
-def _migration_sync_peers(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS sync_peers (
-          url TEXT PRIMARY KEY,
-          token TEXT,
-          added_at TEXT NOT NULL,
-          last_synced_at TEXT,
-          last_result TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-
-
-def _migration_agents_registry(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS agents (
-          id TEXT PRIMARY KEY,
-          display_name TEXT NOT NULL DEFAULT '',
-          kind TEXT NOT NULL DEFAULT 'custom',
-          teams TEXT NOT NULL DEFAULT '[]',
-          notes TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL,
-          last_seen_at TEXT
-        )
-        """
-    )
-
-
-def _migration_federation_trust(conn: sqlite3.Connection) -> None:
-    # Per-peer push policy. Existing peers keep today's behaviour ('full'
-    # replication) so no deployment silently changes; new peers default to
-    # 'shared' at the add_peer call site (private memories never leave).
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_peers)")}
-    if "policy" not in cols:
-        conn.execute(
-            "ALTER TABLE sync_peers ADD COLUMN policy TEXT NOT NULL DEFAULT 'full'"
-        )
-    # Tombstones let deletions propagate across a mesh instead of resurrecting
-    # from any peer that still holds the row.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS tombstones (
-          id TEXT PRIMARY KEY,
-          deleted_at TEXT NOT NULL
-        )
-        """
-    )
-
-
-def _migration_decay_base(conn: sqlite3.Connection) -> None:
-    # The half-life a memory was configured with (default-for-type, or a value
-    # the user set). Feedback tuning scales THIS, so an explicit half-life is
-    # no longer clobbered back to the type default on the next retention pass.
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(memories)")}
-    if "decay_base_half_life_days" not in cols:
-        conn.execute("ALTER TABLE memories ADD COLUMN decay_base_half_life_days REAL")
-        conn.execute(
-            "UPDATE memories SET decay_base_half_life_days = decay_half_life_days "
-            "WHERE decay_base_half_life_days IS NULL"
-        )
-
-
-def _migration_peer_name(conn: sqlite3.Connection) -> None:
-    # A human-friendly name for a peer, shown instead of the bare URL during
-    # sync (auto-filled from the peer's advertised node_name when available).
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(sync_peers)")}
-    if "name" not in cols:
-        conn.execute("ALTER TABLE sync_peers ADD COLUMN name TEXT NOT NULL DEFAULT ''")
-
-
-def _migration_teams_projects(conn: sqlite3.Connection) -> None:
-    # First-class teams and projects with explicit membership, so team-shared
-    # vs project-shared memory can be scoped correctly. Membership join tables
-    # are authoritative; a project's members must be a subset of its team's.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS teams (
-          id TEXT PRIMARY KEY,
-          name TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS team_members (
-          team_id TEXT NOT NULL,
-          agent_id TEXT NOT NULL,
-          PRIMARY KEY (team_id, agent_id)
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS projects (
-          id TEXT PRIMARY KEY,
-          team_id TEXT NOT NULL,
-          name TEXT NOT NULL DEFAULT '',
-          created_at TEXT NOT NULL
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS project_members (
-          project_id TEXT NOT NULL,
-          agent_id TEXT NOT NULL,
-          PRIMARY KEY (project_id, agent_id)
-        )
-        """
-    )
-    conn.execute("CREATE INDEX IF NOT EXISTS team_members_agent ON team_members(agent_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS project_members_agent ON project_members(agent_id)")
-    conn.execute("CREATE INDEX IF NOT EXISTS projects_team ON projects(team_id)")
-    # Backfill from the old flat agent.teams so existing memberships survive.
-    now = _iso_now_for_migration(conn)
-    for row in conn.execute("SELECT id, teams FROM agents").fetchall():
-        for team_id in json.loads(row[1] or "[]"):
-            team_id = str(team_id).strip()
-            if not team_id:
-                continue
-            conn.execute(
-                "INSERT OR IGNORE INTO teams(id, name, created_at) VALUES (?, ?, ?)",
-                (team_id, team_id, now),
-            )
-            conn.execute(
-                "INSERT OR IGNORE INTO team_members(team_id, agent_id) VALUES (?, ?)",
-                (team_id, row[0]),
-            )
-
-
-def _iso_now_for_migration(conn: sqlite3.Connection) -> str:
-    row = conn.execute("SELECT strftime('%Y-%m-%dT%H:%M:%S+00:00','now')").fetchone()
-    return row[0]
-
-
-def _migration_org_federation(conn: sqlite3.Connection) -> None:
-    # Federate the org structure: each team/project carries an updated_at that
-    # bumps on any membership change, so a bundle can carry the full member set
-    # and importers converge by last-writer-wins. Deletions propagate via
-    # org_tombstones; membership changes are recorded in org_audit.
-    now = _iso_now_for_migration(conn)
-    for table in ("teams", "projects"):
-        cols = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
-        if "updated_at" not in cols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN updated_at TEXT")
-            conn.execute(f"UPDATE {table} SET updated_at = COALESCE(created_at, ?)", (now,))
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS org_tombstones (
-          kind TEXT NOT NULL,          -- 'team' | 'project'
-          id TEXT NOT NULL,
-          deleted_at TEXT NOT NULL,
-          PRIMARY KEY (kind, id)
-        )
-        """
-    )
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS org_audit (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          at TEXT NOT NULL,
-          actor TEXT NOT NULL DEFAULT 'local',
-          action TEXT NOT NULL,        -- create_team|delete_team|add_team_member|...
-          detail TEXT NOT NULL DEFAULT ''
-        )
-        """
-    )
-
-
-def _migration_archive_links(conn: sqlite3.Connection) -> None:
-    # Cold-archive the association edges alongside the memory, so restore
-    # brings a memory back with its graph instead of at degree 0. No FK to
-    # memories: an endpoint may itself be archived/absent.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS memory_links_archive (
-          src_id TEXT NOT NULL,
-          dst_id TEXT NOT NULL,
-          relation TEXT NOT NULL DEFAULT 'related_to',
-          weight REAL NOT NULL DEFAULT 0.5,
-          created_at TEXT NOT NULL,
-          updated_at TEXT NOT NULL,
-          last_activated_at TEXT,
-          activation_count INTEGER NOT NULL DEFAULT 0,
-          source TEXT NOT NULL DEFAULT '{}',
-          archived_at TEXT NOT NULL,
-          PRIMARY KEY (src_id, dst_id, relation)
-        )
-        """
-    )
-
-
-def _migration_acl_clock(conn: sqlite3.Connection) -> None:
-    # An ACL clock independent of updated_at. Sharing/revoking must NOT restart
-    # the freshness/decay clock, but it MUST still propagate over sync — the old
-    # code updated visibility without bumping any clock, so a revoke never
-    # reached peers (already-synced memory stayed visible). acl_updated_at gives
-    # visibility its own last-writer-wins timeline. Backfill = updated_at so
-    # existing rows converge unchanged.
-    cols = {r[1] for r in conn.execute("PRAGMA table_info(memories)")}
-    if "acl_updated_at" not in cols:
-        conn.execute("ALTER TABLE memories ADD COLUMN acl_updated_at TEXT")
-        conn.execute("UPDATE memories SET acl_updated_at = updated_at WHERE acl_updated_at IS NULL")
-
-
-def _migration_pairing_invites(conn: sqlite3.Connection) -> None:
-    # One-time pairing codes for the same-host / cross-node "join a team"
-    # flow. Only a SHA-256 hash of the code is stored — the plaintext code is
-    # shown once to the operator and is the sole credential for redemption.
-    # Single-use (used_at) with a TTL (expires_at); consumption is atomic via
-    # a conditional UPDATE so two concurrent redeems cannot both win.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS pairing_invites (
-          id TEXT PRIMARY KEY,
-          code_hash TEXT NOT NULL UNIQUE,
-          team_id TEXT NOT NULL,
-          created_at TEXT NOT NULL,
-          expires_at TEXT NOT NULL,
-          used_at TEXT,
-          redeemed_by TEXT
-        )
-        """
-    )
-
-
-def _migration_fleet_admins(conn: sqlite3.Connection) -> None:
-    # Fleet admin trust anchors (v1.6). Each row is an Ed25519 PUBLIC key this
-    # node accepts signed cross-node operations from, with the capabilities the
-    # local operator granted it. Grants arrive ONLY via the local CLI/trusted
-    # pairing channel — never from a peer's sync bundle — so an untrusted peer
-    # can never mint itself admin access (the D1–D4 trust boundary).
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS fleet_admins (
-          key_id TEXT PRIMARY KEY,
-          public_key TEXT NOT NULL,
-          caps TEXT NOT NULL,
-          granted_at TEXT NOT NULL,
-          granted_by TEXT NOT NULL DEFAULT 'local',
-          revoked_at TEXT
-        )
-        """
-    )
-    # Replay guard for signed fleet requests: each nonce is accepted exactly
-    # once (INSERT is the atomic check). Durable so a service restart within
-    # the signature-freshness window cannot be replayed against.
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS fleet_nonces (
-          nonce TEXT PRIMARY KEY,
-          seen_at TEXT NOT NULL
-        )
-        """
-    )
-
-
-MIGRATIONS: list[tuple[int, str, object]] = [
-    (1, "decay and reinforcement columns", _migration_decay_columns),
-    (2, "repair FTS update/delete triggers", _migration_fix_fts_triggers),
-    (3, "cold archive table", _migration_archive_table),
-    (4, "session recall delivery log", _migration_session_recall_log),
-    (5, "memory sharing audit trail", _migration_memory_audit),
-    (6, "recall feedback counters", _migration_feedback_counts),
-    (7, "federated sync peer registry", _migration_sync_peers),
-    (8, "agent registry with team memberships", _migration_agents_registry),
-    (9, "federation trust: peer policy + tombstones", _migration_federation_trust),
-    (10, "archive association edges for lossless restore", _migration_archive_links),
-    (11, "configured decay base half-life", _migration_decay_base),
-    (12, "peer display name for sync identification", _migration_peer_name),
-    (13, "first-class teams and projects with membership", _migration_teams_projects),
-    (14, "federate org structure: versioning + tombstones + audit", _migration_org_federation),
-    (15, "acl clock so share/revoke propagate over sync", _migration_acl_clock),
-    (16, "one-time pairing invites for team join", _migration_pairing_invites),
-    (17, "fleet admin trust anchors + signature replay guard", _migration_fleet_admins),
-    (18, "requester-scoped session recall delivery log", _migration_session_recall_owner),
-    (19, "mark pre-requester context as legacy unscoped", _migration_mark_legacy_context),
-    (20, "canonicalize legacy expiry timestamps", _migration_canonicalize_expiry_timestamps),
-]
 
 
 def _validate_migration_plan(migrations: Sequence[tuple[int, str, object]]) -> None:
@@ -635,7 +143,7 @@ class MemoryStore:
         # readers coexist with a writer and busy_timeout absorbs write races.
         # Both PRAGMAs degrade gracefully where unsupported (e.g. some network
         # filesystems keep journal_mode unchanged).
-        self.conn.execute("PRAGMA busy_timeout=5000")
+        self.conn.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MILLISECONDS}")
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
         self._run_migrations()
@@ -674,10 +182,12 @@ class MemoryStore:
                         f"{applied[version]!r}, code expects {description!r}"
                     )
                 continue
+            if not callable(migrate):
+                raise TypeError(f"migration {version} is not callable")
             migrate(self.conn)
             self.conn.execute(
                 "INSERT INTO schema_migrations(version, description, applied_at) VALUES (?, ?, ?)",
-                (version, description, utc_now()),
+                (version, description, utc_now_stamp()),
             )
 
     def schema_version(self) -> int:
@@ -712,14 +222,15 @@ class MemoryStore:
         return checks
 
     def add(self, record: MemoryRecord) -> MemoryRecord:
+        record = replace(record)
         record.summary = record.normalized_summary()
         self.conn.execute(
             """
             INSERT INTO memories(id, owner, scope, type, content, summary, tags, visibility, source,
                                  confidence, importance, created_at, updated_at, acl_updated_at, expires_at,
                                  decay_policy, decay_half_life_days, decay_base_half_life_days,
-                                 last_accessed_at, access_count, pinned)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 last_accessed_at, access_count, pinned, RecVersion)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 record.id, record.owner, record.scope, record.type, record.content, record.summary,
@@ -727,7 +238,7 @@ class MemoryStore:
                 record.confidence, record.importance, record.created_at, record.updated_at,
                 record.updated_at, record.expires_at,
                 record.decay_policy, record.decay_half_life_days, record.decay_half_life_days,
-                record.last_accessed_at, record.access_count, int(record.pinned),
+                record.last_accessed_at, record.access_count, int(record.pinned), 0,
             ),
         )
         self.conn.commit()
@@ -755,11 +266,11 @@ class MemoryStore:
             scope=None,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
-            now=utc_now(),
+            now=utc_now_stamp(),
         )
         return self._row_to_record(rows[0]) if rows else None
 
-    UPDATABLE_FIELDS = {
+    UPDATABLE_FIELDS: ClassVar[set[str]] = {
         "content", "summary", "tags", "visibility", "source", "confidence",
         "importance", "type", "scope", "pinned", "expires_at",
         "decay_policy", "decay_half_life_days",
@@ -793,7 +304,7 @@ class MemoryStore:
         # Re-run the complete canonical validation and retain normalized values
         # such as UTC expiry timestamps.
         existing = replace(existing)
-        existing.updated_at = utc_now_micro()
+        existing.updated_at = utc_now_stamp()
         self.conn.execute(
             """
             UPDATE memories SET content=?, summary=?, tags=?, visibility=?, source=?,
@@ -823,7 +334,7 @@ class MemoryStore:
             # second still orders after creation.
             self.conn.execute(
                 "UPDATE memories SET acl_updated_at = ? WHERE id = ?",
-                (utc_now_micro(), memory_id),
+                (utc_now_stamp(), memory_id),
             )
         self.conn.commit()
         return existing
@@ -835,7 +346,7 @@ class MemoryStore:
         existing.content = content
         existing.summary = summary or MemoryRecord(content=content).normalized_summary()
         existing = replace(existing)
-        existing.updated_at = utc_now_micro()
+        existing.updated_at = utc_now_stamp()
         self.conn.execute(
             "UPDATE memories SET content=?, summary=?, updated_at=? WHERE id=?",
             (existing.content, existing.summary, existing.updated_at, memory_id),
@@ -858,15 +369,17 @@ class MemoryStore:
         self.conn.execute(
             "INSERT INTO tombstones(id, deleted_at) VALUES (?, ?) "
             "ON CONFLICT(id) DO UPDATE SET deleted_at = excluded.deleted_at",
-            (memory_id, utc_now()),
+            (memory_id, utc_now_stamp()),
         )
         if commit:
             self.conn.commit()
 
     def list_tombstones(self, *, since: str | None = None) -> list[tuple[str, str]]:
-        if since:
+        if since is not None:
+            stamp_to_dt(since)
             rows = self.conn.execute(
-                "SELECT id, deleted_at FROM tombstones WHERE deleted_at > ?", (since,)
+                "SELECT id, deleted_at FROM tombstones WHERE deleted_at > ?",
+                (since,),
             ).fetchall()
         else:
             rows = self.conn.execute("SELECT id, deleted_at FROM tombstones").fetchall()
@@ -883,6 +396,7 @@ class MemoryStore:
         for endpoint in (link.src_id, link.dst_id):
             if self.get(endpoint) is None:
                 raise KeyError(endpoint)
+        link = replace(link)
         self.conn.execute(
             """
             INSERT INTO memory_links(src_id, dst_id, relation, weight, created_at, updated_at,
@@ -937,7 +451,7 @@ class MemoryStore:
             requester_agent_id=None,
             requester_team_id=None,
             limit=limit + 1,
-            now=utc_now(),
+            now=utc_now_stamp(),
         )
         created: list[MemoryLink] = []
         for row in rows:
@@ -978,7 +492,7 @@ class MemoryStore:
                 profile.agent_id,
                 json.dumps(profile.type_weights, ensure_ascii=False, sort_keys=True),
                 json.dumps(profile.scope_weights, ensure_ascii=False, sort_keys=True),
-                utc_now(),
+                utc_now_stamp(),
             ),
         )
         self.conn.commit()
@@ -1051,7 +565,7 @@ class MemoryStore:
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
             limit=limit,
-            now=utc_now(),
+            now=utc_now_stamp(),
         )
         return [self._row_to_record(row) for row in rows]
 
@@ -1064,11 +578,12 @@ class MemoryStore:
         limit: int = 4,
     ) -> list[MemoryRecord]:
         """Proactive recall source: the most important live records of a type."""
+        now = utc_now_stamp()
         where = [
             "type = ?",
-            "(expires_at IS NULL OR julianday(expires_at) > julianday(?))",
+            _live_expiry_sql(),
         ]
-        params: list[object] = [memory_type, utc_now()]
+        params: list[object] = [memory_type, now, now]
         self._append_acl_filter(
             where,
             params,
@@ -1102,7 +617,7 @@ class MemoryStore:
         *,
         owner: str | None = None,
     ) -> None:
-        now = utc_now()
+        now = utc_now_stamp()
         self.conn.executemany(
             "INSERT OR IGNORE INTO session_recall_log"
             "(owner, session_id, memory_id, delivered_at) VALUES (?, ?, ?, ?)",
@@ -1110,7 +625,9 @@ class MemoryStore:
         )
         self.conn.commit()
 
-    def rotate_snapshots(self, *, keep_per_session: int = 5) -> int:
+    def rotate_snapshots(
+        self, *, keep_per_session: int = SNAPSHOT_RETENTION_COUNT_PER_SESSION
+    ) -> int:
         """Archive all but the newest N context snapshots per session.
 
         Pinned snapshots are never rotated out — they follow the same rule as
@@ -1136,7 +653,9 @@ class MemoryStore:
         placeholders = ",".join("?" for _ in ids)
         return self._archive_where(f"id IN ({placeholders})", ids, reason="snapshot_rotation")
 
-    AGENT_KINDS = {"claude-code", "codex", "openclaw", "hermes", "custom"}
+    AGENT_KINDS: ClassVar[set[str]] = {
+        "claude-code", "codex", "openclaw", "hermes", "custom"
+    }
 
     def register_agent(
         self,
@@ -1168,7 +687,7 @@ class MemoryStore:
               kind = excluded.kind,
               notes = excluded.notes
             """ + ("" if team_list is None else ", teams = excluded.teams"),
-            (agent_id, display_name, kind, json.dumps(team_list or []), notes, utc_now()),
+            (agent_id, display_name, kind, json.dumps(team_list or []), notes, utc_now_stamp()),
         )
         # team_members is authoritative for ACL: reconcile this agent's rows to
         # the declared list (create missing teams), so declaring an agent's
@@ -1178,10 +697,13 @@ class MemoryStore:
             self._reconcile_agent_teams(agent_id, team_list)
         self.conn.commit()
         self._invalidate_membership_caches()
-        return self.get_agent(agent_id)
+        agent = self.get_agent(agent_id)
+        if agent is None:
+            raise RuntimeError(f"registered agent not found: {agent_id}")
+        return agent
 
     def _reconcile_agent_teams(self, agent_id: str, team_list: Sequence[str]) -> None:
-        now = utc_now()
+        now = utc_now_stamp()
         wanted = {t for t in team_list if t}
         current = {r[0] for r in self.conn.execute(
             "SELECT team_id FROM team_members WHERE agent_id = ?", (agent_id,)
@@ -1214,6 +736,8 @@ class MemoryStore:
         agents = []
         for row in rows:
             agent = self.get_agent(row["id"])
+            if agent is None:
+                continue
             agent["memory_count"] = self.conn.execute(
                 "SELECT COUNT(*) FROM memories WHERE owner = ?", (row["id"],)
             ).fetchone()[0]
@@ -1275,7 +799,7 @@ class MemoryStore:
             raise ValueError("old and new owner are identical")
 
         counts: dict[str, int] = {}
-        now = utc_now()
+        now = utc_now_stamp()
         with self.conn:  # one transaction — all or nothing
             counts["memories_owner"] = self.conn.execute(
                 "UPDATE memories SET owner = ? WHERE owner = ?", (new_owner, old_owner)
@@ -1373,7 +897,7 @@ class MemoryStore:
             if not url.startswith(("http://", "https://")):
                 raise ValueError("peer URL must start with http:// or https://")
         with self.conn:  # single atomic transaction (no inner commits below)
-            now = utc_now()
+            now = utc_now_stamp()
             # Register the joining agent in the registry, not just touch it: a
             # remote node joining by pairing has no prior row here, and an
             # UPDATE would no-op and leave it invisible in the Agents tab
@@ -1415,7 +939,7 @@ class MemoryStore:
     def touch_agent(self, agent_id: str) -> None:
         """Record activity for a registered agent (no-op for unknown ids)."""
         self.conn.execute(
-            "UPDATE agents SET last_seen_at = ? WHERE id = ?", (utc_now(), agent_id)
+            "UPDATE agents SET last_seen_at = ? WHERE id = ?", (utc_now_stamp(), agent_id)
         )
         self.conn.commit()
 
@@ -1467,7 +991,7 @@ class MemoryStore:
         team_id = team_id.strip()
         if not team_id:
             raise ValueError("team id must be non-empty")
-        now = utc_now()
+        now = utc_now_stamp()
         self.conn.execute(
             "INSERT INTO teams(id, name, created_at, updated_at) VALUES (?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
@@ -1475,7 +999,10 @@ class MemoryStore:
         )
         self._org_audit("create_team", team_id)
         self.conn.commit()
-        return self.get_team(team_id)
+        team = self.get_team(team_id)
+        if team is None:
+            raise RuntimeError(f"created team not found: {team_id}")
+        return team
 
     def get_team(self, team_id: str) -> dict[str, object] | None:
         row = self.conn.execute("SELECT * FROM teams WHERE id = ?", (team_id,)).fetchone()
@@ -1492,7 +1019,8 @@ class MemoryStore:
 
     def list_teams(self) -> list[dict[str, object]]:
         rows = self.conn.execute("SELECT id FROM teams ORDER BY id").fetchall()
-        return [self.get_team(r[0]) for r in rows]
+        teams = [self.get_team(r[0]) for r in rows]
+        return [team for team in teams if team is not None]
 
     def delete_team(self, team_id: str) -> bool:
         # Cascade: the team's projects, and all memberships, go with it.
@@ -1611,7 +1139,7 @@ class MemoryStore:
                 f"project {project_id!r} already exists under team "
                 f"{existing['team_id']!r}; delete it to recreate under another team"
             )
-        now = utc_now()
+        now = utc_now_stamp()
         self.conn.execute(
             "INSERT INTO projects(id, team_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
@@ -1619,7 +1147,10 @@ class MemoryStore:
         )
         self._org_audit("create_project", f"{project_id} (team:{team_id})")
         self.conn.commit()
-        return self.get_project(project_id)
+        project = self.get_project(project_id)
+        if project is None:
+            raise RuntimeError(f"created project not found: {project_id}")
+        return project
 
     def get_project(self, project_id: str) -> dict[str, object] | None:
         row = self.conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
@@ -1640,7 +1171,8 @@ class MemoryStore:
             ).fetchall()
         else:
             rows = self.conn.execute("SELECT id FROM projects ORDER BY id").fetchall()
-        return [self.get_project(r[0]) for r in rows]
+        projects = [self.get_project(r[0]) for r in rows]
+        return [project for project in projects if project is not None]
 
     def delete_project(self, project_id: str) -> bool:
         self.conn.execute("DELETE FROM project_members WHERE project_id = ?", (project_id,))
@@ -1687,21 +1219,21 @@ class MemoryStore:
         self._invalidate_membership_caches()
 
     def _invalidate_membership_caches(self) -> None:
-        self._teams_cache = {}
-        self._projects_cache = {}
+        self._teams_cache: dict[str, list[str]] = {}
+        self._projects_cache: dict[str, list[str]] = {}
 
     # ---------- org versioning, audit & tombstones (federation) ----------
 
     def _touch_team(self, team_id: str) -> None:
-        self.conn.execute("UPDATE teams SET updated_at = ? WHERE id = ?", (utc_now(), team_id))
+        self.conn.execute("UPDATE teams SET updated_at = ? WHERE id = ?", (utc_now_stamp(), team_id))
 
     def _touch_project(self, project_id: str) -> None:
-        self.conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (utc_now(), project_id))
+        self.conn.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (utc_now_stamp(), project_id))
 
     def _org_audit(self, action: str, detail: str, actor: str = "local") -> None:
         self.conn.execute(
             "INSERT INTO org_audit(at, actor, action, detail) VALUES (?, ?, ?, ?)",
-            (utc_now(), actor or "local", action, detail),
+            (utc_now_stamp(), actor or "local", action, detail),
         )
 
     def org_audit_log(self, *, limit: int = 100) -> list[dict[str, str]]:
@@ -1715,25 +1247,29 @@ class MemoryStore:
         self.conn.execute(
             "INSERT INTO org_tombstones(kind, id, deleted_at) VALUES (?, ?, ?) "
             "ON CONFLICT(kind, id) DO UPDATE SET deleted_at = excluded.deleted_at",
-            (kind, id_, utc_now()),
+            (kind, id_, utc_now_stamp()),
         )
 
     def list_org_tombstones(self, *, since: str | None = None) -> list[tuple[str, str, str]]:
-        if since:
+        if since is not None:
+            stamp_to_dt(since)
             rows = self.conn.execute(
-                "SELECT kind, id, deleted_at FROM org_tombstones WHERE deleted_at > ?", (since,)
+                "SELECT kind, id, deleted_at FROM org_tombstones WHERE deleted_at > ?",
+                (since,),
             ).fetchall()
         else:
             rows = self.conn.execute("SELECT kind, id, deleted_at FROM org_tombstones").fetchall()
         return [(r[0], r[1], r[2]) for r in rows]
 
-    PEER_POLICIES = {"full", "shared"}  # plus dynamic "team:<id>" / "project:<id>"
+    PEER_POLICIES: ClassVar[set[str]] = {
+        "full", "shared"
+    }  # plus dynamic "team:<id>" / "project:<id>"
 
     @classmethod
     def _validate_peer_policy(cls, policy: str) -> str:
         policy = (policy or "").strip()
         scoped = (
-            (policy.startswith("team:") or policy.startswith("project:"))
+            policy.startswith(("team:", "project:"))
             and len(policy.split(":", 1)[1]) > 0
         )
         if policy in cls.PEER_POLICIES or scoped:
@@ -1781,7 +1317,7 @@ class MemoryStore:
               token = excluded.token, policy = excluded.policy,
               name = CASE WHEN excluded.name != '' THEN excluded.name ELSE sync_peers.name END
             """,
-            (url, token, utc_now(), policy, name),
+            (url, token, utc_now_stamp(), policy, name),
         )
         self.conn.commit()
         return {"url": url, "has_token": token is not None, "policy": policy, "name": name}
@@ -1840,24 +1376,27 @@ class MemoryStore:
     # ------------------------------------------------------------------ #
 
     def create_pairing_invite(
-        self, team_id: str, code_hash: str, *, ttl_seconds: int = 600
+        self,
+        team_id: str,
+        code_hash: str,
+        *,
+        ttl_seconds: int = PAIRING_INVITE_TTL_SECONDS,
     ) -> dict[str, object]:
         if not self.get_team(team_id):
             raise ValueError(f"unknown team: {team_id}")
         if ttl_seconds <= 0:
             raise ValueError("ttl_seconds must be positive")
-        now = datetime.now(timezone.utc)
-        expires = now + timedelta(seconds=ttl_seconds)
+        now_dt = utc_now_dt()
+        now = dt_to_stamp(now_dt)
+        expires = seconds_distance_to_dt_stamp(ttl_seconds, now_dt)
         invite_id = "inv_" + uuid.uuid4().hex[:16]
         self.conn.execute(
             "INSERT INTO pairing_invites (id, code_hash, team_id, created_at, expires_at)"
             " VALUES (?, ?, ?, ?, ?)",
-            (invite_id, code_hash, team_id,
-             now.isoformat(timespec="seconds"), expires.isoformat(timespec="seconds")),
+            (invite_id, code_hash, team_id, now, expires),
         )
         self.conn.commit()
-        return {"id": invite_id, "team_id": team_id,
-                "expires_at": expires.isoformat(timespec="seconds")}
+        return {"id": invite_id, "team_id": team_id, "expires_at": expires}
 
     def consume_pairing_invite(self, code_hash: str, *, redeemed_by: str) -> dict[str, object] | None:
         """Atomically redeem an invite: valid, unexpired, unused → mark used.
@@ -1867,7 +1406,7 @@ class MemoryStore:
         team_id on success, None for unknown/expired/already-used codes
         (indistinguishable to the caller, on purpose).
         """
-        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        now = utc_now_stamp()
         cursor = self.conn.execute(
             "UPDATE pairing_invites SET used_at = ?, redeemed_by = ?"
             " WHERE code_hash = ? AND used_at IS NULL AND expires_at > ?",
@@ -1883,7 +1422,7 @@ class MemoryStore:
 
     # ---------- fleet admin trust anchors (v1.6) ----------
 
-    FLEET_CAPS = {"manage", "read-private"}
+    FLEET_CAPS: ClassVar[set[str]] = {"manage", "read-private"}
 
     def grant_fleet_admin(
         self, public_key: str, caps: Sequence[str], *, actor: str = "local"
@@ -1908,7 +1447,7 @@ class MemoryStore:
         from . import crypto
 
         key_id = crypto.fleet_key_id(public_key)
-        now = utc_now()
+        now = utc_now_stamp()
         self.conn.execute(
             "INSERT INTO fleet_admins(key_id, public_key, caps, granted_at, granted_by)"
             " VALUES (?, ?, ?, ?, ?)"
@@ -1925,7 +1464,7 @@ class MemoryStore:
         """Stop accepting this key immediately (row kept for the audit trail)."""
         cursor = self.conn.execute(
             "UPDATE fleet_admins SET revoked_at = ? WHERE key_id = ? AND revoked_at IS NULL",
-            (utc_now(), key_id.strip()),
+            (utc_now_stamp(), key_id.strip()),
         )
         if cursor.rowcount:
             self._org_audit("revoke_fleet_admin", key_id.strip(), actor)
@@ -1957,18 +1496,23 @@ class MemoryStore:
         self._org_audit("fleet_op", detail, f"fleet:{key_id}")
         self.conn.commit()
 
-    def consume_fleet_nonce(self, nonce: str, *, prune_older_than_s: int = 600) -> bool:
+    def consume_fleet_nonce(
+        self,
+        nonce: str,
+        *,
+        prune_older_than_s: int = FLEET_NONCE_RETENTION_SECONDS,
+    ) -> bool:
         """Atomically claim a signature nonce; False if already seen (replay).
 
         Nonces only need to outlive the signature-freshness window; anything
         older is pruned opportunistically on each call.
         """
-        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=prune_older_than_s)).isoformat()
+        cutoff = seconds_distance_from_now_stamp(prune_older_than_s)
         self.conn.execute("DELETE FROM fleet_nonces WHERE seen_at < ?", (cutoff,))
         try:
             self.conn.execute(
                 "INSERT INTO fleet_nonces(nonce, seen_at) VALUES (?, ?)",
-                (nonce, utc_now()),
+                (nonce, utc_now_stamp()),
             )
         except sqlite3.IntegrityError:
             self.conn.commit()
@@ -1979,7 +1523,7 @@ class MemoryStore:
     def record_peer_sync(self, url: str, result: str) -> None:
         self.conn.execute(
             "UPDATE sync_peers SET last_synced_at = ?, last_result = ? WHERE url = ?",
-            (utc_now(), result[:400], url),
+            (utc_now_stamp(), result[:400], url),
         )
         self.conn.commit()
 
@@ -1998,16 +1542,18 @@ class MemoryStore:
     def semantic_signature(self) -> tuple:
         """Cheap change signature used to decide when the auto index rebuilds.
 
-        Content updates use a microsecond clock. Aggregate content/summary
-        lengths remain a backstop for older/imported rows; reinforcement
-        writes never touch either signal and do not trigger a rebuild.
+        Semantic content updates advance RecVersion through a database trigger.
+        Aggregate content/summary lengths remain a backstop for older/imported
+        rows; reinforcement writes never touch either signal and do not trigger
+        a rebuild.
         """
         row = self.conn.execute(
             "SELECT COUNT(*), COALESCE(MAX(rowid), 0), COALESCE(MAX(updated_at), ''), "
+            "COALESCE(SUM(RecVersion), 0), "
             "COALESCE(SUM(LENGTH(content)), 0), COALESCE(SUM(LENGTH(COALESCE(summary, ''))), 0) "
             "FROM memories"
         ).fetchone()
-        return (int(row[0]), int(row[1]), row[2], int(row[3]), int(row[4]))
+        return (int(row[0]), int(row[1]), row[2], int(row[3]), int(row[4]), int(row[5]))
 
     def graph_snapshot(
         self,
@@ -2033,14 +1579,14 @@ class MemoryStore:
             scope=None,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
-            now=utc_now(),
+            now=utc_now_stamp(),
         )
         visible = {row["id"]: row for row in rows}
         kept_edges = [
             edge for edge in edges
             if edge["src_id"] in visible and edge["dst_id"] in visible
         ]
-        degree: DefaultDict[str, int] = defaultdict(int)
+        degree: defaultdict[str, int] = defaultdict(int)
         for edge in kept_edges:
             degree[edge["src_id"]] += 1
             degree[edge["dst_id"]] += 1
@@ -2187,7 +1733,7 @@ class MemoryStore:
             requester_team_id=requester_team_id,
             owner=owner,
         )
-        now = utc_now()
+        now = utc_now_stamp()
         reinforced_links = 0
         created_links = 0
         weakened_links = 0
@@ -2325,11 +1871,25 @@ class MemoryStore:
             # otherwise a custom half-life is clobbered on every retention pass.
             base = row["decay_base_half_life_days"]
             if base is None:
-                base = DEFAULT_DECAY_HALF_LIFE_DAYS.get(row["type"], 30.0)
+                base = DEFAULT_DECAY_HALF_LIFE_DAYS.get(
+                    row["type"], DEFAULT_DECAY_HALF_LIFE_FALLBACK_DAYS
+                )
             multiplier = math.sqrt((1 + row["helpful_count"]) / (1 + row["unhelpful_count"]))
-            multiplier = min(4.0, max(0.5, multiplier))
-            new_half_life = round(min(730.0, max(7.0, base * multiplier)), 2)
-            if abs(new_half_life - float(row["decay_half_life_days"])) >= 0.01:
+            multiplier = min(
+                DECAY_FEEDBACK_MAX_MULTIPLIER,
+                max(DECAY_FEEDBACK_MIN_MULTIPLIER, multiplier),
+            )
+            new_half_life = round(
+                min(
+                    DECAY_FEEDBACK_MAX_HALF_LIFE_DAYS,
+                    max(DECAY_FEEDBACK_MIN_HALF_LIFE_DAYS, base * multiplier),
+                ),
+                DECAY_FEEDBACK_ROUND_DIGITS,
+            )
+            if (
+                abs(new_half_life - float(row["decay_half_life_days"]))
+                >= DECAY_FEEDBACK_UPDATE_THRESHOLD_DAYS
+            ):
                 self.conn.execute(
                     "UPDATE memories SET decay_half_life_days = ? WHERE id = ?",
                     (new_half_life, row["id"]),
@@ -2432,7 +1992,7 @@ class MemoryStore:
         """
         self.conn.execute(
             "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
-            (json.dumps(visibility, ensure_ascii=False), utc_now_micro(), memory_id),
+            (json.dumps(visibility, ensure_ascii=False), utc_now_stamp(), memory_id),
         )
         self.conn.commit()
 
@@ -2446,7 +2006,7 @@ class MemoryStore:
     def _audit(self, memory_id: str, actor: str, action: str, detail: str) -> None:
         self.conn.execute(
             "INSERT INTO memory_audit(memory_id, actor, action, detail, at) VALUES (?, ?, ?, ?, ?)",
-            (memory_id, actor, action, detail, utc_now()),
+            (memory_id, actor, action, detail, utc_now_stamp()),
         )
         self.conn.commit()
 
@@ -2459,11 +2019,11 @@ class MemoryStore:
         Pinned and authority-track records are never archived by decay; only a
         hard expiry can retire them.
         """
-        now = utc_now()
+        now = utc_now_stamp()
         tuned = self.tune_decay_from_feedback()
         expired = self._archive_where(
-            "expires_at IS NOT NULL AND julianday(expires_at) <= julianday(?)",
-            [now],
+            _expired_expiry_sql(),
+            [now, now],
             reason="expired",
         )
         rotated = self.rotate_snapshots()
@@ -2494,7 +2054,7 @@ class MemoryStore:
         ids = [row["id"] for row in rows]
         if not ids:
             return 0
-        now = utc_now()
+        now = utc_now_stamp()
         placeholders = ",".join("?" for _ in ids)
         self.conn.execute(
             f"""
@@ -2552,7 +2112,7 @@ class MemoryStore:
         ).fetchone()
         if row is None:
             raise KeyError(memory_id)
-        now = utc_now()
+        now = utc_now_stamp()
         self.conn.execute(
             f"""
             INSERT INTO memories({self._MEMORY_COLUMNS})
@@ -2569,9 +2129,10 @@ class MemoryStore:
         )
         # The archive table predates the ACL clock and doesn't carry
         # acl_updated_at, so seed it to created_at (a stable floor) rather than
-        # leaving it NULL: NULL would COALESCE to updated_at=now and could clobber
-        # a peer's more-recent revoke on the next sync. created_at defers to any
-        # peer ACL decision made after creation, which is the safe direction.
+        # leaving it NULL: the current bundle contract requires an ACL stamp,
+        # and incremental sync orders ACL changes on that independent clock.
+        # created_at defers to any peer ACL decision made after creation, which
+        # is the safe direction.
         self.conn.execute(
             "UPDATE memories SET acl_updated_at = ? WHERE id = ?",
             (row["created_at"], memory_id),
@@ -2603,7 +2164,10 @@ class MemoryStore:
             (memory_id, memory_id),
         )
         self.conn.commit()
-        return self.get(memory_id)
+        restored = self.get(memory_id)
+        if restored is None:
+            raise RuntimeError(f"restored memory not found: {memory_id}")
+        return restored
 
     def purge_owner(self, owner: str) -> dict[str, int]:
         """Delete every memory owned by `owner`, plus all links touching them.
@@ -2751,7 +2315,7 @@ class MemoryStore:
 
     def delete_orphan_memories(self) -> dict[str, int]:
         """Delete every orphan memory (tombstoned, so the deletion syncs)."""
-        ids = [o["id"] for o in self.find_orphan_memories(limit=10 ** 9)]
+        ids = [cast(str, o["id"]) for o in self.find_orphan_memories(limit=10 ** 9)]
         for mem_id in ids:
             self.delete(mem_id)
         return {"orphans_deleted": len(ids)}
@@ -2762,11 +2326,12 @@ class MemoryStore:
         self.conn.execute("PRAGMA optimize")
         self.conn.execute("ANALYZE")
         # VACUUM cannot run inside a transaction.
+        previous_isolation_level = self.conn.isolation_level
         self.conn.isolation_level = None
         try:
             self.conn.execute("VACUUM")
         finally:
-            self.conn.isolation_level = ""
+            self.conn.isolation_level = previous_isolation_level
         after = self.path.stat().st_size if self.path.exists() else 0
         return {"bytes_before": int(before), "bytes_after": int(after),
                 "bytes_reclaimed": int(max(0, before - after))}
@@ -2868,8 +2433,8 @@ class MemoryStore:
         scoring/fusion; an optional RecallProfile then applies per-agent soft
         re-weighting to ranking only.
         """
-        now = utc_now()
-        now_dt = datetime.now(timezone.utc)
+        now_dt = utc_now_dt()
+        now = dt_to_stamp(now_dt)
         rows = self._fts_rows(
             query,
             owner=owner,
@@ -2997,7 +2562,7 @@ class MemoryStore:
         rows = self.conn.execute(
             f"SELECT * FROM memories WHERE {' AND '.join(where)}", params
         ).fetchall()
-        groups: DefaultDict[tuple, list[sqlite3.Row]] = defaultdict(list)
+        groups: defaultdict[tuple, list[sqlite3.Row]] = defaultdict(list)
         for row in rows:
             key = (row["owner"], row["scope"], row["visibility"], _content_fingerprint(row["content"]))
             groups[key].append(row)
@@ -3070,7 +2635,7 @@ class MemoryStore:
             if root_a != root_b:
                 parent[root_b] = root_a
 
-        clusters: DefaultDict[str, list[str]] = defaultdict(list)
+        clusters: defaultdict[str, list[str]] = defaultdict(list)
         for node in parent:
             clusters[find(node)].append(node)
 
@@ -3191,7 +2756,7 @@ class MemoryStore:
                 [*frontier_ids, *frontier_ids],
             ).fetchall()
 
-            edges_by_node: DefaultDict[str, list[tuple[float, sqlite3.Row]]] = defaultdict(list)
+            edges_by_node: defaultdict[str, list[tuple[float, sqlite3.Row]]] = defaultdict(list)
             for edge in edges:
                 if edge["neighbor_id"] in visited:
                     continue
@@ -3202,7 +2767,7 @@ class MemoryStore:
                 link_freshness = 0.5 ** (link_age_days / LINK_DECAY_HALF_LIFE_DAYS)
                 edges_by_node[edge["from_id"]].append((edge_weight * link_freshness, edge))
 
-            contributions: DefaultDict[str, list[tuple[float, str, str]]] = defaultdict(list)
+            contributions: defaultdict[str, list[tuple[float, str, str]]] = defaultdict(list)
             for from_id, node_edges in edges_by_node.items():
                 node_edges.sort(key=lambda item: item[0], reverse=True)
                 for effective_weight, edge in node_edges[:RESONANCE_MAX_EDGES_PER_NODE]:
@@ -3269,9 +2834,9 @@ class MemoryStore:
         fts_query = self._fts_query(query)
         where = [
             "memories_fts MATCH ?",
-            "(m.expires_at IS NULL OR julianday(m.expires_at) > julianday(?))",
+            _live_expiry_sql("m.expires_at"),
         ]
-        params: list[object] = [fts_query, now]
+        params: list[object] = [fts_query, now, now]
         if owner:
             where.append("m.owner = ?")
             params.append(owner)
@@ -3309,10 +2874,10 @@ class MemoryStore:
         now: str,
     ) -> list[sqlite3.Row]:
         where = [
-            "(expires_at IS NULL OR julianday(expires_at) > julianday(?))",
+            _live_expiry_sql(),
             "(json_extract(source, '$.permanence') = 1 AND json_extract(source, '$.weight') >= 10)",
         ]
-        params: list[object] = [now]
+        params: list[object] = [now, now]
         if owner:
             where.append("owner = ?")
             params.append(owner)
@@ -3384,7 +2949,7 @@ class MemoryStore:
                         provider_candidates[candidate.memory_id] = candidate
                     if len(provider_candidates) >= candidate_cap:
                         break
-            except Exception:
+            except Exception:  # noqa: BLE001, S112 - optional provider failure is isolated
                 # Candidate providers are optional sidecars. Backend failure must
                 # discard provider-local partial output and degrade to
                 # authoritative SQLite/FTS/fallback retrieval.
@@ -3432,9 +2997,9 @@ class MemoryStore:
         placeholders = ",".join("?" for _ in ids)
         where = [
             f"id IN ({placeholders})",
-            "(expires_at IS NULL OR julianday(expires_at) > julianday(?))",
+            _live_expiry_sql(),
         ]
-        params: list[object] = [*ids, now]
+        params: list[object] = [*ids, now, now]
         if owner:
             where.append("owner = ?")
             params.append(owner)
@@ -3487,8 +3052,8 @@ class MemoryStore:
     @staticmethod
     def _safe_provider_name(provider: CandidateProvider) -> str:
         try:
-            raw_name = getattr(provider, "name")
-        except Exception:
+            raw_name = provider.name
+        except Exception:  # noqa: BLE001 - provider properties are untrusted
             raw_name = provider.__class__.__name__
         return MemoryStore._safe_semantic_label(raw_name)
 
@@ -3496,7 +3061,7 @@ class MemoryStore:
     def _safe_semantic_label(value: object, *, max_length: int = 80) -> str:
         try:
             text = "" if value is None else str(value)
-        except Exception:
+        except Exception:  # noqa: BLE001 - labels from providers are untrusted
             text = "unknown"
         cleaned = "".join(char if char.isalnum() or char in {"_", "-", ":", "."} else "_" for char in text)
         return cleaned[:max_length] or "unknown"
@@ -3553,7 +3118,7 @@ class MemoryStore:
     # membership change made through THIS store invalidates immediately; a
     # change from another process/connection (WAL multi-writer) is picked up
     # within this TTL instead of persisting until restart.
-    _TEAMS_CACHE_TTL_SECONDS = 30.0
+    _TEAMS_CACHE_TTL_SECONDS = MEMBERSHIP_CACHE_TTL_SECONDS
 
     def _cached_teams_for(self, agent_id: str) -> list[str]:
         cache = getattr(self, "_teams_cache", None)
@@ -3610,8 +3175,10 @@ class MemoryStore:
         requester_team_id: str | None,
         limit: int,
     ) -> list[SearchResult]:
-        where = ["(expires_at IS NULL OR julianday(expires_at) > julianday(?))"]
-        params: list[object] = [utc_now()]
+        where = [_live_expiry_sql()]
+        now_dt = utc_now_dt()
+        now = dt_to_stamp(now_dt)
+        params: list[object] = [now, now]
         if owner:
             where.append("owner = ?")
             params.append(owner)
@@ -3636,7 +3203,6 @@ class MemoryStore:
             params,
         ).fetchall()
         results: list[SearchResult] = []
-        now_dt = datetime.now(timezone.utc)
         for row in rows:
             age_days = self._age_days(row["updated_at"], now_dt)
             freshness = freshness_factor(
@@ -3658,22 +3224,24 @@ class MemoryStore:
         results.sort(key=lambda result: result.score, reverse=True)
         return results
 
-    def stats(self) -> dict[str, int]:
+    def stats(self) -> dict[str, object]:
         total = self.conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
         by_scope = dict(self.conn.execute("SELECT scope, COUNT(*) FROM memories GROUP BY scope").fetchall())
         by_type = dict(self.conn.execute("SELECT type, COUNT(*) FROM memories GROUP BY type").fetchall())
         links = self.conn.execute("SELECT COUNT(*) FROM memory_links").fetchone()[0]
         return {"total": total, "by_scope": by_scope, "by_type": by_type, "links": links}
 
-    def dashboard_stats(self, *, activity_days: int = 14) -> dict[str, object]:
+    def dashboard_stats(
+        self, *, activity_days: int = DASHBOARD_ACTIVITY_WINDOW_DAYS
+    ) -> dict[str, object]:
         """Aggregate figures for the console dashboard."""
-        now = utc_now()
+        now_dt = utc_now_dt()
+        now = dt_to_stamp(now_dt)
         base = self.stats()
         pinned = self.conn.execute("SELECT COUNT(*) FROM memories WHERE pinned = 1").fetchone()[0]
         expired = self.conn.execute(
-            "SELECT COUNT(*) FROM memories WHERE expires_at IS NOT NULL "
-            "AND julianday(expires_at) <= julianday(?)",
-            (now,),
+            f"SELECT COUNT(*) FROM memories WHERE {_expired_expiry_sql()}",
+            (now, now),
         ).fetchone()[0]
         by_owner = dict(
             self.conn.execute(
@@ -3690,7 +3258,7 @@ class MemoryStore:
                 "ORDER BY access_count DESC, updated_at DESC LIMIT 5"
             ).fetchall()
         ]
-        today = datetime.now(timezone.utc).date()
+        today = now_dt.date()
         days = [(today - timedelta(days=offset)).isoformat() for offset in range(activity_days - 1, -1, -1)]
         counted = dict(
             self.conn.execute(
@@ -3703,7 +3271,10 @@ class MemoryStore:
             "SELECT COUNT(*) FROM memories WHERE id IN "
             "(SELECT src_id FROM memory_links UNION SELECT dst_id FROM memory_links)"
         ).fetchone()[0]
-        stale_cutoff = (datetime.now(timezone.utc) - timedelta(days=int(LINK_DECAY_HALF_LIFE_DAYS))).isoformat(timespec="seconds")
+        stale_cutoff = days_distance_from_dt_stamp(
+            LINK_DECAY_HALF_LIFE_DAYS,
+            now_dt,
+        )
         stale_links = self.conn.execute(
             "SELECT COUNT(*) FROM memory_links WHERE COALESCE(last_activated_at, updated_at) < ?",
             (stale_cutoff,),
@@ -3720,10 +3291,12 @@ class MemoryStore:
                 """
             ).fetchall()
         ]
+        total_memories = cast(int, base["total"])
+        total_links = cast(int, base["links"])
         graph_health = {
             "linked_memories": int(linked),
-            "orphan_memories": int(base["total"]) - int(linked),
-            "avg_degree": round(2 * int(base["links"]) / max(1, int(base["total"])), 2),
+            "orphan_memories": total_memories - int(linked),
+            "avg_degree": round(2 * total_links / max(1, total_memories), 2),
             "stale_links": int(stale_links),
             "top_hubs": top_hubs,
         }
@@ -3764,14 +3337,12 @@ class MemoryStore:
         )
 
     @staticmethod
-    def _age_days(value: str, now_dt: datetime) -> float:
+    def _age_days(stamp: str, now_dt: datetime) -> float:
         try:
-            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            age_days = stamp_distance_from_dt_days(stamp, now_dt)
         except ValueError:
             return 0.0
-        if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
-        return max(0.0, (now_dt - parsed).total_seconds() / 86_400)
+        return max(0.0, age_days)
 
     @staticmethod
     def _fts_query(query: str) -> str:

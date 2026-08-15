@@ -43,12 +43,14 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 try:  # Only present inside a Hermes Agent runtime.
-    from agent.memory_provider import MemoryProvider as _ProviderBase
+    from agent.memory_provider import (  # type: ignore[import-not-found]
+        MemoryProvider as _ProviderBase,
+    )
     _HERMES_RUNTIME = True
 except ImportError:  # pragma: no cover - exercised via stub in tests
     _ProviderBase = object  # type: ignore[assignment,misc]
@@ -62,9 +64,9 @@ DELEGATION_SYSTEM = "hermes-delegation-capture"
 _VALID_SHARE_DEFAULTS = ("private", "team", "project", "global")
 
 
-def _load_config(hermes_home: str | None = None) -> Dict[str, Any]:
+def _load_config(hermes_home: str | None = None) -> dict[str, Any]:
     """Env-var defaults overridden by `$HERMES_HOME/agent-memory-os.json`."""
-    config: Dict[str, Any] = {
+    config: dict[str, Any] = {
         "home": os.environ.get("AGENT_MEMORY_HOME", ""),
         "agent_id": os.environ.get("AGENT_MEMORY_AGENT_ID", ""),
         "share_default": "private",
@@ -76,9 +78,11 @@ def _load_config(hermes_home: str | None = None) -> Dict[str, Any]:
     home = hermes_home
     if home is None:
         try:  # pragma: no cover - hermes runtime only
-            from hermes_constants import get_hermes_home
+            from hermes_constants import (  # type: ignore[import-not-found]
+                get_hermes_home,
+            )
             home = str(get_hermes_home())
-        except Exception:
+        except Exception:  # noqa: BLE001 - Hermes lookup falls back to environment
             home = os.environ.get("HERMES_HOME", "")
     if home:
         path = Path(home) / CONFIG_FILENAME
@@ -87,7 +91,7 @@ def _load_config(hermes_home: str | None = None) -> Dict[str, Any]:
                 file_cfg = json.loads(path.read_text(encoding="utf-8"))
                 config.update({k: v for k, v in file_cfg.items()
                                if v is not None and v != ""})
-            except Exception:
+            except Exception:  # noqa: BLE001 - unreadable config falls back to defaults
                 logger.warning("Unreadable %s; using defaults", path)
     if config.get("share_default") not in _VALID_SHARE_DEFAULTS:
         config["share_default"] = "private"
@@ -96,14 +100,14 @@ def _load_config(hermes_home: str | None = None) -> Dict[str, Any]:
 
 def _mirror_id(target: str, content: str) -> str:
     """Stable id for a mirrored built-in write, so replays are idempotent."""
-    digest = hashlib.sha256(f"{target}\n{content}".encode("utf-8")).hexdigest()
+    digest = hashlib.sha256(f"{target}\n{content}".encode()).hexdigest()
     return f"hermes-mirror-{digest[:24]}"
 
 
 class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
     """Local-first, ACL-aware Hermes memory provider backed by AgentMemoryOS."""
 
-    def __init__(self, config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: dict[str, Any] | None = None):
         self._config = config or _load_config()
         self._client: Any = None
         self._lock = threading.Lock()
@@ -149,7 +153,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
         self._client = MemoryClient(home=home, check_same_thread=False)
         try:
             self._client.store.touch_agent(self._agent_id)
-        except Exception:  # noqa: BLE001 - registry is best-effort
+        except Exception:  # noqa: BLE001, S110 - registry is best-effort
             pass
         logger.info(
             "AgentMemoryOS provider ready (agent=%s home=%s active=%s)",
@@ -161,7 +165,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
             if self._client is not None:
                 try:
                     self._client.close()
-                except Exception:  # noqa: BLE001
+                except Exception:  # noqa: BLE001, S110 - shutdown is best-effort
                     pass
                 self._client = None
 
@@ -207,7 +211,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
 
     # -- tools ----------------------------------------------------------------
 
-    def get_tool_schemas(self) -> List[Dict[str, Any]]:
+    def get_tool_schemas(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": "amos_search",
@@ -298,7 +302,9 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
             },
         ]
 
-    def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs: Any) -> str:
+    def handle_tool_call(
+        self, tool_name: str, args: dict[str, Any], **kwargs: Any
+    ) -> str:
         with self._lock:
             if self._client is None:
                 return json.dumps({"error": "AgentMemoryOS provider not initialized"})
@@ -316,7 +322,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
                 return json.dumps({"error": f"{tool_name} failed: {exc}"})
             return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
-    def _tool_search(self, args: Dict[str, Any]) -> str:
+    def _tool_search(self, args: dict[str, Any]) -> str:
         query = (args.get("query") or "").strip()
         if not query:
             return json.dumps({"error": "Missing required parameter: query"})
@@ -336,7 +342,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
         ]
         return json.dumps({"results": payload, "count": len(payload)})
 
-    def _resolve_share(self, share: str | None) -> List[str]:
+    def _resolve_share(self, share: str | None) -> list[str]:
         from .mcp_server import _share_to_visibility
 
         store = self._client.store
@@ -346,7 +352,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
             projects=store.projects_for(self._agent_id) if self._agent_id else [],
         )
 
-    def _tool_add(self, args: Dict[str, Any]) -> str:
+    def _tool_add(self, args: dict[str, Any]) -> str:
         content = (args.get("content") or "").strip()
         if not content:
             return json.dumps({"error": "Missing required parameter: content"})
@@ -368,7 +374,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
             "visibility": list(record.visibility or []),
         })
 
-    def _tool_share(self, args: Dict[str, Any]) -> str:
+    def _tool_share(self, args: dict[str, Any]) -> str:
         memory_id = (args.get("memory_id") or "").strip()
         share = args.get("share")
         if not memory_id:
@@ -394,7 +400,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
         action: str,
         target: str,
         content: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Mirror Hermes built-in MEMORY.md/USER.md writes into the store.
 
@@ -454,7 +460,7 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
 
     # -- setup surface --------------------------------------------------------
 
-    def get_config_schema(self) -> List[Dict[str, Any]]:
+    def get_config_schema(self) -> list[dict[str, Any]]:
         return [
             {
                 "key": "home",
@@ -496,18 +502,18 @@ class AgentMemoryOSProvider(_ProviderBase):  # type: ignore[misc]
             },
         ]
 
-    def save_config(self, values: Dict[str, Any], hermes_home: str) -> None:
+    def save_config(self, values: dict[str, Any], hermes_home: str) -> None:
         path = Path(hermes_home) / CONFIG_FILENAME
-        current: Dict[str, Any] = {}
+        current: dict[str, Any] = {}
         if path.exists():
             try:
                 current = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
+            except Exception:  # noqa: BLE001 - unreadable existing config starts fresh
                 current = {}
         current.update({k: v for k, v in values.items() if v is not None})
         path.write_text(json.dumps(current, indent=2) + "\n", encoding="utf-8")
 
-    def backup_paths(self) -> List[str]:
+    def backup_paths(self) -> list[str]:
         """The store lives outside HERMES_HOME — declare it for `hermes backup`."""
         home = _load_config().get("home") or os.path.expanduser("~/.agent-memory")
         return [str(Path(home).expanduser())]
@@ -567,7 +573,9 @@ def shim_dir(hermes_home: str | os.PathLike[str] | None = None) -> Path:
     return base / "plugins" / PROVIDER_NAME
 
 
-def install_shim(hermes_home: str | os.PathLike[str] | None = None) -> Dict[str, Any]:
+def install_shim(
+    hermes_home: str | os.PathLike[str] | None = None,
+) -> dict[str, Any]:
     """Write the provider shim into `$HERMES_HOME/plugins/agent-memory-os/`.
 
     Idempotent: re-running refreshes the files (e.g. after a pip upgrade

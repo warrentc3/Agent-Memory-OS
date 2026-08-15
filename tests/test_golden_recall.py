@@ -3,10 +3,16 @@ import subprocess
 import sys
 
 from agent_memory_os.client import MemoryClient
-from agent_memory_os.golden_recall import evaluate_golden_queries, load_golden_query_cases
+from agent_memory_os.golden_recall import (
+    evaluate_golden_queries,
+    load_golden_query_cases,
+)
 
 
 def test_golden_recall_passes_expected_profile_scoped_results(tmp_path):
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path / "memory-home")
     try:
         client.add(
@@ -43,6 +49,9 @@ def test_golden_recall_passes_expected_profile_scoped_results(tmp_path):
 
 
 def test_golden_recall_blocks_forbidden_matches(tmp_path):
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path / "memory-home")
     try:
         client.add(
@@ -72,6 +81,9 @@ def test_golden_recall_blocks_forbidden_matches(tmp_path):
 
 
 def test_cli_golden_recall_outputs_json_report(tmp_path):
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     home = tmp_path / "memory-home"
     client = MemoryClient(home=home)
     try:

@@ -30,18 +30,30 @@ def _args(**over):
 # ---------- etime parsing ----------
 
 def test_parse_etime_mm_ss():
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     assert cli._parse_etime("05:31") == 5 * 60 + 31
 
 
 def test_parse_etime_hh_mm_ss():
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     assert cli._parse_etime("03:05:31") == 3 * 3600 + 5 * 60 + 31
 
 
 def test_parse_etime_dd_hh_mm_ss():
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     assert cli._parse_etime("2-03:05:31") == 2 * 86400 + 3 * 3600 + 5 * 60 + 31
 
 
 def test_parse_etime_garbage():
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     assert cli._parse_etime("running") is None
     assert cli._parse_etime("") is None
 
@@ -60,6 +72,9 @@ PS_OUTPUT = """\
 
 @_posix_only
 def test_running_amos_processes_parses_web_and_mcp(monkeypatch):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     import subprocess as sp
 
     monkeypatch.setattr(sp, "check_output", lambda *a, **k: PS_OUTPUT)
@@ -75,12 +90,18 @@ def test_running_amos_processes_parses_web_and_mcp(monkeypatch):
 
 
 def test_classify_windows_exe_wrapper():
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     assert cli._classify_amos_cmdline(
         r"C:\venv\Scripts\agent-memory-web.exe --home C:\data"
     ) == "web"
 
 
 def test_running_amos_processes_survives_ps_failure(monkeypatch):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     import subprocess as sp
 
     def boom(*a, **k):
@@ -93,6 +114,9 @@ def test_running_amos_processes_survives_ps_failure(monkeypatch):
 # ---------- staleness ----------
 
 def test_stale_amos_processes_flags_pre_install_starts(monkeypatch):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     now = 1_000_000.0
     monkeypatch.setattr(cli, "_install_mtime", lambda: now)
     monkeypatch.setattr(
@@ -107,6 +131,9 @@ def test_stale_amos_processes_flags_pre_install_starts(monkeypatch):
 
 
 def test_stale_amos_processes_unknown_start_not_flagged(monkeypatch):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     monkeypatch.setattr(cli, "_install_mtime", lambda: 1_000_000.0)
     monkeypatch.setattr(cli, "_running_amos_processes", lambda: [(1, "web", "agent-memory-web")])
     monkeypatch.setattr(cli, "_proc_start_ts", lambda pid: None)
@@ -116,6 +143,9 @@ def test_stale_amos_processes_unknown_start_not_flagged(monkeypatch):
 # ---------- post-upgrade handling ----------
 
 def test_handle_running_processes_restarts_web_and_reports_mcp(monkeypatch, capsys):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14; bc2608c9@db-schema-v14.
+    """
     monkeypatch.setattr(
         cli, "_running_amos_processes",
         lambda: [(11, "web", "agent-memory-web --home /h"), (22, "mcp", "python -m agent_memory_os.mcp_server")],
@@ -132,6 +162,9 @@ def test_handle_running_processes_restarts_web_and_reports_mcp(monkeypatch, caps
 
 
 def test_handle_running_processes_no_restart_flag(monkeypatch, capsys):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14; bc2608c9@db-schema-v14.
+    """
     monkeypatch.setattr(cli, "_running_amos_processes", lambda: [(11, "web", "agent-memory-web")])
     called = []
     monkeypatch.setattr(cli, "_restart_web_from_pidfile", lambda home: called.append(home) or "x")
@@ -141,6 +174,9 @@ def test_handle_running_processes_no_restart_flag(monkeypatch, capsys):
 
 
 def test_handle_running_processes_prefers_installed_service(monkeypatch, capsys):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     monkeypatch.setattr(cli, "_running_amos_processes", lambda: [(11, "web", "agent-memory-web")])
     monkeypatch.setattr(cli, "_web_service_installed", lambda: True)
     import types
@@ -160,6 +196,9 @@ def test_handle_running_processes_prefers_installed_service(monkeypatch, capsys)
 
 
 def test_handle_running_processes_quiet_when_nothing_runs(monkeypatch, capsys):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     monkeypatch.setattr(cli, "_running_amos_processes", lambda: [])
     cli._handle_running_processes(assume_yes=True, no_restart=False)
     assert capsys.readouterr().out == ""
@@ -169,11 +208,17 @@ def test_handle_running_processes_quiet_when_nothing_runs(monkeypatch, capsys):
 
 def test_restart_from_pidfile_missing_returns_manual(tmp_path):
     # No pidfile written → must not signal or exec anything.
+    """Lineage:
+    main: introduced bc2608c9@db-schema-v14.
+    """
     assert "manually" in cli._restart_web_from_pidfile(str(tmp_path))
 
 
 @_posix_only
 def test_restart_from_pidfile_dead_pid_not_relaunched(tmp_path, monkeypatch):
+    """Lineage:
+    main: introduced bc2608c9@db-schema-v14.
+    """
     from agent_memory_os.pidfile import write_web_pidfile
 
     # Record a pidfile whose pid is not alive; os.kill(pid,0) → ProcessLookupError.
@@ -193,7 +238,14 @@ def test_restart_from_pidfile_dead_pid_not_relaunched(tmp_path, monkeypatch):
 
 
 def test_pidfile_roundtrip_rejects_garbage(tmp_path):
-    from agent_memory_os.pidfile import pidfile_path, read_web_pidfile, write_web_pidfile
+    """Lineage:
+    main: introduced bc2608c9@db-schema-v14.
+    """
+    from agent_memory_os.pidfile import (
+        pidfile_path,
+        read_web_pidfile,
+        write_web_pidfile,
+    )
 
     write_web_pidfile(str(tmp_path), argv=["/usr/bin/x", "--home", str(tmp_path)])
     rec = read_web_pidfile(str(tmp_path))
@@ -205,6 +257,9 @@ def test_pidfile_roundtrip_rejects_garbage(tmp_path):
 # ---------- update flow wiring ----------
 
 def test_update_already_latest_warns_about_stale_processes(monkeypatch, capsys):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     from importlib.metadata import version
 
     current = version("agent-memory-os")
@@ -222,6 +277,9 @@ def test_update_already_latest_warns_about_stale_processes(monkeypatch, capsys):
 
 
 def test_update_upgrade_success_triggers_process_handling(monkeypatch, capsys):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14; bc2608c9@db-schema-v14.
+    """
     import subprocess as sp
 
     monkeypatch.setattr(cli, "_pypi_latest", lambda pkg: "999.0.0")
@@ -238,6 +296,9 @@ def test_update_upgrade_success_triggers_process_handling(monkeypatch, capsys):
 
 
 def test_update_upgrade_failure_skips_process_handling(monkeypatch):
+    """Lineage:
+    main: introduced 3e1533be@db-schema-v14.
+    """
     import subprocess as sp
 
     monkeypatch.setattr(cli, "_pypi_latest", lambda pkg: "999.0.0")

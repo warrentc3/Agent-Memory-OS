@@ -15,22 +15,36 @@ import os
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
-from pydantic import BaseModel, Field, field_validator
+from fastapi import (  # type: ignore[import-not-found]
+    FastAPI,
+    HTTPException,
+    Query,
+    Request,
+)
+from fastapi.responses import (  # type: ignore[import-not-found]
+    HTMLResponse,
+    JSONResponse,
+    Response,
+)
+from pydantic import BaseModel, Field, field_validator  # type: ignore[import-not-found]
 
 from .client import MemoryClient
+from .constants import (
+    WEB_FLEET_CONTENT_PREFIXES,
+    WEB_FLEET_SIGNATURE_FRESHNESS_SECONDS,
+    WEB_LOG_TAIL_READ_BYTES,
+)
 from .schema import (
-    MemoryRecord,
     PUBLIC_MEMORY_SCOPES,
     PUBLIC_MEMORY_TYPES,
-    SearchResult,
     VALID_LINK_RELATIONS,
+    MemoryRecord,
+    SearchResult,
 )
+from .timestamp_converters import stamp_to_dt
 from .tokens import load_token
 from .web_ui import PAGE
 
@@ -73,15 +87,12 @@ class AddMemoryRequest(BaseModel):
     @field_validator("expires_at")
     @classmethod
     def _valid_expires_at(cls, value: str | None) -> str | None:
-        # Expiry gates compare this lexicographically against ISO-8601 UTC
-        # "now"; a non-ISO value would silently make the memory permanently
-        # expired (or never-expiring) with no error anywhere.
         if value is None:
             return value
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            stamp_to_dt(value)
         except ValueError as exc:
-            raise ValueError("expires_at must be an ISO-8601 timestamp") from exc
+            raise ValueError("expires_at must be a canonical stamp") from exc
         return value
 
 
@@ -119,9 +130,9 @@ class UpdateMemoryRequest(BaseModel):
         if value is None:
             return value
         try:
-            datetime.fromisoformat(value.replace("Z", "+00:00"))
+            stamp_to_dt(value)
         except ValueError as exc:
-            raise ValueError("expires_at must be an ISO-8601 timestamp") from exc
+            raise ValueError("expires_at must be a canonical stamp") from exc
         return value
 
 
@@ -252,6 +263,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     # the LRU cache actually works. SQLite access is serialized by `lock`
     # because sync endpoints run in a threadpool.
     client = MemoryClient(home=home, check_same_thread=False)
+    text_home = os.fspath(home) if home is not None else None
     lock = threading.Lock()
     # Close the first-run loop: with an empty agents registry the Teams tab's
     # member picker had nothing to offer. Seed this node's own default agent
@@ -262,7 +274,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             seed_id = os.getenv("AGENT_MEMORY_AGENT_ID") or client.node_name
             client.store.register_agent(seed_id, display_name=client.node_name,
                                         kind="custom")
-    except Exception:  # noqa: BLE001 - seeding must never block startup
+    except Exception:  # noqa: BLE001, S110 - seeding must never block startup.
         pass
     # Resolution order: explicit --token > env > <home>/web_token created by
     # `agent-memory token create`.
@@ -316,14 +328,8 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         # operator granted (fleet_admins). Content-bearing routes additionally
         # require the 'read-private' capability — a manage-only admin can
         # operate the node but never read memory content.
-        FLEET_FRESHNESS_S = 120
-        FLEET_CONTENT_PREFIXES = (
-            "/api/memories", "/api/search", "/api/recall", "/api/context-pack",
-            "/api/orchestrate", "/api/archive", "/api/graph", "/api/sync/export",
-        )
-
         def _fleet_required_cap(path: str) -> str:
-            if any(path.startswith(p) for p in FLEET_CONTENT_PREFIXES):
+            if any(path.startswith(p) for p in WEB_FLEET_CONTENT_PREFIXES):
                 return "read-private"
             return "manage"
 
@@ -341,21 +347,27 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 admin = client.store.get_fleet_admin(key_id)
             if admin is None:
                 return False, key_id, "unknown or revoked fleet key"
+            public_key = admin.get("public_key")
+            caps = admin.get("caps")
+            if not isinstance(public_key, str) or not isinstance(
+                caps, (list, tuple, set, frozenset)
+            ):
+                return False, key_id, "malformed fleet admin record"
             try:
                 skew = abs(time.time() - int(timestamp))
             except ValueError:
                 return False, key_id, "malformed timestamp"
-            if skew > FLEET_FRESHNESS_S:
+            if skew > WEB_FLEET_SIGNATURE_FRESHNESS_SECONDS:
                 return False, key_id, "signature expired"
             target = request.url.path + (
                 f"?{request.url.query}" if request.url.query else "")
             body = await request.body()
             message = _crypto.fleet_canonical_message(
                 request.method, target, body, timestamp, nonce)
-            if not _crypto.fleet_verify(admin["public_key"], message, signature):
+            if not _crypto.fleet_verify(public_key, message, signature):
                 return False, key_id, "invalid signature"
             required = _fleet_required_cap(request.url.path)
-            if required not in admin["caps"]:
+            if required not in caps:
                 return False, key_id, f"capability '{required}' not granted"
             # Consume the nonce LAST — only a fully valid signature may burn
             # it, and the atomic insert makes concurrent replays lose.
@@ -438,6 +450,10 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                             media_type="text/plain; version=0.0.4", status_code=503)
         teams = scan.get("teams", 0)
         projects = scan.get("projects", 0)
+        raw_memory_count = scan.get("memories", 0)
+        raw_indexed_count = scan.get("indexed", 0)
+        memory_count = raw_memory_count if isinstance(raw_memory_count, int) else 0
+        indexed_count = raw_indexed_count if isinstance(raw_indexed_count, int) else 0
         # A peer whose last sync recorded an error is "unhealthy"; count them so
         # a mesh operator can alert on sync lag/failure.
         peer_errors = sum(1 for p in peers if str(p.get("last_result", "")).startswith("error"))
@@ -450,7 +466,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             f"agentmemory_orphan_memories {scan.get('orphan_memories', 0)}",
             "# HELP agentmemory_index_drift memories minus FTS-indexed rows (0 = healthy).",
             "# TYPE agentmemory_index_drift gauge",
-            f"agentmemory_index_drift {abs(scan.get('memories', 0) - scan.get('indexed', 0))}",
+            f"agentmemory_index_drift {abs(memory_count - indexed_count)}",
             "# HELP agentmemory_archived_total Cold-archived memories.",
             "# TYPE agentmemory_archived_total gauge",
             f"agentmemory_archived_total {scan.get('archived', 0)}",
@@ -557,7 +573,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     def list_memories(
         owner: str | None = None,
         scope: str | None = None,
-        type: str | None = None,  # noqa: A002 - query param name mirrors the schema field
+        type: str | None = None,
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
         limit: int = Query(default=20, ge=1, le=100),
@@ -802,7 +818,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
                 [sys.executable, "-m", "agent_memory_os.cli", "update", "--yes"],
                 start_new_session=True,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise HTTPException(status_code=500, detail=f"could not start updater: {exc}") from exc
         return {"started": True,
                 "detail": "Updating in the background — the console will restart on the new "
@@ -813,7 +829,10 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         with lock:
             try:
                 client.store.add_team_member(team_id, request.agent_id, actor="web")
-                return client.store.get_team(team_id)
+                team = client.store.get_team(team_id)
+                if team is None:
+                    raise HTTPException(status_code=404, detail=f"team not found: {team_id}")
+                return team
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -851,7 +870,13 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         with lock:
             try:
                 client.store.add_project_member(project_id, request.agent_id, actor="web")
-                return client.store.get_project(project_id)
+                project = client.store.get_project(project_id)
+                if project is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"project not found: {project_id}",
+                    )
+                return project
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
             except ValueError as exc:
@@ -873,11 +898,16 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         """Aggregate fleet view — only meaningful on a console node (one that
         holds a fleet admin private key). Elsewhere returns configured=false
         with setup guidance instead of erroring, so the UI can explain."""
-        from .fleet import (FleetKeyMissing, assemble_status, console_snapshot,
-                            load_console_key, probe_peers)
+        from .fleet import (
+            FleetKeyMissing,
+            assemble_status,
+            console_snapshot,
+            load_console_key,
+            probe_peers,
+        )
 
         try:
-            keypair = load_console_key(home)
+            keypair = load_console_key(text_home)
         except FleetKeyMissing as exc:
             return {"configured": False, "hint": str(exc)}
         # Local snapshot under the store lock; the (slow) network fan-out
@@ -893,7 +923,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         from .fleet import FleetKeyMissing, load_console_key, trigger_on
 
         try:
-            keypair = load_console_key(home)
+            keypair = load_console_key(text_home)
             with lock:
                 peers = client.store.list_peers()
             results = trigger_on(keypair, peers, request.action,
@@ -922,7 +952,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         from .fleet import FleetKeyMissing, load_console_key, signed_call
 
         try:
-            keypair = load_console_key(home)
+            keypair = load_console_key(text_home)
         except FleetKeyMissing as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         params = {"limit": str(limit), "offset": str(offset)}
@@ -960,7 +990,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             raise HTTPException(status_code=400,
                                 detail="only non-fleet /api/ paths can be proxied")
         try:
-            keypair = load_console_key(home)
+            keypair = load_console_key(text_home)
         except FleetKeyMissing as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         with lock:
@@ -979,8 +1009,6 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             content=payload if isinstance(payload, (dict, list)) else {"detail": str(payload)[:400]},
             status_code=status,
         )
-
-    LOG_TAIL_READ_BYTES = 2_000_000  # bounded read so huge logs can't OOM the console
 
     @app.get("/api/logs")
     def logs_view(
@@ -1023,11 +1051,11 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             chosen_name, chosen = match
         size = chosen.stat().st_size
         with open(chosen, "rb") as handle:
-            if size > LOG_TAIL_READ_BYTES:
-                handle.seek(size - LOG_TAIL_READ_BYTES)
+            if size > WEB_LOG_TAIL_READ_BYTES:
+                handle.seek(size - WEB_LOG_TAIL_READ_BYTES)
             text = handle.read().decode("utf-8", errors="replace")
         rows = text.splitlines()
-        truncated = size > LOG_TAIL_READ_BYTES
+        truncated = size > WEB_LOG_TAIL_READ_BYTES
         if truncated and rows:
             rows = rows[1:]  # drop the partial first line of the window
         if q:
@@ -1043,6 +1071,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         degraded / red unreachable). Separate from /api/peers so the peer list
         renders instantly while these network probes fill in."""
         from concurrent.futures import ThreadPoolExecutor
+
         from .discovery import probe_node
 
         with lock:
@@ -1102,7 +1131,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
             try:
                 payload = pairing.redeem_invite(
                     client, request.envelope, request.code,
-                    home=home, self_node_name=client.node_name,
+                    home=text_home, self_node_name=client.node_name,
                     self_agent_id=os.getenv("AGENT_MEMORY_AGENT_ID") or client.node_name,
                 )
             except ValueError as exc:
@@ -1144,14 +1173,17 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
 
         from .sync import export_bundle
 
-        with lock:
-            with tempfile.NamedTemporaryFile("w+", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
-                export_bundle(client.store, handle.name, since=since or None,
+        with lock, tempfile.TemporaryDirectory() as directory:
+            bundle_path = Path(directory) / "bundle.jsonl"
+            try:
+                export_bundle(client.store, bundle_path, since=since or None,
                               include_private=False, node_name=client.node_name)
-                handle.seek(0)
-                body = Path(handle.name).read_text(encoding="utf-8")
-            Path(handle.name).unlink(missing_ok=True)
-        from fastapi.responses import PlainTextResponse
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            body = bundle_path.read_text(encoding="utf-8")
+        from fastapi.responses import (  # type: ignore[import-not-found]
+            PlainTextResponse,
+        )
 
         # Encrypt the bundle for the wire when a mesh key is configured. The
         # AMOSENC1 envelope is self-describing, so a peer with the same key
@@ -1442,7 +1474,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     args = parser.parse_args(argv)
 
-    import uvicorn
+    import uvicorn  # type: ignore[import-not-found]
 
     from .settings import find_available_port, load_instance_settings, port_is_free
 

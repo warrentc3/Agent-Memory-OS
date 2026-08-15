@@ -1,6 +1,8 @@
 """Federation trust model (v0.11) — per-peer scope, tombstones, provenance,
 timestamp convergence."""
 
+import json
+
 import pytest
 
 from agent_memory_os import MemoryClient
@@ -8,6 +10,9 @@ from agent_memory_os import sync as sync_module
 
 
 def test_shared_export_excludes_private(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     host = MemoryClient(home=tmp_path / "h")
     host.add("public knowledge", owner="a", visibility=["global"])
     host.add("team thing", owner="a", visibility=["team:apollo"])
@@ -23,6 +28,9 @@ def test_shared_export_excludes_private(tmp_path):
 
 
 def test_full_export_includes_private(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     host = MemoryClient(home=tmp_path / "h")
     priv = host.add("private secret", owner="a", visibility=[])
     bundle = tmp_path / "full.jsonl"
@@ -33,6 +41,9 @@ def test_full_export_includes_private(tmp_path):
 
 
 def test_add_peer_policy_default_is_shared_and_validated(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     host = MemoryClient(home=tmp_path)
     info = host.store.add_peer("http://peer:8000")
     assert info["policy"] == "shared"
@@ -45,6 +56,9 @@ def test_add_peer_policy_default_is_shared_and_validated(tmp_path):
 
 
 def test_tombstone_propagates_deletion(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     a = MemoryClient(home=tmp_path / "a")
     b = MemoryClient(home=tmp_path / "b")
     mem = a.add("ephemeral note", owner="x", visibility=["global"])
@@ -63,7 +77,51 @@ def test_tombstone_propagates_deletion(tmp_path):
     assert b.get(mem.id) is None
 
 
+def test_tombstone_conflict_keeps_latest_stamp(tmp_path):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced working-tree@db-schema-v22.
+    """
+    target = MemoryClient(home=tmp_path / "target")
+    target.store.conn.execute(
+        "INSERT INTO tombstones(id, deleted_at) VALUES (?, ?)",
+        ("deleted-memory", "2026-08-10T12:00:00.000000Z"),
+    )
+    target.store.conn.commit()
+    bundle = tmp_path / "tombstone.jsonl"
+
+    def import_tombstone(deleted_at: str) -> None:
+        bundle.write_text(
+            json.dumps({"kind": "bundle", "version": 4})
+            + "\n"
+            + json.dumps(
+                {
+                    "kind": "tombstone",
+                    "id": "deleted-memory",
+                    "deleted_at": deleted_at,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        target.import_bundle(bundle)
+
+    import_tombstone("2026-08-10T13:00:00.000000Z")
+    assert target.store.tombstone_for("deleted-memory") == (
+        "2026-08-10T13:00:00.000000Z"
+    )
+
+    import_tombstone("2026-08-10T11:00:00.000000Z")
+    assert target.store.tombstone_for("deleted-memory") == (
+        "2026-08-10T13:00:00.000000Z"
+    )
+    target.close()
+
+
 def test_deleted_memory_does_not_resurrect(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     a = MemoryClient(home=tmp_path / "a")
     b = MemoryClient(home=tmp_path / "b")
     mem = b.add("lives on B", owner="x", visibility=["global"])
@@ -81,6 +139,9 @@ def test_deleted_memory_does_not_resurrect(tmp_path):
 
 
 def test_semi_trusted_peer_cannot_impersonate_local_agent(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     target = MemoryClient(home=tmp_path / "t")
     target.register_agent("alice", kind="hermes", teams=["apollo"])
 
@@ -107,6 +168,9 @@ def test_semi_trusted_peer_cannot_impersonate_local_agent(tmp_path):
 
 
 def test_semi_trusted_import_records_provenance(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     target = MemoryClient(home=tmp_path / "t")
     bundle = tmp_path / "peer.jsonl"
     bundle.write_text(
@@ -127,6 +191,10 @@ def test_semi_trusted_import_records_provenance(tmp_path):
 
 
 def test_same_second_edit_converges_by_content_tiebreak(tmp_path):
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    time-helper: changed working-tree@db-schema-v22.
+    """
     a = MemoryClient(home=tmp_path / "a")
     b = MemoryClient(home=tmp_path / "b")
     mem = a.add("origin", owner="x", visibility=["global"])
@@ -135,7 +203,7 @@ def test_same_second_edit_converges_by_content_tiebreak(tmp_path):
     b.import_bundle(seed)
 
     # Force identical updated_at on both, different content.
-    ts = "2026-05-05T05:05:05+00:00"
+    ts = "2026-05-05T05:05:05.000000Z"
     a.store.conn.execute("UPDATE memories SET content='aaa', updated_at=? WHERE id=?", (ts, mem.id))
     a.store.conn.commit()
     b.store.conn.execute("UPDATE memories SET content='zzz', updated_at=? WHERE id=?", (ts, mem.id))
@@ -147,9 +215,47 @@ def test_same_second_edit_converges_by_content_tiebreak(tmp_path):
     assert a.get(mem.id).content == b.get(mem.id).content == "zzz"
 
 
+def test_v3_offset_spelling_lww_compares_canonical_instants(tmp_path):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced working-tree@db-schema-v22.
+    """
+    a = MemoryClient(home=tmp_path / "a")
+    b = MemoryClient(home=tmp_path / "b")
+    mem = a.add("origin", owner="x", visibility=["global"])
+    seed = tmp_path / "seed.jsonl"
+    a.export_bundle(seed, include_private=False)
+    b.import_bundle(seed)
+
+    # The v3 codec converts the lexically larger offset spelling before LWW.
+    b.store.conn.execute(
+        "UPDATE memories SET content='later zulu', updated_at=? WHERE id=?",
+        ("2026-08-08T12:30:00.000000Z", mem.id),
+    )
+    b.store.conn.commit()
+
+    ab = tmp_path / "ab.jsonl"
+    a.export_bundle(ab, include_private=False)
+    entries = [json.loads(line) for line in ab.read_text().splitlines()]
+    entries[0]["version"] = 3
+    incoming = next(entry for entry in entries if entry["kind"] == "memory")
+    incoming["content"] = "earlier offset"
+    incoming["updated_at"] = "2026-08-08T13:00:00+01:00"
+    ab.write_text(
+        "\n".join(json.dumps(entry) for entry in entries) + "\n",
+        encoding="utf-8",
+    )
+    b.import_bundle(ab)
+    assert b.get(mem.id).content == "later zulu"
+
+
 def test_mesh_sync_does_not_leak_private(tmp_path, monkeypatch):
-    from agent_memory_os.web_app import create_app
+    """Lineage:
+    main: introduced 06cb42f7@db-schema-v9.
+    """
     from fastapi.testclient import TestClient
+
+    from agent_memory_os.web_app import create_app
 
     host_a = MemoryClient(home=tmp_path / "a")
     peer_app = TestClient(create_app(home=tmp_path / "b"))

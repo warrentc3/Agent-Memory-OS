@@ -25,6 +25,9 @@ def _load():
 
 
 def test_server_json_structure_and_package_consistency():
+    """Lineage:
+    main: introduced 83016233@db-schema-v15.
+    """
     m = _load()
     assert m["$schema"].startswith("https://static.modelcontextprotocol.io/schemas/")
     assert re.fullmatch(r"io\.github\.[\w-]+/[\w.-]+", m["name"]), m["name"]
@@ -38,6 +41,9 @@ def test_server_json_structure_and_package_consistency():
 
 
 def test_readme_carries_ownership_marker():
+    """Lineage:
+    main: introduced 83016233@db-schema-v15.
+    """
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     name = _load()["name"]
     # the registry verifies PyPI ownership via this marker in the description
@@ -45,6 +51,9 @@ def test_readme_carries_ownership_marker():
 
 
 def test_server_json_matches_live_schema_if_reachable():
+    """Lineage:
+    main: introduced 83016233@db-schema-v15.
+    """
     import urllib.request
 
     m = _load()
@@ -58,7 +67,11 @@ def test_server_json_matches_live_schema_if_reachable():
 
 
 def test_mcp_server_starts_and_lists_tools(tmp_path):
-    """Spawn the exact registry/README command and do a real MCP handshake."""
+    """Spawn the exact registry/README command and do a real MCP handshake.
+
+    Lineage:
+    main: introduced 83016233@db-schema-v15.
+    """
     pytest.importorskip("mcp")
     import os
 

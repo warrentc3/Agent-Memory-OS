@@ -1,10 +1,12 @@
 from agent_memory_os import MemoryClient
 
-
 SECRET = "Private Lo-fi pressure-relief preference for dear user."
 
 
 def test_agent_visibility_blocks_cross_agent_semantic_search(tmp_path):
+    """Lineage:
+    main: introduced ac8ad376@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         SECRET,
@@ -28,6 +30,9 @@ def test_agent_visibility_blocks_cross_agent_semantic_search(tmp_path):
 
 
 def test_agent_visibility_allows_owner_search(tmp_path):
+    """Lineage:
+    main: introduced ac8ad376@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         SECRET,
@@ -42,6 +47,9 @@ def test_agent_visibility_allows_owner_search(tmp_path):
 
 
 def test_context_pack_reapplies_visibility_filter(tmp_path):
+    """Lineage:
+    main: introduced ac8ad376@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         SECRET,
@@ -63,6 +71,9 @@ def test_context_pack_reapplies_visibility_filter(tmp_path):
 
 
 def test_scoped_agent_allowlist_visibility(tmp_path):
+    """Lineage:
+    main: introduced ac8ad376@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         "Scoped deployment preference for Neo only.",
@@ -79,6 +90,9 @@ def test_scoped_agent_allowlist_visibility(tmp_path):
 
 
 def test_pinned_private_memory_still_hidden_from_other_agent(tmp_path):
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         SECRET,
@@ -104,6 +118,9 @@ def test_pinned_private_memory_still_hidden_from_other_agent(tmp_path):
 
 
 def test_fresh_private_memory_still_hidden_from_context_pack(tmp_path):
+    """Lineage:
+    main: introduced 7231a70d@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add(
         SECRET,

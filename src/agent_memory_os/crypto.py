@@ -40,7 +40,8 @@ class SyncCryptoError(RuntimeError):
 
 
 def resolve_home(home: str | Path | None) -> Path:
-    return Path(home or os.getenv("AGENT_MEMORY_HOME", "~/.agent-memory")).expanduser()
+    configured_home = home or os.getenv("AGENT_MEMORY_HOME") or "~/.agent-memory"
+    return Path(configured_home).expanduser()
 
 
 def sync_key_path(home: str | Path | None) -> Path:
@@ -88,7 +89,7 @@ def generate_secret() -> str:
 
 def _fernet(secret: str):
     try:
-        from cryptography.fernet import Fernet
+        from cryptography.fernet import Fernet  # type: ignore[import-not-found]
     except ModuleNotFoundError as exc:  # pragma: no cover - hit only without the extra
         raise SyncCryptoError(
             "encrypted sync needs the 'cryptography' package — install it with "
@@ -114,7 +115,7 @@ def decrypt_bundle(body: str, secret: str) -> str:
     if not is_encrypted(body):
         return body
     fernet = _fernet(secret)
-    from cryptography.fernet import InvalidToken
+    from cryptography.fernet import InvalidToken  # type: ignore[import-not-found]
 
     token = body[len(ENVELOPE_PREFIX):].encode("ascii")
     try:
@@ -144,7 +145,9 @@ def fleet_key_path(home: str | Path | None) -> Path:
 
 def _ed25519():
     try:
-        from cryptography.hazmat.primitives.asymmetric import ed25519
+        from cryptography.hazmat.primitives.asymmetric import (  # type: ignore[import-not-found]
+            ed25519,
+        )
     except ModuleNotFoundError as exc:  # pragma: no cover - hit only without the extra
         raise SyncCryptoError(
             "fleet admin signatures need the 'cryptography' package — install it "
@@ -163,7 +166,9 @@ def generate_fleet_keypair() -> dict[str, str]:
     """A fresh Ed25519 keypair as {key_id, private_key, public_key} (b64 raw)."""
     ed25519 = _ed25519()
     private = ed25519.Ed25519PrivateKey.generate()
-    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives import (  # type: ignore[import-not-found]
+        serialization,
+    )
 
     priv_raw = private.private_bytes(
         serialization.Encoding.Raw, serialization.PrivateFormat.Raw,
@@ -222,7 +227,7 @@ def fleet_canonical_message(
     or point in time.
     """
     digest = hashlib.sha256(body or b"").hexdigest()
-    return f"{method.upper()}\n{path}\n{digest}\n{timestamp}\n{nonce}".encode("utf-8")
+    return f"{method.upper()}\n{path}\n{digest}\n{timestamp}\n{nonce}".encode()
 
 
 def fleet_sign(private_key_b64: str, message: bytes) -> str:

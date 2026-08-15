@@ -2,6 +2,9 @@ from agent_memory_os import MemoryClient
 
 
 def test_add_search_and_context_pack(tmp_path):
+    """Lineage:
+    main: introduced d02c22b5@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     rec = client.add(
         "User prefers Traditional Chinese responses.",
@@ -23,6 +26,9 @@ def test_add_search_and_context_pack(tmp_path):
 
 
 def test_owner_filter(tmp_path):
+    """Lineage:
+    main: introduced d02c22b5@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     client.add("Neo memory about NAS", owner="neo", tags=["nas"])
     client.add("Mizuki memory about NAS", owner="mizuki", tags=["nas"])
@@ -33,6 +39,9 @@ def test_owner_filter(tmp_path):
 
 
 def test_stats_and_cache(tmp_path):
+    """Lineage:
+    main: introduced d02c22b5@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path, cache_items=2)
     client.add("A fact about reports", owner="bastet-agent", scope="project", type="fact")
     assert client.stats()["total"] == 1

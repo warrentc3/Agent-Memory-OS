@@ -34,6 +34,7 @@ dist/
 shadow_recall*.jsonl
 
 # Local harness and operating-system data
+AGENTS.md
 .claude/launch.json
 .DS_Store
 

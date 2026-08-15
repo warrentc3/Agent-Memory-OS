@@ -8,10 +8,10 @@ Evidence Pack can be reproduced without LLM calls.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-import json
 
 from .client import MemoryClient
 
@@ -78,7 +78,9 @@ def load_golden_query_cases(path: str | Path) -> list[GoldenQueryCase]:
         payload = json.loads(text)
         raw_cases = payload.get("cases", payload) if isinstance(payload, dict) else payload
     if not isinstance(raw_cases, list):
-        raise ValueError("golden query file must contain a list of cases or {'cases': [...]} object")
+        raise ValueError(  # noqa: TRY004 - invalid golden-query document value
+            "golden query file must contain a list of cases or {'cases': [...]} object"
+        )
     return [_parse_case(raw, index=index) for index, raw in enumerate(raw_cases, start=1)]
 
 
@@ -160,7 +162,9 @@ def _evaluate_case(client: MemoryClient, case: GoldenQueryCase, *, default_limit
 
 def _parse_case(raw: object, *, index: int) -> GoldenQueryCase:
     if not isinstance(raw, dict):
-        raise ValueError(f"golden query case #{index} must be an object")
+        raise ValueError(  # noqa: TRY004 - invalid golden-query document value
+            f"golden query case #{index} must be an object"
+        )
     query = str(raw.get("query", "")).strip()
     if not query:
         raise ValueError(f"golden query case #{index} is missing query")
@@ -184,7 +188,9 @@ def _string_list(value: object) -> list[str]:
     if isinstance(value, str):
         return [value]
     if not isinstance(value, list):
-        raise ValueError("expected/forbidden fields must be strings or lists of strings")
+        raise ValueError(  # noqa: TRY004 - invalid golden-query document value
+            "expected/forbidden fields must be strings or lists of strings"
+        )
     return [str(item) for item in value]
 
 

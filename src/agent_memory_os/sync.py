@@ -4,7 +4,7 @@
 JSONL file; `import_bundle` merges a bundle into another store with
 deterministic, convergent conflict resolution:
 
-- memories: last-writer-wins on normalized `updated_at`, with a content
+- memories: last-writer-wins on canonical-stamp `updated_at`, with a content
   tie-break so two nodes that edited in the same second still converge
 - links: merged keeping the strongest weight, highest activation count, and
   latest activation timestamp
@@ -22,11 +22,23 @@ every imported row records `source.synced_from`.
 from __future__ import annotations
 
 import json
-from contextlib import nullcontext
-from datetime import datetime
+import os
+import tempfile
+from collections.abc import Set as AbstractSet
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
-from .schema import normalize_iso_timestamp
+from .constants import (
+    SYNC_BUNDLE_VERSION,
+    SYNC_HTTP_TIMEOUT_SECONDS,
+    SYNC_MAX_FUTURE_SKEW_SECONDS,
+)
+from .sync_bundles.codec import decode_header, decode_record
+from .timestamp_converters import (
+    stamp_distance_to_now_seconds,
+    stamp_distance_to_stamp_seconds,
+    stamp_to_dt,
+)
 
 
 def _guard(lock):
@@ -37,7 +49,7 @@ def _guard(lock):
     """
     return lock if lock is not None else nullcontext()
 
-BUNDLE_VERSION = 3
+BUNDLE_VERSION = SYNC_BUNDLE_VERSION
 _MEMORY_KEYS = (
     "id", "owner", "scope", "type", "content", "summary", "tags", "visibility",
     "source", "confidence", "importance", "created_at", "updated_at", "acl_updated_at",
@@ -53,45 +65,48 @@ _LINK_KEYS = (
 )
 
 
-def _norm_ts(value: str | None) -> str:
-    """Canonicalize an ISO-8601 timestamp for LWW comparison.
-
-    Normalizes a 'Z' suffix and offset spelling so '...Z' and '...+00:00'
-    (which compare wrong lexicographically) resolve to the same instant.
-    Unparseable/empty input sorts before everything.
-    """
-    if not value:
-        return ""
+@contextmanager
+def _atomic_bundle_writer(path: Path):
+    temporary_path: Path | None = None
     try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00")).isoformat()
-    except ValueError:
-        return value
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            suffix=".jsonl",
+            prefix=f".{path.name}.",
+            dir=path.parent,
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            yield handle
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
-def _incoming_wins(inc_ts: str, inc_content: str, ex_ts: str, ex_content: str) -> bool:
+def _incoming_wins(
+    incoming_stamp: str,
+    incoming_content: str,
+    existing_stamp: str,
+    existing_content: str,
+) -> bool:
     """LWW with a deterministic tie-break, so both nodes converge identically."""
-    inc_n, ex_n = _norm_ts(inc_ts), _norm_ts(ex_ts)
-    if inc_n != ex_n:
-        return inc_n > ex_n
-    return inc_content > ex_content  # same instant: larger content wins, deterministically
+    distance = stamp_distance_to_stamp_seconds(incoming_stamp, existing_stamp)
+    if distance != 0:
+        return distance > 0
+    return incoming_content > existing_content
 
 
-# A forged far-future timestamp would win LWW forever and could never be
-# corrected by a legitimate later edit. Reject org timestamps beyond now+skew.
-_MAX_FUTURE_SKEW_SECONDS = 300
-
-
-def _ts_too_future(value: str | None) -> bool:
-    """True if an incoming org timestamp is implausibly far in the future."""
-    norm = _norm_ts(value)
-    if not norm:
-        return False
-    try:
-        ts = datetime.fromisoformat(norm)
-    except ValueError:
-        return False
-    now = datetime.now(ts.tzinfo) if ts.tzinfo else datetime.utcnow()
-    return (ts - now).total_seconds() > _MAX_FUTURE_SKEW_SECONDS
+# A forged far-future stamp would win an LWW clock indefinitely and could not
+# be corrected by a legitimate later update. Reject protected clocks beyond
+# now plus the allowed transport skew.
+def _stamp_too_future(stamp: str) -> bool:
+    """Return whether an incoming protected clock exceeds the future-skew limit."""
+    return (
+        stamp_distance_to_now_seconds(stamp)
+        > SYNC_MAX_FUTURE_SKEW_SECONDS
+    )
 
 
 def _org_member_wins(inc_members, ex_members) -> bool:
@@ -104,7 +119,9 @@ def _org_member_wins(inc_members, ex_members) -> bool:
 
 
 def _org_scope_allows(org_scope: str | None, kind: str, id_: str,
-                      *, team_of: str | None) -> bool:
+                      *, team_of: str | None,
+                      project_parent: tuple[str, frozenset[str]] | None = None,
+                      asserted_members=None) -> bool:
     """Whether a peer authorized for `org_scope` may assert an org record.
 
     org_scope is the pulling peer's policy: None (no org mutations permitted,
@@ -127,7 +144,15 @@ def _org_scope_allows(org_scope: str | None, kind: str, id_: str,
         return False
     if org_scope.startswith("project:"):
         p = org_scope[len("project:"):]
-        return kind == "project" and id_ == p
+        if kind == "project":
+            return id_ == p
+        if kind == "team" and project_parent is not None:
+            parent_id, project_members = project_parent
+            return (
+                id_ == parent_id
+                and frozenset(_clean_members(asserted_members)) == project_members
+            )
+        return False
     return False
 
 
@@ -144,74 +169,133 @@ def export_bundle(
 ) -> dict[str, int]:
     """Write a bundle.
 
-    `team` restricts it to one team's shared memory; `project` restricts it to
-    one project's shared memory (so project bundles only ever reach project
-    members' nodes). `include_private` (default True) controls whether private
-    `visibility=[]` memories are written — peer sync passes False for any
-    non-'full' peer so private memory never leaves the machine. Tombstones are
-    always included (an id + timestamp carry no content).
+    `team` restricts exported memories to one team's shared memory; `project`
+    restricts them to one project's shared memory. `include_private` controls
+    whether memories with `visibility=[]` are exported.
+
+    Memory tombstones are not filtered by `team`, `project`, or
+    `include_private`; when `since` is supplied, only tombstones later than
+    that cursor are included. Each carries a memory id and deletion stamp, but
+    no memory content.
+
+    Organization tombstones are exported only when `include_org` is true.
+    They are filtered by `since`, but not by the selected team or project
+    scope.
     """
+    since_cursor = since
+    if since_cursor is not None:
+        stamp_to_dt(since_cursor)
     path = Path(path).expanduser()
     path.parent.mkdir(parents=True, exist_ok=True)
     counts = {"memories": 0, "links": 0, "profiles": 0, "tombstones": 0}
     clauses, params = [], []
-    if since:
+    eligibility_clauses, eligibility_params = [], []
+    if since_cursor:
         # A pure ACL change (share/revoke) bumps acl_updated_at, not updated_at,
         # so an incremental export must ship it too.
-        clauses.append("(updated_at > ? OR COALESCE(acl_updated_at, updated_at) > ?)")
-        params.extend([since, since])
+        clauses.append("(updated_at > ? OR acl_updated_at > ?)")
+        params.extend([since_cursor, since_cursor])
     if team:
-        clauses.append(
+        team_clause = (
             "(EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)"
             " OR EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = 'team'"
             "            AND json_extract(source, '$.team_id') = ?))"
         )
+        clauses.append(team_clause)
         params.extend([f"team:{team}", team])
+        eligibility_clauses.append(team_clause)
+        eligibility_params.extend([f"team:{team}", team])
     if project:
-        clauses.append(
-            "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)"
-        )
+        project_clause = "EXISTS (SELECT 1 FROM json_each(visibility) WHERE value = ?)"
+        clauses.append(project_clause)
         params.append(f"project:{project}")
+        eligibility_clauses.append(project_clause)
+        eligibility_params.append(f"project:{project}")
     if not include_private:
         # Private == empty visibility array. Keep only rows granted to someone.
-        clauses.append("json_array_length(visibility) > 0")
+        private_clause = "json_array_length(visibility) > 0"
+        clauses.append(private_clause)
+        eligibility_clauses.append(private_clause)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-    exported_ids: set[str] = set()
-    with path.open("w", encoding="utf-8") as handle:
+    with _atomic_bundle_writer(path) as handle:
         header = {"kind": "bundle", "version": BUNDLE_VERSION}
         if node_name:
             header["node_name"] = node_name
+        contract, header = decode_header(header)
         handle.write(json.dumps(header, ensure_ascii=False) + "\n")
+
+        def _write_record(record: dict) -> None:
+            decoded = decode_record(contract, record)
+            if decoded is None:
+                raise ValueError("current bundle contract rejected a record kind")
+            handle.write(json.dumps(decoded.entry, ensure_ascii=False) + "\n")
+
         for row in store.conn.execute(f"SELECT * FROM memories {where}", params):
             payload = {key: row[key] for key in _MEMORY_KEYS}
-            exported_ids.add(row["id"])
-            handle.write(json.dumps({"kind": "memory", **payload}, ensure_ascii=False) + "\n")
+            _write_record({"kind": "memory", **payload})
             counts["memories"] += 1
-        link_where, link_params = ("WHERE updated_at > ?", [since]) if since else ("", [])
+        link_where, link_params = (
+            ("WHERE updated_at > ?", [since_cursor]) if since_cursor else ("", [])
+        )
         for row in store.conn.execute(f"SELECT * FROM memory_links {link_where}", link_params):
-            # A link is only meaningful if both endpoints are in the bundle;
-            # this also stops a link from revealing a filtered-out private id.
-            if not (row["src_id"] in exported_ids and row["dst_id"] in exported_ids):
+            # Both endpoints must still be eligible for this scope/privacy
+            # boundary, even when an incremental bundle omits unchanged rows.
+            # Query only this fresh link's endpoints instead of materializing
+            # every scope-eligible memory id in Python.
+            endpoint_ids = sorted({row["src_id"], row["dst_id"]})
+            placeholders = ", ".join("?" for _ in endpoint_ids)
+            endpoint_clauses = [f"id IN ({placeholders})", *eligibility_clauses]
+            eligible_endpoint_count = store.conn.execute(
+                f"SELECT COUNT(*) FROM memories WHERE {' AND '.join(endpoint_clauses)}",
+                [*endpoint_ids, *eligibility_params],
+            ).fetchone()[0]
+            if eligible_endpoint_count != len(endpoint_ids):
                 continue
             payload = {key: row[key] for key in _LINK_KEYS}
-            handle.write(json.dumps({"kind": "link", **payload}, ensure_ascii=False) + "\n")
+            _write_record({"kind": "link", **payload})
             counts["links"] += 1
         members = None
+        scope_membership_fresh = False
         if project:
             proj = store.get_project(project)
             members = set(proj["members"]) if proj else set()
+            scope_membership_fresh = bool(
+                since_cursor is not None
+                and proj
+                and stamp_distance_to_stamp_seconds(
+                    proj["updated_at"],
+                    since_cursor,
+                ) > 0
+            )
         elif team:
             members = {
                 agent["id"] for agent in store.list_agents() if team in agent["teams"]
             }
-        for row in store.conn.execute("SELECT * FROM recall_profiles"):
+            selected_team = store.get_team(team)
+            scope_membership_fresh = bool(
+                since_cursor is not None
+                and selected_team
+                and stamp_distance_to_stamp_seconds(
+                    selected_team["updated_at"],
+                    since_cursor,
+                ) > 0
+            )
+        profile_where, profile_params = (
+            ("WHERE updated_at > ?", [since_cursor])
+            if since_cursor is not None and not scope_membership_fresh
+            else ("", [])
+        )
+        for row in store.conn.execute(
+            f"SELECT * FROM recall_profiles {profile_where}",
+            profile_params,
+        ):
             if members is not None and row["agent_id"] not in members:
                 continue
-            handle.write(json.dumps({"kind": "profile", **dict(row)}, ensure_ascii=False) + "\n")
+            _write_record({"kind": "profile", **dict(row)})
             counts["profiles"] += 1
-        for mem_id, deleted_at in store.list_tombstones(since=since):
-            handle.write(
-                json.dumps({"kind": "tombstone", "id": mem_id, "deleted_at": deleted_at}) + "\n"
+        for mem_id, deleted_at in store.list_tombstones(since=since_cursor):
+            _write_record(
+                {"kind": "tombstone", "id": mem_id, "deleted_at": deleted_at}
             )
             counts["tombstones"] += 1
         # Org structure (federate teams/projects/memberships so ACL definitions
@@ -242,26 +326,34 @@ def export_bundle(
                 project_rows = store.list_projects()
 
             def _fresh(row):  # respect the incremental `since` cursor like memories do
-                return not since or _norm_ts(row["updated_at"]) > _norm_ts(since)
+                if since_cursor is None:
+                    return True
+                return (
+                    stamp_distance_to_stamp_seconds(
+                        row["updated_at"],
+                        since_cursor,
+                    )
+                    > 0
+                )
 
             for t in team_rows:
                 if not _fresh(t):
                     continue
-                handle.write(json.dumps({
+                _write_record({
                     "kind": "team", "id": t["id"], "name": t["name"],
                     "updated_at": t["updated_at"], "members": t["members"],
-                }, ensure_ascii=False) + "\n")
+                })
             for pr in project_rows:
                 if not _fresh(pr):
                     continue
-                handle.write(json.dumps({
+                _write_record({
                     "kind": "project", "id": pr["id"], "team_id": pr["team_id"], "name": pr["name"],
                     "updated_at": pr["updated_at"], "members": pr["members"],
-                }, ensure_ascii=False) + "\n")
-            for tkind, tid, deleted_at in store.list_org_tombstones(since=since):
-                handle.write(json.dumps({
+                })
+            for tkind, tid, deleted_at in store.list_org_tombstones(since=since_cursor):
+                _write_record({
                     "kind": "org_tombstone", "tomb_kind": tkind, "id": tid, "deleted_at": deleted_at,
-                }) + "\n")
+                })
     return counts
 
 
@@ -294,14 +386,94 @@ def import_bundle(
     }
     # A semi-trusted peer must not forge a memory authored by one of OUR local
     # agents (impersonation). Compute the guarded id set once.
-    local_agents = set() if trusted else {a["id"] for a in store.list_agents()}
+    local_agents: AbstractSet[str] = (
+        set() if trusted else {a["id"] for a in store.list_agents()}
+    )
     try:
         with path.open("r", encoding="utf-8") as handle:
             header = json.loads(handle.readline())
-            if header.get("kind") != "bundle" or header.get("version") not in (1, 2, 3):
-                raise ValueError("not a compatible agent-memory-os bundle")
+            contract, _ = decode_header(header)
+            project_parent = None
+            if org_scope and org_scope.startswith("project:"):
+                # The parent team is written before its project, so validate
+                # the one project record first without buffering the bundle.
+                project_id = org_scope[len("project:"):]
+                project_entry = None
+                project_count = 0
+                project_tombstone = None
+                for line in handle:
+                    decoded = decode_record(contract, json.loads(line))
+                    if decoded is None:
+                        continue
+                    candidate = decoded.entry
+                    if candidate["kind"] == "project" and candidate["id"] == project_id:
+                        project_count += 1
+                        project_entry = candidate if project_count == 1 else None
+                    elif (
+                        candidate["kind"] == "org_tombstone"
+                        and candidate["tomb_kind"] == "project"
+                        and candidate["id"] == project_id
+                        and not _stamp_too_future(candidate["deleted_at"])
+                        and (
+                            project_tombstone is None
+                            or stamp_distance_to_stamp_seconds(
+                                candidate["deleted_at"],
+                                project_tombstone,
+                            ) > 0
+                        )
+                    ):
+                        project_tombstone = candidate["deleted_at"]
+                local_project = store.get_project(project_id)
+                if project_entry is not None:
+                    parent_id = (
+                        local_project["team_id"]
+                        if local_project is not None
+                        else project_entry.get("team_id") or ""
+                    )
+                    if (
+                        parent_id
+                        and not _stamp_too_future(project_entry["updated_at"])
+                        and _project_version_would_merge(store, project_entry)
+                        and not (
+                            project_tombstone is not None
+                            and stamp_distance_to_stamp_seconds(
+                                project_tombstone,
+                                project_entry["updated_at"],
+                            ) >= 0
+                        )
+                    ):
+                        project_parent = (
+                            parent_id,
+                            frozenset(_clean_members(project_entry.get("members"))),
+                        )
+                elif project_count == 0 and local_project is not None:
+                    tomb = _org_tomb_at(store, "project", project_id)
+                    local_version = local_project["updated_at"]
+                    local_tomb_blocks = (
+                        tomb is not None
+                        and stamp_distance_to_stamp_seconds(tomb, local_version) >= 0
+                    )
+                    bundle_tomb_blocks = (
+                        project_tombstone is not None
+                        and stamp_distance_to_stamp_seconds(
+                            project_tombstone,
+                            local_version,
+                        ) >= 0
+                    )
+                    if not local_tomb_blocks and not bundle_tomb_blocks:
+                        project_parent = (
+                            local_project["team_id"],
+                            frozenset(_clean_members(local_project.get("members"))),
+                        )
+                handle.seek(0)
+                header = json.loads(handle.readline())
+                contract, _ = decode_header(header)
+
             for line in handle:
-                entry = json.loads(line)
+                decoded = decode_record(contract, json.loads(line))
+                if decoded is None:
+                    continue
+                entry = dict(decoded.entry)
                 kind = entry.pop("kind")
                 if kind == "memory":
                     _merge_memory(
@@ -315,7 +487,13 @@ def import_bundle(
                 elif kind == "tombstone":
                     _apply_tombstone(store, entry, stats)
                 elif kind == "team":
-                    _merge_team(store, entry, stats, org_scope=org_scope)
+                    _merge_team(
+                        store,
+                        entry,
+                        stats,
+                        org_scope=org_scope,
+                        project_parent=project_parent,
+                    )
                 elif kind == "project":
                     _merge_project(store, entry, stats, org_scope=org_scope)
                 elif kind == "org_tombstone":
@@ -331,21 +509,13 @@ def import_bundle(
 
 
 def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
-                  trusted=True, local_agents=frozenset()) -> None:
+                  trusted=True, local_agents: AbstractSet[str] = frozenset()) -> None:
     entry = dict(entry)
-    if entry.get("expires_at") is not None:
-        try:
-            entry["expires_at"] = normalize_iso_timestamp(
-                entry["expires_at"],
-                field_name="expires_at",
-            )
-        except ValueError:
-            # Older peers may carry data outside the canonical write contract.
-            # Preserve it for lenient hydration rather than dropping the row.
-            pass
     # A deletion that happened at or after this version wins over the re-add.
     tomb = store.tombstone_for(entry["id"])
-    if tomb is not None and _norm_ts(tomb) >= _norm_ts(entry.get("updated_at")):
+    if tomb is not None and (
+        stamp_distance_to_stamp_seconds(tomb, entry["updated_at"]) >= 0
+    ):
         stats["memories_skipped"] += 1
         return
 
@@ -364,15 +534,15 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
             return
         entry["source"] = _tag_source(entry.get("source"), source_peer)
 
-    # Old bundles (pre-ACL-clock) carry no acl_updated_at; treat it as the
-    # content clock so they behave exactly as before.
-    inc_acl = _norm_ts(entry.get("acl_updated_at") or entry.get("updated_at"))
+    inc_acl = entry["acl_updated_at"]
 
     if existing is None:
+        if _stamp_too_future(inc_acl):
+            stats["memories_skipped"] += 1
+            return
         columns = ", ".join(_MEMORY_KEYS)
         placeholders = ", ".join("?" for _ in _MEMORY_KEYS)
         row = dict(entry)
-        row["acl_updated_at"] = entry.get("acl_updated_at") or entry.get("updated_at")
         store.conn.execute(
             f"INSERT INTO memories({columns}) VALUES ({placeholders})",
             [row.get(key) for key in _MEMORY_KEYS],
@@ -383,7 +553,7 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
     changed = False
     # (1) Content fields — merged on updated_at (never overwrite the ACL here).
     if _incoming_wins(
-        entry.get("updated_at"), entry.get("content") or "",
+        entry["updated_at"], entry.get("content") or "",
         existing["updated_at"], existing["content"] or "",
     ):
         content_keys = [k for k in _MEMORY_KEYS if k not in _ACL_KEYS and k != "id"]
@@ -405,17 +575,18 @@ def _merge_memory(store, entry: dict, stats: dict, *, source_peer=None,
     # expansion is refused (the owner's own trusted node is the authority for
     # widening a grant). Trusted imports (local admin / own full replica) may
     # converge freely.
-    inc_acl_raw = entry.get("acl_updated_at") or entry.get("updated_at")
-    ex_acl = _norm_ts(existing["acl_updated_at"] or existing["updated_at"])
-    acl_wins = inc_acl > ex_acl or (
-        inc_acl == ex_acl and (entry.get("visibility") or "") > (existing["visibility"] or "")
+    ex_acl = existing["acl_updated_at"]
+    acl_distance = stamp_distance_to_stamp_seconds(inc_acl, ex_acl)
+    acl_wins = acl_distance > 0 or (
+        acl_distance == 0
+        and (entry.get("visibility") or "") > (existing["visibility"] or "")
     )
-    if acl_wins and not _ts_too_future(inc_acl_raw) and _acl_change_allowed(
+    if acl_wins and not _stamp_too_future(inc_acl) and _acl_change_allowed(
         entry.get("visibility"), existing["visibility"], trusted
     ):
         store.conn.execute(
             "UPDATE memories SET visibility = ?, acl_updated_at = ? WHERE id = ?",
-            (entry.get("visibility"), inc_acl_raw, entry["id"]),
+            (entry.get("visibility"), inc_acl, entry["id"]),
         )
         changed = True
     stats["memories_updated" if changed else "memories_skipped"] += 1
@@ -447,11 +618,14 @@ def _tag_source(source, peer: str | None) -> str:
 
 
 def _apply_tombstone(store, entry: dict, stats: dict) -> None:
-    mem_id, deleted_at = entry["id"], entry.get("deleted_at") or ""
+    mem_id = entry["id"]
+    deleted_at = entry["deleted_at"]
     row = store.conn.execute(
         "SELECT updated_at FROM memories WHERE id = ?", (mem_id,)
     ).fetchone()
-    if row is not None and _norm_ts(deleted_at) >= _norm_ts(row["updated_at"]):
+    if row is not None and (
+        stamp_distance_to_stamp_seconds(deleted_at, row["updated_at"]) >= 0
+    ):
         store.conn.execute("DELETE FROM memory_links WHERE src_id = ? OR dst_id = ?", (mem_id, mem_id))
         store.conn.execute("DELETE FROM memories WHERE id = ?", (mem_id,))
         stats["tombstones_applied"] += 1
@@ -483,7 +657,46 @@ def _org_tomb_at(store, kind: str, id_: str) -> str | None:
     return row[0] if row else None
 
 
-def _merge_team(store, entry: dict, stats: dict, *, org_scope: str | None) -> None:
+def _project_version_would_merge(store, entry: dict) -> bool:
+    """Whether a project version survives its tombstone and LWW checks."""
+    pid = entry["id"]
+    upd = entry["updated_at"]
+    tomb = _org_tomb_at(store, "project", pid)
+    if tomb is not None and stamp_distance_to_stamp_seconds(tomb, upd) >= 0:
+        return False
+    existing = store.conn.execute(
+        "SELECT updated_at FROM projects WHERE id = ?",
+        (pid,),
+    ).fetchone()
+    if existing is None:
+        return True
+    update_distance = stamp_distance_to_stamp_seconds(
+        upd,
+        existing["updated_at"],
+    )
+    if update_distance < 0:
+        return False
+    if update_distance > 0:
+        return True
+    members = _clean_members(entry.get("members"))
+    existing_members = [
+        row[0]
+        for row in store.conn.execute(
+            "SELECT agent_id FROM project_members WHERE project_id = ?",
+            (pid,),
+        ).fetchall()
+    ]
+    return _org_member_wins(members, existing_members)
+
+
+def _merge_team(
+    store,
+    entry: dict,
+    stats: dict,
+    *,
+    org_scope: str | None,
+    project_parent: tuple[str, frozenset[str]] | None = None,
+) -> None:
     """Converge a team's definition + full member set by last-writer-wins on
     updated_at; a member set REPLACE means removals propagate too.
 
@@ -491,23 +704,36 @@ def _merge_team(store, entry: dict, stats: dict, *, org_scope: str | None) -> No
     'team:<this id>') may rewrite it, and an implausibly future-dated record is
     rejected so it cannot win LWW forever.
     """
-    tid, upd = entry["id"], entry.get("updated_at") or ""
-    if not _org_scope_allows(org_scope, "team", tid, team_of=None):
+    tid = entry["id"]
+    upd = entry["updated_at"]
+    if not _org_scope_allows(
+        org_scope,
+        "team",
+        tid,
+        team_of=None,
+        project_parent=project_parent,
+        asserted_members=entry.get("members"),
+    ):
         stats["org_records_rejected"] += 1
         return
-    if _ts_too_future(upd):
+    if _stamp_too_future(upd):
         stats["org_records_rejected"] += 1
         return
     tomb = _org_tomb_at(store, "team", tid)
-    if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
+    if tomb is not None and (
+        stamp_distance_to_stamp_seconds(tomb, upd) >= 0
+    ):
         return  # deleted at/after this version — don't resurrect
     members = _clean_members(entry.get("members"))
     existing = store.conn.execute("SELECT updated_at FROM teams WHERE id = ?", (tid,)).fetchone()
     if existing is not None:
-        inc, ex = _norm_ts(upd), _norm_ts(existing["updated_at"])
-        if inc < ex:
+        update_distance = stamp_distance_to_stamp_seconds(
+            upd,
+            existing["updated_at"],
+        )
+        if update_distance < 0:
             return
-        if inc == ex:
+        if update_distance == 0:
             # Same instant on both nodes: converge deterministically instead of
             # each keeping its own member set.
             ex_members = [r[0] for r in store.conn.execute(
@@ -537,34 +763,26 @@ def _merge_team(store, entry: dict, stats: dict, *, org_scope: str | None) -> No
 
 
 def _merge_project(store, entry: dict, stats: dict, *, org_scope: str | None) -> None:
-    pid, upd = entry["id"], entry.get("updated_at") or ""
+    pid = entry["id"]
+    upd = entry["updated_at"]
     team_id = entry.get("team_id") or ""
     # A team-scoped peer may assert a project only if it belongs to that team;
     # trust the record's team_id, falling back to the local parent when absent.
-    parent = team_id or (lambda r: r[0] if r else None)(
-        store.conn.execute("SELECT team_id FROM projects WHERE id = ?", (pid,)).fetchone()
-    )
+    parent = team_id
+    if not parent:
+        row = store.conn.execute(
+            "SELECT team_id FROM projects WHERE id = ?", (pid,)
+        ).fetchone()
+        parent = row[0] if row else None
     if not _org_scope_allows(org_scope, "project", pid, team_of=parent):
         stats["org_records_rejected"] += 1
         return
-    if _ts_too_future(upd):
+    if _stamp_too_future(upd):
         stats["org_records_rejected"] += 1
         return
-    tomb = _org_tomb_at(store, "project", pid)
-    if tomb is not None and _norm_ts(tomb) >= _norm_ts(upd):
+    if not _project_version_would_merge(store, entry):
         return
     members = _clean_members(entry.get("members"))
-    existing = store.conn.execute("SELECT updated_at FROM projects WHERE id = ?", (pid,)).fetchone()
-    if existing is not None:
-        inc, ex = _norm_ts(upd), _norm_ts(existing["updated_at"])
-        if inc < ex:
-            return
-        if inc == ex:
-            ex_members = [r[0] for r in store.conn.execute(
-                "SELECT agent_id FROM project_members WHERE project_id = ?", (pid,)
-            ).fetchall()]
-            if not _org_member_wins(members, ex_members):
-                return
     store.conn.execute(
         "INSERT INTO projects(id, team_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at",
@@ -586,7 +804,8 @@ def _merge_project(store, entry: dict, stats: dict, *, org_scope: str | None) ->
 
 
 def _apply_org_tombstone(store, entry: dict, stats: dict, *, org_scope: str | None) -> None:
-    kind, id_, deleted_at = entry["tomb_kind"], entry["id"], entry.get("deleted_at") or ""
+    kind, id_ = entry["tomb_kind"], entry["id"]
+    deleted_at = entry["deleted_at"]
     # Authorize against the peer's scope. For a project tombstone under a
     # team-scoped peer, resolve the parent team locally.
     parent = None
@@ -596,12 +815,14 @@ def _apply_org_tombstone(store, entry: dict, stats: dict, *, org_scope: str | No
     if not _org_scope_allows(org_scope, kind, id_, team_of=parent):
         stats["org_records_rejected"] += 1
         return
-    if _ts_too_future(deleted_at):
+    if _stamp_too_future(deleted_at):
         stats["org_records_rejected"] += 1
         return
     if kind == "team":
         row = store.conn.execute("SELECT updated_at FROM teams WHERE id = ?", (id_,)).fetchone()
-        if row is not None and _norm_ts(deleted_at) >= _norm_ts(row["updated_at"]):
+        if row is not None and (
+            stamp_distance_to_stamp_seconds(deleted_at, row["updated_at"]) >= 0
+        ):
             for pr in store.conn.execute("SELECT id FROM projects WHERE team_id = ?", (id_,)).fetchall():
                 store.conn.execute("DELETE FROM project_members WHERE project_id = ?", (pr[0],))
                 store._strip_visibility_grant(f"project:{pr[0]}")
@@ -612,7 +833,9 @@ def _apply_org_tombstone(store, entry: dict, stats: dict, *, org_scope: str | No
             stats["org_tombstones_applied"] += 1
     elif kind == "project":
         row = store.conn.execute("SELECT updated_at FROM projects WHERE id = ?", (id_,)).fetchone()
-        if row is not None and _norm_ts(deleted_at) >= _norm_ts(row["updated_at"]):
+        if row is not None and (
+            stamp_distance_to_stamp_seconds(deleted_at, row["updated_at"]) >= 0
+        ):
             store.conn.execute("DELETE FROM project_members WHERE project_id = ?", (id_,))
             store.conn.execute("DELETE FROM projects WHERE id = ?", (id_,))
             store._strip_visibility_grant(f"project:{id_}")
@@ -635,6 +858,7 @@ def _merge_link(store, entry: dict, stats: dict) -> None:
     ).fetchone()[0]
     if endpoints != 2:
         return
+    entry = dict(entry)
     existing = store.conn.execute(
         "SELECT weight, activation_count, last_activated_at FROM memory_links "
         "WHERE src_id = ? AND dst_id = ? AND relation = ?",
@@ -654,12 +878,20 @@ def _merge_link(store, entry: dict, stats: dict) -> None:
             UPDATE memory_links
             SET weight = max(weight, ?),
                 activation_count = max(activation_count, ?),
-                last_activated_at = max(COALESCE(last_activated_at, ''), COALESCE(?, ''))
+                updated_at = max(updated_at, ?),
+                last_activated_at = CASE
+                    WHEN last_activated_at IS NULL THEN ?
+                    WHEN ? IS NULL THEN last_activated_at
+                    ELSE max(last_activated_at, ?)
+                END
             WHERE src_id = ? AND dst_id = ? AND relation = ?
             """,
             (
                 float(entry.get("weight") or 0.0),
                 int(entry.get("activation_count") or 0),
+                entry["updated_at"],
+                entry.get("last_activated_at"),
+                entry.get("last_activated_at"),
                 entry.get("last_activated_at"),
                 entry["src_id"], entry["dst_id"], entry["relation"],
             ),
@@ -668,10 +900,17 @@ def _merge_link(store, entry: dict, stats: dict) -> None:
 
 
 def _merge_profile(store, entry: dict, stats: dict) -> None:
+    entry = dict(entry)
     existing = store.conn.execute(
         "SELECT updated_at FROM recall_profiles WHERE agent_id = ?", (entry["agent_id"],)
     ).fetchone()
-    if existing is not None and _norm_ts(entry.get("updated_at")) <= _norm_ts(existing["updated_at"]):
+    if existing is not None and (
+        stamp_distance_to_stamp_seconds(
+            entry["updated_at"],
+            existing["updated_at"],
+        )
+        <= 0
+    ):
         return
     store.conn.execute(
         """
@@ -710,7 +949,7 @@ def _org_scope_for_policy(policy: str) -> str | None:
     """
     if policy == "full":
         return "full"
-    if policy.startswith("team:") or policy.startswith("project:"):
+    if policy.startswith(("team:", "project:")):
         return policy
     return None
 
@@ -739,7 +978,7 @@ def pull_from_peer(client, base_url: str, *, since: str | None = None,
         first_nl = body.find("\n")
         header = json.loads(body[:first_nl] if first_nl >= 0 else body)
         peer_node_name = str(header.get("node_name") or "").strip()
-    except Exception:  # noqa: BLE001 - header parse is best-effort
+    except Exception:  # noqa: BLE001, S110 - header parse is best-effort.
         pass
     with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
         handle.write(body)
@@ -759,16 +998,12 @@ def pull_from_peer(client, base_url: str, *, since: str | None = None,
 def push_to_peer(client, base_url: str, *, since: str | None = None,
                  peer_token: str | None = None, policy: str = "shared", lock=None) -> dict[str, int]:
     """Export the local bundle (locked) and POST it to a peer (unlocked)."""
-    import tempfile
-
     export_kwargs = _export_kwargs_for_policy(policy)
-    with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False, encoding="utf-8") as handle:
+    with tempfile.TemporaryDirectory() as directory:
+        bundle_path = Path(directory) / "bundle.jsonl"
         with _guard(lock):
-            client.export_bundle(handle.name, since=since, **export_kwargs)
-    try:
-        payload = Path(handle.name).read_text(encoding="utf-8")
-    finally:
-        Path(handle.name).unlink(missing_ok=True)
+            client.export_bundle(bundle_path, since=since, **export_kwargs)
+        payload = bundle_path.read_text(encoding="utf-8")
     from . import crypto
 
     secret = crypto.load_sync_secret(getattr(client, "home", None))
@@ -850,6 +1085,7 @@ def fetch_peer_node_name(url: str, *, token: str | None = None) -> str:
 
 def _http(url: str, *, token: str | None, post: str | None = None) -> str:
     import ssl
+    import urllib.error
     import urllib.request
 
     if not url.startswith(("http://", "https://")):
@@ -866,5 +1102,24 @@ def _http(url: str, *, token: str | None, post: str | None = None) -> str:
     # check + system trust store). http:// peers are unaffected; confidentiality
     # over plain HTTP comes from the app-layer bundle encryption instead.
     context = ssl.create_default_context() if url.startswith("https://") else None
-    with urllib.request.urlopen(request, timeout=30, context=context) as response:
-        return response.read().decode("utf-8")
+    try:
+        with urllib.request.urlopen(
+            request,
+            timeout=SYNC_HTTP_TIMEOUT_SECONDS,
+            context=context,
+        ) as response:
+            return response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace").strip()
+        detail = body
+        if body:
+            try:
+                decoded = json.loads(body)
+                if isinstance(decoded, dict) and decoded.get("detail"):
+                    detail = str(decoded["detail"])
+            except (TypeError, ValueError):
+                pass
+        message = str(exc)
+        if detail:
+            message = f"{message}: {detail}"
+        raise RuntimeError(message) from exc

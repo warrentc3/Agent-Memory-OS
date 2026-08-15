@@ -1,10 +1,10 @@
 from __future__ import annotations
 
+import math
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from numbers import Integral
 from typing import Any
-import math
 
 from agent_memory_os.candidates import Candidate
 
@@ -35,7 +35,7 @@ def semantic_backend_available() -> bool:
     """Return whether optional turbovec semantic dependencies are importable."""
     try:
         _load_optional_dependencies()
-    except Exception:
+    except Exception:  # noqa: BLE001 - availability includes initialization failures.
         return False
     return True
 
@@ -68,7 +68,7 @@ class TurbovecSemanticCandidateProvider:
         external_id_by_memory_id: Mapping[str, int],
         embed_query: Callable[[str], Any],
         bit_width: int = 4,
-    ) -> "TurbovecSemanticCandidateProvider":
+    ) -> TurbovecSemanticCandidateProvider:
         """Build an in-memory IdMapIndex from vectors and stable ID mapping."""
         try:
             np, id_map_index = _load_optional_dependencies()
@@ -169,7 +169,9 @@ class TurbovecSemanticCandidateProvider:
     @staticmethod
     def _validate_external_id(external_id: int) -> int:
         if isinstance(external_id, bool) or not isinstance(external_id, Integral):
-            raise ValueError("external ids must be uint64 integers")
+            raise ValueError(  # noqa: TRY004 - identifiers share one validation error.
+                "external ids must be uint64 integers"
+            )
         value = int(external_id)
         if value < 0 or value > UINT64_MAX:
             raise ValueError("external ids must be uint64 integers")
@@ -178,7 +180,9 @@ class TurbovecSemanticCandidateProvider:
     @staticmethod
     def _validate_memory_id(memory_id: str) -> str:
         if not isinstance(memory_id, str):
-            raise ValueError("memory ids must be non-empty strings")
+            raise ValueError(  # noqa: TRY004 - identifiers share one validation error.
+                "memory ids must be non-empty strings"
+            )
         clean = memory_id.strip()
         if not clean:
             raise ValueError("memory ids must be non-empty strings")

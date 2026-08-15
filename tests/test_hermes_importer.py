@@ -3,7 +3,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_memory_os import MemoryClient
-from agent_memory_os.hermes_importer import import_hermes_memory_files, split_memory_sections
+from agent_memory_os.hermes_importer import (
+    import_hermes_memory_files,
+    split_memory_sections,
+)
 
 
 def write_profile_memory(profile_home: Path, *, memory: str, user: str) -> None:
@@ -14,10 +17,16 @@ def write_profile_memory(profile_home: Path, *, memory: str, user: str) -> None:
 
 
 def test_split_memory_sections_uses_hermes_separator() -> None:
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     assert split_memory_sections("A\n§\nB\n\n§\nC") == ["A", "B", "C"]
 
 
 def test_import_hermes_memory_files_is_idempotent_and_acl_scoped(tmp_path):
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     profile_home = tmp_path / "profiles" / "neo"
     write_profile_memory(
         profile_home,
@@ -49,6 +58,9 @@ def test_import_hermes_memory_files_is_idempotent_and_acl_scoped(tmp_path):
 
 
 def test_import_hermes_memory_files_updates_changed_source_slot_without_duplicates(tmp_path):
+    """Lineage:
+    main: introduced f1d603b4@pre-migration-registry.
+    """
     profile_home = tmp_path / "profiles" / "neo"
     write_profile_memory(profile_home, memory="Old content", user="User prefers zh-TW.")
     client = MemoryClient(home=tmp_path / "amos")

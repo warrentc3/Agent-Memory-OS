@@ -38,6 +38,7 @@ agent-memory-mcp = "agent_memory_os.mcp_server:main"
 agent-memory-os = "agent_memory_os.hermes_plugin"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "src/agent_memory_os/migrations"]
+python_files = ["test_*.py", "*_test.py"]
 pythonpath = ["src"]
 addopts = "-q"

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
 import hashlib
 import json
 import re
-from typing import Iterable
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from .client import MemoryClient
 

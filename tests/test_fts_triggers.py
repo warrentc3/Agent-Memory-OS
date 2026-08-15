@@ -9,6 +9,9 @@ from agent_memory_os import MemoryClient
 
 
 def test_update_content_refreshes_fts_index(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     record = client.add("Original espresso tasting notes.", visibility=["global"])
 
@@ -21,6 +24,9 @@ def test_update_content_refreshes_fts_index(tmp_path):
 
 
 def test_delete_removes_memory_from_fts_index(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     record = client.add("Disposable reminder about espresso beans.", visibility=["global"])
     keeper = client.add("Keeper note about grinder settings.", visibility=["global"])
@@ -35,6 +41,10 @@ def test_delete_removes_memory_from_fts_index(tmp_path):
 
 
 def test_legacy_broken_triggers_are_migrated(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry; 34f95eac@db-schema-v3.
+    direct migration binding: v2.
+    """
     client = MemoryClient(home=tmp_path)
     record = client.add("Migration probe memory.", visibility=["global"])
     conn = client.store.conn

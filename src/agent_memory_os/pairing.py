@@ -39,9 +39,10 @@ import urllib.request
 from typing import Any
 
 from . import crypto, tokens
+from .constants import PAIRING_INVITE_TTL_SECONDS, PAIRING_REDEEM_TIMEOUT_SECONDS
 
 CODE_PREFIX = "amos_join_"
-DEFAULT_TTL_SECONDS = 600
+DEFAULT_TTL_SECONDS = PAIRING_INVITE_TTL_SECONDS
 REDEEM_PATH = "/api/pairing/redeem"
 
 
@@ -91,7 +92,7 @@ def redeem_invite(
         raise ValueError("pairing envelope must be encrypted")
     try:
         request = json.loads(crypto.decrypt_bundle(envelope, code))
-    except Exception as exc:  # noqa: BLE001 - opaque failure to caller
+    except Exception as exc:  # Opaque failure to caller.
         raise ValueError(f"undecryptable pairing envelope: {exc}") from exc
 
     agent_id = str(request.get("agent_id") or "").strip()
@@ -144,7 +145,12 @@ def decrypt_payload(envelope: str, code: str) -> dict:
 # Client side (the joining node)
 # --------------------------------------------------------------------------- #
 
-def _post_redeem(url: str, body: dict, *, timeout: int = 15) -> dict:
+def _post_redeem(
+    url: str,
+    body: dict,
+    *,
+    timeout: int = PAIRING_REDEEM_TIMEOUT_SECONDS,
+) -> dict:
     """POST the redeem request. Module-level so tests can bridge to a TestClient."""
     request = urllib.request.Request(
         url.rstrip("/") + REDEEM_PATH,
@@ -152,7 +158,7 @@ def _post_redeem(url: str, body: dict, *, timeout: int = 15) -> dict:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+    with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode("utf-8"))
 
 

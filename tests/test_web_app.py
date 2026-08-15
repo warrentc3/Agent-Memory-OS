@@ -4,6 +4,9 @@ from agent_memory_os.web_app import create_app
 
 
 def test_web_ui_root_is_openable_and_shows_stats(tmp_path):
+    """Lineage:
+    main: introduced 0de8f285@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
 
@@ -13,9 +16,21 @@ def test_web_ui_root_is_openable_and_shows_stats(tmp_path):
     assert "text/html" in response.headers["content-type"]
     assert "AgentMemoryOS Web UI" in response.text
     assert "Total memories" in response.text
+    assert response.text.count("data:image/png;base64,") == 2
+    assert "__AMOS_LOGO_DATA_URI__" not in response.text
+
+
+def test_web_ui_expiry_uses_canonical_microsecond_stamp():
+    from agent_memory_os.web_ui import PAGE
+
+    assert 'return iso.slice(0, -1) + "000Z";' in PAGE
+    assert "payload.expires_at = localDateTimeToStamp(expiresRaw);" in PAGE
 
 
 def test_web_api_can_add_and_search_memory(tmp_path):
+    """Lineage:
+    main: introduced 0de8f285@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
 
@@ -43,6 +58,9 @@ def test_web_api_can_add_and_search_memory(tmp_path):
 
 
 def test_web_api_search_enforces_requester_acl(tmp_path):
+    """Lineage:
+    main: introduced 0de8f285@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     secret = "Private emotional preference only for the owner."
@@ -70,6 +88,9 @@ def test_web_api_search_enforces_requester_acl(tmp_path):
 
 
 def test_web_api_context_pack_enforces_requester_acl(tmp_path):
+    """Lineage:
+    main: introduced 0de8f285@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     secret = "Private ritual reflection kept for the owner."
@@ -91,6 +112,9 @@ def test_web_api_context_pack_enforces_requester_acl(tmp_path):
 
 
 def test_web_api_validates_inputs(tmp_path):
+    """Lineage:
+    main: introduced 0de8f285@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
 
@@ -106,6 +130,9 @@ def test_web_api_validates_inputs(tmp_path):
 
 
 def test_web_api_links_and_recall_roundtrip(tmp_path):
+    """Lineage:
+    main: introduced 0de8f285@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     a = client.post(
@@ -140,6 +167,9 @@ def test_web_api_links_and_recall_roundtrip(tmp_path):
 
 
 def test_web_api_get_memory_and_consolidate(tmp_path):
+    """Lineage:
+    main: introduced 0de8f285@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     created = client.post(
@@ -162,22 +192,45 @@ def test_web_api_get_memory_and_consolidate(tmp_path):
     assert client.get("/api/stats").json()["total"] == 1
 
 
-def test_web_api_rejects_non_iso_expires_at(tmp_path):
+def test_web_api_requires_canonical_expires_at(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
 
     bad = client.post("/api/memories", json={"content": "x", "expires_at": "12/31/2026"})
     epoch = client.post("/api/memories", json={"content": "x", "expires_at": "1767225600"})
-    good = client.post(
+    offset = client.post(
         "/api/memories", json={"content": "x", "expires_at": "2030-01-01T00:00:00+00:00"}
+    )
+    canonical = client.post(
+        "/api/memories", json={"content": "x", "expires_at": "2030-01-01T00:00:00.000000Z"}
+    )
+    memory_id = canonical.json()["id"]
+    update_offset = client.patch(
+        f"/api/memories/{memory_id}",
+        json={"expires_at": "2031-01-01T00:00:00+00:00"},
+    )
+    update_canonical = client.patch(
+        f"/api/memories/{memory_id}",
+        json={"expires_at": "2031-01-01T00:00:00.000000Z"},
     )
 
     assert bad.status_code == 422
     assert epoch.status_code == 422
-    assert good.status_code == 200
+    assert offset.status_code == 422
+    assert canonical.status_code == 200
+    assert update_offset.status_code == 422
+    assert update_canonical.status_code == 200
 
 
 def test_web_api_recall_respects_requester_acl(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     private = client.post(
@@ -196,6 +249,9 @@ def test_web_api_recall_respects_requester_acl(tmp_path):
 
 
 def test_web_api_list_memories_respects_requester_acl(tmp_path):
+    """Lineage:
+    main: introduced d678c82c@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     client.post("/api/memories", json={"content": "Private one.", "owner": "mizuki", "visibility": []})
@@ -209,6 +265,9 @@ def test_web_api_list_memories_respects_requester_acl(tmp_path):
 
 
 def test_web_api_delete_memory(tmp_path):
+    """Lineage:
+    main: introduced d678c82c@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     created = client.post(
@@ -221,6 +280,9 @@ def test_web_api_delete_memory(tmp_path):
 
 
 def test_web_api_graph_is_requester_gated(tmp_path):
+    """Lineage:
+    main: introduced 1827729b@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     public_a = client.post(
@@ -246,6 +308,9 @@ def test_web_api_graph_is_requester_gated(tmp_path):
 
 
 def test_web_api_list_type_filter(tmp_path):
+    """Lineage:
+    main: introduced 1827729b@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     client.post("/api/memories", json={"content": "A procedure.", "type": "procedure", "visibility": ["global"]})
@@ -257,6 +322,9 @@ def test_web_api_list_type_filter(tmp_path):
 
 
 def test_web_api_token_gate(tmp_path):
+    """Lineage:
+    main: introduced 1827729b@pre-migration-registry.
+    """
     app = create_app(home=tmp_path, token="s3cret")
     client = TestClient(app)
 
@@ -268,6 +336,9 @@ def test_web_api_token_gate(tmp_path):
 
 
 def test_web_api_update_memory_and_reindex(tmp_path):
+    """Lineage:
+    main: introduced 80837e24@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     created = client.post(
@@ -301,6 +372,9 @@ def test_web_api_update_memory_and_reindex(tmp_path):
 
 
 def test_web_api_dashboard(tmp_path):
+    """Lineage:
+    main: introduced 80837e24@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     a = client.post(
@@ -327,6 +401,9 @@ def test_web_api_dashboard(tmp_path):
 
 
 def test_web_api_purge_owner_requires_exact_confirmation(tmp_path):
+    """Lineage:
+    main: introduced 5c9b033e@pre-migration-registry.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     kept = client.post(
@@ -363,6 +440,9 @@ def test_webui_toplevel_handlers_reference_existing_ids():
     targets an element that isn't in the HTML — one such orphan throws at script
     load and takes down the ENTIRE dashboard (version badge, counts, cards,
     browse). Every id wired at the top level must exist in the page markup.
+
+    Lineage:
+    main: introduced ba64baf1@db-schema-v16.
     """
     import re
 
@@ -376,6 +456,9 @@ def test_webui_toplevel_handlers_reference_existing_ids():
 
 
 def test_web_api_owners_list_and_reassign(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
 
@@ -398,6 +481,9 @@ def test_web_api_owners_list_and_reassign(tmp_path):
 
 
 def test_web_api_owners_reassign_rejects_identical(tmp_path):
+    """Lineage:
+    main: introduced 00561631@db-schema-v16.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     r = client.post("/api/owners/reassign", json={"old_owner": "x", "new_owner": "x"})
@@ -405,6 +491,9 @@ def test_web_api_owners_reassign_rejects_identical(tmp_path):
 
 
 def test_web_api_surfaces_legacy_context_for_classification(tmp_path):
+    """Lineage:
+    main: introduced dfc218f7@db-schema-v19.
+    """
     from agent_memory_os import MemoryClient
     from agent_memory_os.db import LEGACY_CONTEXT_OWNER
 
@@ -428,6 +517,9 @@ def test_web_api_surfaces_legacy_context_for_classification(tmp_path):
 
 
 def test_web_api_peers_status_probes_and_reports(tmp_path):
+    """Lineage:
+    main: introduced 013a45cb@db-schema-v16.
+    """
     app = create_app(home=tmp_path)
     client = TestClient(app)
     # No peers → empty, fast.
@@ -445,6 +537,10 @@ def test_web_api_peers_status_probes_and_reports(tmp_path):
 
 
 def test_web_api_logs_tail_filter_and_whitelist(tmp_path):
+    """Lineage:
+    main: introduced 2ce95dea@db-schema-v20; 5986c03c@db-schema-v20.
+    time-helper: differs from main at 2f7a859; origin unresolved.
+    """
     # three known log locations + one file that must NOT be reachable
     (tmp_path / "webui.log").write_text(
         "".join(f"line {i}\n" for i in range(250)) + "ERROR boom\n", encoding="utf-8")
@@ -481,6 +577,9 @@ def test_web_api_logs_tail_filter_and_whitelist(tmp_path):
 
 
 def test_web_api_logs_empty_home(tmp_path):
+    """Lineage:
+    main: introduced 2ce95dea@db-schema-v20.
+    """
     app = create_app(home=tmp_path)
     http = TestClient(app)
     data = http.get("/api/logs").json()

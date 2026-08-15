@@ -6,6 +6,9 @@ from agent_memory_os.schema import MemoryRecord, SearchResult
 
 
 def test_truth_arbitration_keeps_authoritative_core_under_budget_pressure():
+    """Lineage:
+    main: introduced cfda54cf@pre-migration-registry.
+    """
     core = MemoryRecord(
         id="mem_core_truth",
         content="Core truth: ACL hard gate must run before ranking, reranking, dedupe, and context packing.",
@@ -48,6 +51,9 @@ def test_truth_arbitration_keeps_authoritative_core_under_budget_pressure():
 
 
 def test_truth_arbitration_suppresses_duplicate_clusters_with_rejection_reasons():
+    """Lineage:
+    main: introduced cfda54cf@pre-migration-registry.
+    """
     first = MemoryRecord(
         id="mem_dup_a",
         content="Reports must use UTC+8 Taipei timestamps.",
@@ -79,6 +85,9 @@ def test_truth_arbitration_suppresses_duplicate_clusters_with_rejection_reasons(
 
 
 def test_truth_arbitration_marks_contradictions_instead_of_silently_blending():
+    """Lineage:
+    main: introduced cfda54cf@pre-migration-registry.
+    """
     official = MemoryRecord(
         id="mem_policy_official",
         content="Official policy: fallback must never bypass ACL.",
@@ -111,6 +120,9 @@ def test_truth_arbitration_marks_contradictions_instead_of_silently_blending():
 
 
 def test_context_pack_report_keeps_private_memory_absent_for_peer_requester(tmp_path):
+    """Lineage:
+    main: introduced cfda54cf@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     private = client.add(
         "Private high-score truth for Mizuki only.",
@@ -141,6 +153,9 @@ def test_context_pack_report_keeps_private_memory_absent_for_peer_requester(tmp_
 
 
 def test_case_01_noisy_truth_authority_track_survives_fts_noise(tmp_path):
+    """Lineage:
+    main: introduced e1ccdb68@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     core = client.add(
         "Core bedrock: ACL hard gate must run before any ranking or context packing.",

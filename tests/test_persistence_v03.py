@@ -1,25 +1,107 @@
 import sqlite3
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
 
-from agent_memory_os import MemoryClient
+import agent_memory_os.db as db_module
+from agent_memory_os import MemoryClient, MemoryLink, MemoryRecord
 from agent_memory_os.db import (
     LEGACY_CONTEXT_OWNER,
-    MIGRATIONS,
     MemoryStore,
-    _migration_canonicalize_expiry_timestamps,
-    _migration_mark_legacy_context,
-    _migration_session_recall_owner,
     _validate_migration_plan,
 )
 from agent_memory_os.embedding import HashingEmbedder
+from agent_memory_os.migrations import MIGRATIONS
+from agent_memory_os.migrations.v018_session_recall_owner import (
+    migrate as _migration_session_recall_owner,
+)
+from agent_memory_os.migrations.v019_mark_legacy_context import (
+    migrate as _migration_mark_legacy_context,
+)
+from agent_memory_os.migrations.v020_canonicalize_expiry_timestamps import (
+    migrate as _migration_canonicalize_expiry_timestamps,
+)
+from agent_memory_os.migrations.v022_timestamp_ubiquity import (
+    migrate as migrate_timestamps_to_stamps,
+)
 from agent_memory_os.web_app import create_app
 
 BACKDATED = "2020-01-01T00:00:00+00:00"
 
 
+def test_store_add_requires_record_stamps(tmp_path):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced d6884ee6@db-schema-v22.
+    """
+    store = MemoryStore(tmp_path / "memories.db")
+    record = MemoryRecord(
+        content="Canonical record timestamps.",
+        created_at="2026-08-10T13:00:00.000000Z",
+        updated_at="2026-08-10T13:00:01.000000Z",
+        last_accessed_at="2026-08-10T13:00:02.000000Z",
+    )
+    record.expires_at = "2026-08-11T14:00:00+01:00"
+
+    with pytest.raises(ValueError, match="expires_at must be a canonical stamp"):
+        store.add(record)
+    store.close()
+
+
+def test_memory_link_requires_stamps(tmp_path):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced d6884ee6@db-schema-v22.
+    """
+    store = MemoryStore(tmp_path / "memories.db")
+    source = store.add(MemoryRecord(content="Source memory."))
+    target = store.add(MemoryRecord(content="Target memory."))
+    with pytest.raises(ValueError, match="created_at must be a canonical stamp"):
+        MemoryLink(
+            src_id=source.id,
+            dst_id=target.id,
+            created_at="2026-08-10T14:00:00+01:00",
+        )
+    store.close()
+
+
+def test_tombstone_cursors_require_stamps(tmp_path):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced d6884ee6@db-schema-v22.
+    """
+    store = MemoryStore(tmp_path / "memories.db")
+    deleted_at = "2026-08-10T12:00:00.000001Z"
+    store.conn.execute(
+        "INSERT INTO tombstones(id, deleted_at) VALUES (?, ?)",
+        ("deleted-memory", deleted_at),
+    )
+    store.conn.execute(
+        "INSERT INTO org_tombstones(kind, id, deleted_at) VALUES (?, ?, ?)",
+        ("project", "deleted-project", deleted_at),
+    )
+    store.conn.commit()
+
+    since = "2026-08-10T12:00:00.000000Z"
+
+    assert store.list_tombstones(since=since) == [
+        ("deleted-memory", deleted_at)
+    ]
+    assert store.list_org_tombstones(since=since) == [
+        ("project", "deleted-project", deleted_at)
+    ]
+    with pytest.raises(ValueError, match="timestamp must match"):
+        store.list_tombstones(since="2026-08-10T12:00:00+00:00")
+    with pytest.raises(ValueError, match="timestamp must match"):
+        store.list_org_tombstones(since="2026-08-10T12:00:00+00:00")
+    store.close()
+
+
 def test_migrations_recorded_and_versioned(tmp_path):
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3; c213e8b4@db-schema-v4; 512e2197@db-schema-v6.
+    """
     client = MemoryClient(home=tmp_path)
     assert client.store.schema_version() == len(MIGRATIONS)
     rows = client.store.conn.execute(
@@ -29,16 +111,25 @@ def test_migrations_recorded_and_versioned(tmp_path):
 
 
 def test_migration_plan_rejects_duplicate_versions():
+    """Lineage:
+    main: introduced f250538d@db-schema-v17.
+    """
     with pytest.raises(RuntimeError, match="duplicate migration versions"):
         _validate_migration_plan([(1, "first", object()), (1, "second", object())])
 
 
 def test_migration_plan_rejects_out_of_order_versions():
+    """Lineage:
+    main: introduced f250538d@db-schema-v17.
+    """
     with pytest.raises(RuntimeError, match="strictly increasing"):
         _validate_migration_plan([(2, "second", object()), (1, "first", object())])
 
 
 def test_migration_version_description_mismatch_fails_closed(tmp_path):
+    """Lineage:
+    main: introduced 7da7825b@db-schema-v17; f250538d@db-schema-v17.
+    """
     client = MemoryClient(home=tmp_path)
     client.close()
 
@@ -57,6 +148,10 @@ def test_migration_version_description_mismatch_fails_closed(tmp_path):
 
 
 def test_legacy_database_upgrades_in_place(tmp_path):
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3; c213e8b4@db-schema-v4; 512e2197@db-schema-v6.
+    time-helper: changed dc608742@db-schema-v21.
+    """
     db_path = tmp_path / "memories.db"
     legacy = sqlite3.connect(db_path)
     legacy.executescript(
@@ -80,13 +175,30 @@ def test_legacy_database_upgrades_in_place(tmp_path):
 
     assert store.schema_version() == len(MIGRATIONS)
     columns = {row["name"] for row in store.conn.execute("PRAGMA table_info(memories)")}
-    assert {"pinned", "decay_policy", "access_count"} <= columns
+    assert {"pinned", "decay_policy", "access_count", "RecVersion"} <= columns
     record = store.get("mem_legacy")
     assert record.content == "old row" and record.pinned is False
+    assert store.conn.execute(
+        "SELECT RecVersion FROM memories WHERE id = 'mem_legacy'"
+    ).fetchone()[0] == 0
+
+    store.update_memory("mem_legacy", content="new row")
+    assert store.conn.execute(
+        "SELECT RecVersion FROM memories WHERE id = 'mem_legacy'"
+    ).fetchone()[0] == 1
+
+    store.record_recall(["mem_legacy"], helpful=True)
+    assert store.conn.execute(
+        "SELECT RecVersion FROM memories WHERE id = 'mem_legacy'"
+    ).fetchone()[0] == 1
     store.close()
 
 
 def test_session_recall_owner_migration_preserves_legacy_rows_and_is_idempotent():
+    """Lineage:
+    main: introduced bd659853@db-schema-v18.
+    direct migration binding: v18.
+    """
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
@@ -117,6 +229,10 @@ def test_session_recall_owner_migration_preserves_legacy_rows_and_is_idempotent(
 
 
 def test_legacy_context_migration_marks_unscoped_rows_and_is_idempotent():
+    """Lineage:
+    main: introduced dfc218f7@db-schema-v19.
+    direct migration binding: v19.
+    """
     conn = sqlite3.connect(":memory:")
     conn.executescript(
         """
@@ -155,6 +271,9 @@ def test_legacy_context_migration_marks_unscoped_rows_and_is_idempotent():
 
 
 def test_legacy_unscoped_context_remains_available_to_requesters(tmp_path):
+    """Lineage:
+    main: introduced dfc218f7@db-schema-v19.
+    """
     client = MemoryClient(home=tmp_path)
     legacy_snapshot = client.offload_context(
         {"step": 1, "era": "legacy"},
@@ -195,6 +314,10 @@ def test_legacy_unscoped_context_remains_available_to_requesters(tmp_path):
 
 
 def test_database_at_migration_18_upgrades_legacy_context_in_place(tmp_path):
+    """Lineage:
+    main: introduced dfc218f7@db-schema-v19; 1287c647@db-schema-v20.
+    direct migration binding: v18 -> v19.
+    """
     client = MemoryClient(home=tmp_path)
     snapshot_id = client.offload_context(
         {"step": 1},
@@ -229,6 +352,10 @@ def test_database_at_migration_18_upgrades_legacy_context_in_place(tmp_path):
 
 
 def test_legacy_expiry_migration_canonicalizes_python_iso_forms():
+    """Lineage:
+    main: introduced 1287c647@db-schema-v20.
+    direct migration binding: v20.
+    """
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.executescript(
@@ -256,7 +383,138 @@ def test_legacy_expiry_migration_canonicalizes_python_iso_forms():
     conn.close()
 
 
+def test_timestamp_ubiquity_migrates_supported_columns():
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced working-tree@db-schema-v22.
+    direct migration binding: v22.
+    """
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE memories (
+          created_at TEXT, updated_at TEXT, acl_updated_at TEXT,
+          expires_at TEXT, last_accessed_at TEXT
+        );
+        CREATE TABLE memories_archive (
+          created_at TEXT, updated_at TEXT, expires_at TEXT,
+          last_accessed_at TEXT, archived_at TEXT
+        );
+        CREATE TABLE memory_links (
+          created_at TEXT, updated_at TEXT, last_activated_at TEXT
+        );
+        CREATE TABLE memory_links_archive (
+          created_at TEXT, updated_at TEXT, last_activated_at TEXT,
+          archived_at TEXT
+        );
+        CREATE TABLE recall_profiles (
+          agent_id TEXT PRIMARY KEY, updated_at TEXT NOT NULL
+        );
+        CREATE TABLE teams (
+          id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT
+        );
+        CREATE TABLE projects (
+          id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT
+        );
+        CREATE TABLE tombstones (
+          id TEXT PRIMARY KEY, deleted_at TEXT NOT NULL
+        );
+        CREATE TABLE org_tombstones (
+          kind TEXT NOT NULL, id TEXT NOT NULL, deleted_at TEXT NOT NULL,
+          PRIMARY KEY (kind, id)
+        );
+        INSERT INTO memories VALUES (
+          '2026-01-01T01:00:00+01:00', '2026-01-01T01:00:00+01:00',
+          NULL, '2026-01-01T01:00:00+01:00',
+          'someday'
+        );
+        INSERT INTO memories_archive VALUES (
+          '2026-01-01T01:00:00+01:00', '2026-01-01T01:00:00+01:00',
+          '2026-01-01T01:00:00+01:00', '2026-01-01T01:00:00+01:00',
+          '2026-01-01T01:00:00+01:00'
+        );
+        INSERT INTO memory_links VALUES (
+          '2026-01-01T01:00:00+01:00', '2026-01-01T01:00:00+01:00',
+          ''
+        );
+        INSERT INTO memory_links_archive VALUES (
+          '2026-01-01T01:00:00+01:00', '2026-01-01T01:00:00+01:00',
+          '', '2026-01-01T01:00:00+01:00'
+        );
+        INSERT INTO recall_profiles VALUES (
+          'profile-agent', '2026-01-01T01:00:00+01:00'
+        );
+        INSERT INTO teams VALUES (
+          'apollo', '2026-01-01T01:00:00+01:00',
+          '2026-01-01T01:00:00+01:00'
+        );
+        INSERT INTO projects VALUES (
+          'landing', '2026-01-01T01:00:00+01:00',
+          '2026-01-01T01:00:00+01:00'
+        );
+        INSERT INTO tombstones VALUES (
+          'deleted-memory', '2026-01-01T01:00:00+01:00'
+        );
+        INSERT INTO org_tombstones VALUES (
+          'team', 'retired-team', '2026-01-01T01:00:00+01:00'
+        );
+        """
+    )
+
+    migrate_timestamps_to_stamps(conn)
+    migrate_timestamps_to_stamps(conn)
+
+    stamp = "2026-01-01T00:00:00.000000Z"
+    assert tuple(conn.execute("SELECT * FROM memories").fetchone()) == (
+        stamp,
+        stamp,
+        stamp,
+        stamp,
+        "someday",
+    )
+    assert set(conn.execute("SELECT * FROM memories_archive").fetchone()) == {stamp}
+    assert tuple(conn.execute("SELECT * FROM memory_links").fetchone()) == (
+        stamp,
+        stamp,
+        None,
+    )
+    assert tuple(conn.execute("SELECT * FROM memory_links_archive").fetchone()) == (
+        stamp,
+        stamp,
+        None,
+        stamp,
+    )
+    assert conn.execute(
+        "SELECT updated_at FROM recall_profiles WHERE agent_id = 'profile-agent'"
+    ).fetchone()[0] == stamp
+    assert tuple(
+        conn.execute(
+            "SELECT created_at, updated_at FROM teams WHERE id = 'apollo'"
+        ).fetchone()
+    ) == (stamp, stamp)
+    assert tuple(
+        conn.execute(
+            "SELECT created_at, updated_at FROM projects WHERE id = 'landing'"
+        ).fetchone()
+    ) == (stamp, stamp)
+    assert conn.execute(
+        "SELECT deleted_at FROM tombstones WHERE id = 'deleted-memory'"
+    ).fetchone()[0] == stamp
+    assert conn.execute(
+        "SELECT deleted_at FROM org_tombstones "
+        "WHERE kind = 'team' AND id = 'retired-team'"
+    ).fetchone()[0] == stamp
+    conn.close()
+
+
 def test_database_upgrade_keeps_basic_format_future_expiry_visible(tmp_path):
+    """Lineage:
+    main: introduced 1287c647@db-schema-v20.
+    time-helper: changed dc608742@db-schema-v21.
+    time-helper: restored working-tree@db-schema-v22 to the v20 contract.
+    direct migration binding: v20.
+    """
     client = MemoryClient(home=tmp_path)
     memory = client.add("Future basic-format expiry sentinel.")
     client.store.conn.execute(
@@ -276,7 +534,101 @@ def test_database_upgrade_keeps_basic_format_future_expiry_visible(tmp_path):
     assert upgraded.dashboard_stats()["expired"] == 0
 
 
+def test_microsecond_future_expiry_stays_live_across_store_paths(
+    tmp_path,
+    monkeypatch,
+):
+    fixed_now = datetime(2099, 1, 1, tzinfo=UTC)
+    now_stamp = "2099-01-01T00:00:00.000000Z"
+    future_stamp = "2099-01-01T00:00:00.000001Z"
+    monkeypatch.setattr(db_module, "utc_now_dt", lambda: fixed_now)
+    monkeypatch.setattr(db_module, "utc_now_stamp", lambda: now_stamp)
+    client = MemoryClient(home=tmp_path)
+    ordinary = client.add(
+        "Microsecond future expiry probe.",
+        visibility=["global"],
+        expires_at=future_stamp,
+    )
+
+    assert client.get_visible(ordinary.id) is not None
+    assert ordinary.id in {
+        hit.record.id for hit in client.search("microsecond future expiry probe")
+    }
+    assert ordinary.id in {
+        hit.record.id for hit in client.search("unmatched fallback query")
+    }
+    assert ordinary.id in {
+        record.id for record in client.store.top_records_by_type("note")
+    }
+
+    authority = client.add(
+        "Microsecond future authority probe.",
+        visibility=["global"],
+        source={"permanence": True, "weight": 10},
+        expires_at=future_stamp,
+    )
+    boundary = client.add(
+        "Exact expiry boundary probe.",
+        visibility=["global"],
+        expires_at=now_stamp,
+    )
+    assert authority.id in {record.id for record in client.store.bedrock_records()}
+    assert client.get_visible(boundary.id) is None
+    assert client.dashboard_stats()["expired"] == 1
+
+    result = client.store.run_retention(decayed_half_lives=None)
+
+    assert result["archived_expired"] == 1
+    assert client.get(ordinary.id) is not None
+    assert client.get(authority.id) is not None
+    assert client.get(boundary.id) is None
+
+
+def test_legacy_offset_future_expiry_stays_live_across_store_paths(
+    tmp_path,
+    monkeypatch,
+):
+    fixed_now = datetime(2099, 1, 1, tzinfo=UTC)
+    now_stamp = "2099-01-01T00:00:00.000000Z"
+    legacy_future = "2099-01-01T00:00:00-05:00"
+    monkeypatch.setattr(db_module, "utc_now_dt", lambda: fixed_now)
+    monkeypatch.setattr(db_module, "utc_now_stamp", lambda: now_stamp)
+    client = MemoryClient(home=tmp_path)
+    memory = client.add(
+        "Legacy offset future expiry probe.",
+        visibility=["global"],
+        source={"permanence": True, "weight": 10},
+        expires_at="2099-01-01T05:00:00.000000Z",
+    )
+    client.store.conn.execute(
+        "UPDATE memories SET expires_at = ? WHERE id = ?",
+        (legacy_future, memory.id),
+    )
+    client.store.conn.commit()
+
+    assert client.get_visible(memory.id) is not None
+    assert memory.id in {
+        hit.record.id for hit in client.search("legacy offset future expiry probe")
+    }
+    assert memory.id in {
+        hit.record.id for hit in client.search("unmatched legacy fallback query")
+    }
+    assert memory.id in {
+        record.id for record in client.store.top_records_by_type("note")
+    }
+    assert memory.id in {record.id for record in client.store.bedrock_records()}
+    assert client.dashboard_stats()["expired"] == 0
+
+    result = client.store.run_retention(decayed_half_lives=None)
+
+    assert result["archived_expired"] == 0
+    assert client.get(memory.id) is not None
+
+
 def test_integrity_check_detects_fts_drift(tmp_path):
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3.
+    """
     client = MemoryClient(home=tmp_path)
     memory = client.add("Integrity probe memory.", visibility=["global"])
     assert client.integrity_check()["ok"] is True
@@ -293,9 +645,13 @@ def test_integrity_check_detects_fts_drift(tmp_path):
 
 
 def test_retention_archives_expired_and_restore_revives(tmp_path):
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3.
+    time-helper: changed d6884ee6@db-schema-v22.
+    """
     client = MemoryClient(home=tmp_path)
     expired = client.add(
-        "Expired runbook.", visibility=["global"], expires_at="2020-01-01T00:00:00+00:00"
+        "Expired runbook.", visibility=["global"], expires_at="2020-01-01T00:00:00.000000Z"
     )
     keeper = client.add("Active memory.", visibility=["global"])
     client.link(expired.id, keeper.id, weight=0.5)
@@ -318,6 +674,9 @@ def test_retention_archives_expired_and_restore_revives(tmp_path):
 
 
 def test_retention_decay_archiving_protects_pinned_and_authority(tmp_path):
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3.
+    """
     client = MemoryClient(home=tmp_path)
     stale = client.add("Ordinary stale note.", visibility=["global"])
     pinned = client.add("Pinned stale note.", visibility=["global"], pinned=True)
@@ -342,6 +701,9 @@ def test_retention_decay_archiving_protects_pinned_and_authority(tmp_path):
 
 
 def test_hashing_embedder_is_deterministic_and_normalized():
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3.
+    """
     embedder = HashingEmbedder(dim=64)
     a1 = embedder("Kubernetes cluster restart procedure")
     a2 = embedder("Kubernetes cluster restart procedure")
@@ -353,6 +715,9 @@ def test_hashing_embedder_is_deterministic_and_normalized():
 
 
 def test_auto_semantic_index_recalls_and_refreshes(tmp_path):
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3.
+    """
     pytest.importorskip("turbovec")
     client = MemoryClient(home=tmp_path, semantic="auto")
     assert client.semantic_enabled is True
@@ -372,12 +737,16 @@ def test_auto_semantic_index_recalls_and_refreshes(tmp_path):
 
 
 def test_web_api_retention_archive_and_integrity(tmp_path):
+    """Lineage:
+    main: introduced 34f95eac@db-schema-v3; c213e8b4@db-schema-v4; 512e2197@db-schema-v6.
+    time-helper: changed d6884ee6@db-schema-v22.
+    """
     app = create_app(home=tmp_path)
     web = TestClient(app)
     expired = web.post(
         "/api/memories",
         json={"content": "Expired via API.", "visibility": ["global"],
-              "expires_at": "2020-01-01T00:00:00+00:00"},
+              "expires_at": "2020-01-01T00:00:00.000000Z"},
     ).json()
 
     run = web.post("/api/retention")

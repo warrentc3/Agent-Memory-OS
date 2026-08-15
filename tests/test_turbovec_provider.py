@@ -3,8 +3,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from agent_memory_os.providers.turbovec import TurbovecSemanticCandidateProvider, semantic_backend_available
-from agent_memory_os.providers.turbovec import UINT64_MAX
+from agent_memory_os.providers.turbovec import (
+    UINT64_MAX,
+    TurbovecSemanticCandidateProvider,
+    semantic_backend_available,
+)
 
 
 class CapturingIndex:
@@ -23,6 +26,9 @@ class CapturingIndex:
 
 
 def test_turbovec_provider_returns_memory_id_candidates_not_content():
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     index = CapturingIndex()
     provider = TurbovecSemanticCandidateProvider(
         index=index,
@@ -43,6 +49,9 @@ def test_turbovec_provider_returns_memory_id_candidates_not_content():
 
 
 def test_turbovec_provider_uses_c_contiguous_uint64_allowlist():
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     index = CapturingIndex()
     provider = TurbovecSemanticCandidateProvider(
         index=index,
@@ -61,6 +70,9 @@ def test_turbovec_provider_uses_c_contiguous_uint64_allowlist():
 
 
 def test_turbovec_provider_skips_unmapped_external_ids():
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     index = CapturingIndex(
         scores=np.array([[0.8, 0.7]], dtype=np.float32),
         ids=np.array([[123, 42]], dtype=np.uint64),
@@ -78,6 +90,9 @@ def test_turbovec_provider_skips_unmapped_external_ids():
 
 
 def test_turbovec_provider_detects_external_id_mapping_collisions():
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     with pytest.raises(ValueError, match="external id collision"):
         TurbovecSemanticCandidateProvider.external_id_to_memory_id_map(
             {"mem-alpha": 77, "mem-beta": 77}
@@ -86,12 +101,18 @@ def test_turbovec_provider_detects_external_id_mapping_collisions():
 
 @pytest.mark.parametrize("bad_external_id", [True, -1, UINT64_MAX + 1, 1.5, "1"])
 def test_turbovec_provider_rejects_non_uint64_mapping_ids(bad_external_id):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     with pytest.raises(ValueError, match="uint64 integers"):
         TurbovecSemanticCandidateProvider.external_id_to_memory_id_map({"mem-alpha": bad_external_id})
 
 
 @pytest.mark.parametrize("bad_allowlist_id", [True, -1, UINT64_MAX + 1, 1.5, "1"])
 def test_turbovec_provider_rejects_non_uint64_allowlist_ids(bad_allowlist_id):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     index = CapturingIndex()
     provider = TurbovecSemanticCandidateProvider(
         index=index,
@@ -104,6 +125,9 @@ def test_turbovec_provider_rejects_non_uint64_allowlist_ids(bad_allowlist_id):
 
 
 def test_turbovec_provider_skips_malformed_backend_external_ids_without_wrapping():
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     index = CapturingIndex(
         scores=np.array([[0.99, 0.7]], dtype=np.float32),
         ids=np.array([[-1, 42]], dtype=object),
@@ -120,6 +144,9 @@ def test_turbovec_provider_skips_malformed_backend_external_ids_without_wrapping
 
 
 def test_turbovec_provider_handles_missing_optional_backend(monkeypatch):
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     from agent_memory_os.providers import turbovec as provider_module
 
     def missing_backend():
@@ -137,6 +164,9 @@ def test_turbovec_provider_handles_missing_optional_backend(monkeypatch):
 
 
 def test_turbovec_provider_from_vectors_smoke_when_dependency_is_available():
+    """Lineage:
+    main: introduced d75ae935@pre-migration-registry.
+    """
     pytest.importorskip("turbovec")
     provider = TurbovecSemanticCandidateProvider.from_vectors(
         vectors=np.eye(8, dtype=np.float32)[:2],

@@ -1,11 +1,20 @@
-from agent_memory_os import MemoryClient, RecallProfile
+from datetime import UTC, datetime, timedelta
+
+import agent_memory_os.db as db_module
+from agent_memory_os import MemoryClient, MemoryLink, RecallProfile
 from agent_memory_os.db import RESONANCE_MAX_EDGES_PER_NODE
 from agent_memory_os.memory_resonance import ERATripletIndex, MemoryChunk
+from agent_memory_os.timestamp_converters import dt_to_stamp
 
-BACKDATED = "2020-01-01T00:00:00+00:00"
+BACKDATED = "2020-01-01T00:00:00.000000Z"
 
 
 def test_stale_link_resonates_weaker_than_fresh_link(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
     client = MemoryClient(home=tmp_path)
     seed = client.add("Staging deploy failed with database lock.", visibility=["global"])
     fresh = client.add("Snapshot procedure for safe rollbacks.", visibility=["global"])
@@ -25,6 +34,9 @@ def test_stale_link_resonates_weaker_than_fresh_link(tmp_path):
 
 
 def test_hub_node_expands_only_top_k_edges(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     hub = client.add("Hub anchor memory about releases.", visibility=["global"])
     neighbors = []
@@ -44,6 +56,9 @@ def test_hub_node_expands_only_top_k_edges(tmp_path):
 
 
 def test_supersedes_demotes_stale_memory(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     old = client.add(
         "Deploy target is port 8765.", visibility=["global"], importance=0.9, confidence=0.9
@@ -61,6 +76,9 @@ def test_supersedes_demotes_stale_memory(tmp_path):
 
 
 def test_resonance_reason_carries_audit_path(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     seed = client.add("Staging deploy failed with database lock.", visibility=["global"])
     neighbor = client.add("Snapshot procedure for safe rollbacks.", visibility=["global"])
@@ -72,6 +90,9 @@ def test_resonance_reason_carries_audit_path(tmp_path):
 
 
 def test_negative_feedback_weakens_links_and_confidence(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("Deploy checklist for staging.", visibility=["global"])
     b = client.add("Rollback snapshot rule.", visibility=["global"])
@@ -89,6 +110,9 @@ def test_negative_feedback_weakens_links_and_confidence(tmp_path):
 
 
 def test_context_pack_auto_reinforce_closes_the_loop(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry; bd659853@db-schema-v18.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add(
         "Deploy checklist for staging releases.",
@@ -116,6 +140,9 @@ def test_context_pack_auto_reinforce_closes_the_loop(tmp_path):
 
 
 def test_wal_mode_allows_two_clients_on_same_home(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     first = MemoryClient(home=tmp_path)
     second = MemoryClient(home=tmp_path)
     assert first.store.conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
@@ -131,6 +158,9 @@ def test_wal_mode_allows_two_clients_on_same_home(tmp_path):
 
 
 def test_add_auto_link_creates_weak_related_edges(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     existing = client.add("Turbovec semantic recall benchmark results.", visibility=["global"])
     unrelated = client.add("Pasta recipe with garlic and olive oil.", visibility=["global"])
@@ -148,6 +178,9 @@ def test_add_auto_link_creates_weak_related_edges(tmp_path):
 
 
 def test_era_derive_links_bridge_into_memory_links(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     m1 = client.add("AgentMemoryOS uses Turbovec for semantic recall.", visibility=["global"])
     m2 = client.add("Turbovec semantic recall benchmark notes.", visibility=["global"])
@@ -168,6 +201,9 @@ def test_era_derive_links_bridge_into_memory_links(tmp_path):
 
 
 def test_saved_profile_auto_applies_across_client_instances(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     writer = MemoryClient(home=tmp_path)
     writer.add(
         "Coffee brewing procedure: 92C water, 1:15 ratio.",
@@ -192,6 +228,9 @@ def test_saved_profile_auto_applies_across_client_instances(tmp_path):
 
 
 def test_consolidate_merges_exact_duplicates_and_repoints_links(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     first = client.add("Docker deploy uses port 8000.", visibility=["global"])
     second = client.add("Docker deploy uses port 8000.", visibility=["global"])
@@ -213,6 +252,9 @@ def test_consolidate_merges_exact_duplicates_and_repoints_links(tmp_path):
 
 
 def test_consolidate_synthesizes_concept_from_corecall_cluster(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     members = [
         client.add(f"Release ritual step {i}: verified detail.", visibility=["global"])
@@ -242,6 +284,9 @@ def test_consolidate_synthesizes_concept_from_corecall_cluster(tmp_path):
 
 
 def test_consolidate_never_blends_across_visibility(tmp_path):
+    """Lineage:
+    main: introduced ea0faea3@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     public_a = client.add("Shared ritual step one.", owner="mizuki", visibility=["global"])
     public_b = client.add("Shared ritual step two.", owner="mizuki", visibility=["global"])
@@ -271,6 +316,9 @@ def _colink(src_id: str, dst_id: str):
 
 
 def test_negative_feedback_never_boosts_stale_memory(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     stale = client.add("Old server ip is 10.0.0.5 for deploy.", visibility=["global"])
     client.store.conn.execute(
@@ -288,6 +336,9 @@ def test_negative_feedback_never_boosts_stale_memory(tmp_path):
 
 
 def test_bm25_stronger_match_ranks_higher(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     for i in range(10):
         client.add(f"Noise document {i} about cats and weather patterns.", visibility=["global"])
@@ -308,6 +359,9 @@ def test_bm25_stronger_match_ranks_higher(tmp_path):
 
 
 def test_consolidate_does_not_merge_long_prefix_divergent_content(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     preamble = "Deployment checklist for service X after the database migration completes " * 4
     client.add(preamble + "then restart nginx immediately.", visibility=["global"])
@@ -320,6 +374,9 @@ def test_consolidate_does_not_merge_long_prefix_divergent_content(tmp_path):
 
 
 def test_consolidate_keeps_pinned_authority_canonical(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     pinned = client.add(
         "Bedrock rule: production deploys require approval.",
@@ -342,6 +399,9 @@ def test_consolidate_keeps_pinned_authority_canonical(tmp_path):
 
 
 def test_consolidate_merge_does_not_duplicate_edges(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     anchor = client.add("Unrelated anchor memory xyz.", visibility=["global"])
     canonical = client.add("The deploy password rotation procedure.", visibility=["global"], confidence=0.9)
@@ -357,6 +417,9 @@ def test_consolidate_merge_does_not_duplicate_edges(tmp_path):
 
 
 def test_record_recall_never_touches_supersedes_edges(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     new = client.add("Deploy target is port 8000.", visibility=["global"])
     old = client.add("Deploy target is port 8765.", visibility=["global"])
@@ -371,6 +434,9 @@ def test_record_recall_never_touches_supersedes_edges(tmp_path):
 
 
 def test_record_recall_requester_cannot_affect_invisible_memories(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     private = client.add("Private journal entry.", owner="mizuki", visibility=[], confidence=0.8)
     public = client.add("Public checklist entry.", owner="mizuki", visibility=["global"], confidence=0.8)
@@ -385,6 +451,9 @@ def test_record_recall_requester_cannot_affect_invisible_memories(tmp_path):
 
 
 def test_import_links_preserves_reinforced_weights(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("Turbovec semantic recall notes.", visibility=["global"])
     b = client.add("Turbovec benchmark results.", visibility=["global"])
@@ -397,6 +466,9 @@ def test_import_links_preserves_reinforced_weights(tmp_path):
 
 
 def test_load_profile_sees_profiles_saved_by_another_client(tmp_path):
+    """Lineage:
+    main: introduced c70a11f7@pre-migration-registry.
+    """
     reader = MemoryClient(home=tmp_path)
     assert reader.load_profile("neo") is None
 
@@ -409,6 +481,9 @@ def test_load_profile_sees_profiles_saved_by_another_client(tmp_path):
 
 
 def test_converging_evidence_boosts_multi_source_resonance(tmp_path):
+    """Lineage:
+    main: introduced 1b03a3c2@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     seed_a = client.add("Deploy checklist covers staging traffic.", visibility=["global"])
     seed_b = client.add("Deploy rollback plan for staging incidents.", visibility=["global"])
@@ -426,6 +501,9 @@ def test_converging_evidence_boosts_multi_source_resonance(tmp_path):
 
 
 def test_dashboard_reports_graph_health(tmp_path):
+    """Lineage:
+    main: introduced 1b03a3c2@pre-migration-registry.
+    """
     client = MemoryClient(home=tmp_path)
     a = client.add("Linked memory one.", visibility=["global"])
     b = client.add("Linked memory two.", visibility=["global"])
@@ -438,3 +516,40 @@ def test_dashboard_reports_graph_health(tmp_path):
     assert health["orphan_memories"] == 1
     assert health["stale_links"] == 0
     assert health["top_hubs"][0]["degree"] == 1
+
+
+def test_dashboard_stale_link_cutoff_preserves_microsecond_precision(
+    tmp_path,
+    monkeypatch,
+):
+    """Lineage:
+    main: absent at 2f7a859.
+    time-helper: introduced aa259661@db-schema-v21; a8a56ca2@db-schema-v21.
+    time-helper: changed working-tree@db-schema-v22.
+    direct migration binding: v21.
+    """
+    fixed_now = datetime(2026, 8, 10, 12, 0, 0, 500000, tzinfo=UTC)
+    monkeypatch.setattr(
+        db_module,
+        "utc_now_dt",
+        lambda: fixed_now,
+    )
+    client = MemoryClient(home=tmp_path)
+    source = client.add("Stale-link source.", visibility=["global"])
+    target = client.add("Stale-link target.", visibility=["global"])
+    true_cutoff = fixed_now - timedelta(
+        days=int(db_module.LINK_DECAY_HALF_LIFE_DAYS)
+    )
+    client.store.add_link(
+        MemoryLink(
+            src_id=source.id,
+            dst_id=target.id,
+            last_activated_at=dt_to_stamp(
+                true_cutoff - timedelta(microseconds=1)
+            ),
+        )
+    )
+
+    health = client.dashboard_stats()["graph_health"]
+
+    assert health["stale_links"] == 1
