@@ -6,17 +6,46 @@ from fastapi.testclient import TestClient
 from agent_memory_os import MemoryClient
 from agent_memory_os.db import (
     LEGACY_CONTEXT_OWNER,
-    MIGRATIONS,
     MemoryStore,
-    _migration_canonicalize_expiry_timestamps,
-    _migration_mark_legacy_context,
-    _migration_session_recall_owner,
     _validate_migration_plan,
 )
 from agent_memory_os.embedding import HashingEmbedder
+from agent_memory_os.migrations import MIGRATIONS
+from agent_memory_os.migrations.v018_session_recall_owner import (
+    migrate as _migration_session_recall_owner,
+)
+from agent_memory_os.migrations.v019_mark_legacy_context import (
+    migrate as _migration_mark_legacy_context,
+)
+from agent_memory_os.migrations.v020_canonicalize_expiry_timestamps import (
+    migrate as _migration_canonicalize_expiry_timestamps,
+)
 from agent_memory_os.web_app import create_app
 
 BACKDATED = "2020-01-01T00:00:00+00:00"
+
+EXPECTED_MIGRATION_DESCRIPTIONS = [
+    (1, "decay and reinforcement columns"),
+    (2, "repair FTS update/delete triggers"),
+    (3, "cold archive table"),
+    (4, "session recall delivery log"),
+    (5, "memory sharing audit trail"),
+    (6, "recall feedback counters"),
+    (7, "federated sync peer registry"),
+    (8, "agent registry with team memberships"),
+    (9, "federation trust: peer policy + tombstones"),
+    (10, "archive association edges for lossless restore"),
+    (11, "configured decay base half-life"),
+    (12, "peer display name for sync identification"),
+    (13, "first-class teams and projects with membership"),
+    (14, "federate org structure: versioning + tombstones + audit"),
+    (15, "acl clock so share/revoke propagate over sync"),
+    (16, "one-time pairing invites for team join"),
+    (17, "fleet admin trust anchors + signature replay guard"),
+    (18, "requester-scoped session recall delivery log"),
+    (19, "mark pre-requester context as legacy unscoped"),
+    (20, "canonicalize legacy expiry timestamps"),
+]
 
 
 def test_migrations_recorded_and_versioned(tmp_path):
@@ -26,6 +55,12 @@ def test_migrations_recorded_and_versioned(tmp_path):
         "SELECT version, description FROM schema_migrations ORDER BY version"
     ).fetchall()
     assert [row["version"] for row in rows] == [version for version, _, _ in MIGRATIONS]
+
+
+def test_migration_registry_preserves_production_version_descriptions():
+    assert [
+        (version, description) for version, description, _ in MIGRATIONS
+    ] == EXPECTED_MIGRATION_DESCRIPTIONS
 
 
 def test_migration_plan_rejects_duplicate_versions():
