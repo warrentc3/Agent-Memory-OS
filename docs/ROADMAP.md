@@ -183,7 +183,7 @@ not just what exists.
 ## v0.7 — Multi-agent collaboration (shipped)
 
 1. **Agent registry** — SHIPPED (migration 8): agents are first-class
-   entities (id, kind: claude-code/codex/openclaw/hermes/custom, teams,
+   entities (id, kind: claude-code/codex/openclaw/hermes/agy/custom, teams,
    last-seen), managed in the console's Agents tab and `/api/agents`.
 2. **Team auto-resolution ACL** — SHIPPED: the ACL hard gate resolves a
    requester's registered teams automatically; project memory

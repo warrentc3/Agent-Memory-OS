@@ -122,6 +122,7 @@ PAGE = r"""<!doctype html>
   .badge.kind-codex       { background: #22282a; color: #c7d3d0; }
   .badge.kind-openclaw    { background: #3a1a12; color: #f08a68; }
   .badge.kind-hermes      { background: #241d4e; color: #a897f0; }
+  .badge.kind-agy         { background: #12283a; color: #68b0f0; }
   .badge.kind-custom      { background: var(--panel-2); color: var(--muted); }
   .owner { font-size: 12.5px; color: var(--muted); }
   .owner b { color: var(--text); font-weight: 600; }
@@ -395,7 +396,7 @@ PAGE = r"""<!doctype html>
         <input id="ag-name" type="text" placeholder="display name">
         <select id="ag-kind">
           <option>claude-code</option><option>codex</option><option>openclaw</option>
-          <option>hermes</option><option selected>custom</option>
+          <option>hermes</option><option>agy</option><option selected>custom</option>
         </select>
         <input id="ag-teams" type="text" placeholder="teams, comma separated (= projects)">
         <button class="ghost" id="btn-agent-save">Save agent</button>
@@ -648,7 +649,7 @@ const $ = (id) => document.getElementById(id);
 const LOCALES = { "en": "English", "zh-TW": "繁體中文", "zh-CN": "简体中文", "ja": "日本語", "ko": "한국어" };
 const I18N = {
 "zh-TW": {
-"Teams":"團隊","Maintenance":"維護","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"運維工具:健康掃描、清除孤兒記憶(隸屬無成員的群組、無人可見)、重建搜尋索引、回收磁碟。","memories are now orphaned — clean them in Tools → Maintenance.":"筆記憶已成孤兒——請到 工具 → 維護 清理。","Scan health":"健康掃描","Delete orphan memories":"刪除孤兒記憶","Rebuild index":"重建索引","Vacuum":"壓縮回收","Working…":"處理中…","Delete all orphan memories?":"刪除所有孤兒記憶?","Health":"健康","Orphans":"孤兒","Reindex":"重建索引","Create a team":"建立團隊","Create team":"建立團隊","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"團隊是一組節點成員;底下的每個專案從團隊成員中選取。團隊記憶所有團隊成員可見,專案記憶僅該專案成員可見。","team id (e.g. apollo)":"團隊 id(例:apollo)","display name (optional)":"顯示名稱(選填)","No teams yet. Create one above.":"尚無團隊,請在上方建立。","select node…":"選擇節點…","+ Add":"+ 加入","delete team":"刪除團隊","Delete team?":"刪除團隊?","Members":"成員","no members":"尚無成員","Projects (members chosen from the team)":"專案(成員從團隊中選取)","project id":"專案 id","name (optional)":"名稱(選填)","+ Project":"+ 專案",
+"Teams":"團隊","Maintenance":"維護","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"運維工具:健康掃描、清除孤兒記憶(隸屬無成員的群組、無人可見)、重建搜尋索引、回收磁碟。","memories are now orphaned — clean them in Tools → Maintenance.":"筆記憶已成孤兒——請到 工具 → 維護 清理。","Scan health":"健康掃描","Delete orphan memories":"刪除孤兒記憶","Rebuild index":"重建索引","Vacuum":"壓縮回收","Working…":"處理中…","Delete all orphan memories?":"刪除所有孤兒記憶?","Health":"健康","Orphans":"孤兒","Reindex":"重建索引","Create a team":"建立團隊","Create team":"建立團隊","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"團隊是一組節點成員;底下的每個專案從團隊成員中選取。團隊記憶所有團隊成員可見,專案記憶僅該專案成員可見。","team id (e.g. apollo)":"團隊 id(例:apollo)","display name (optional)":"顯示名稱(選填)","No teams yet. Create one above.":"尚無團隊,請在上方建立。","select node…":"選擇節點…","+ Add":"+ 加入","delete team":"刪除團隊","rename team":"重新命名","New team id":"新的團隊 id","That team id already exists.":"該團隊 id 已存在。","This moves everything scoped to the id:":"以下隸屬此 id 的項目都會一併移動:","member(s)":"位成員","project(s)":"個專案","memory visibility grant(s)":"筆記憶可見性授權","archived":"筆已封存","Memory text that mentions the old id is history and is left unchanged.":"記憶內文提到舊 id 的部分屬於歷史紀錄,不會被改寫。","A rename is local state: it does not propagate as a deletion, so peers may keep the old team id as an inert orphan.":"改名屬於本機狀態:它不會以刪除的形式傳播,因此對等節點可能保留舊團隊 id 成為無作用的孤兒。","Renamed team":"已重新命名團隊","Delete team?":"刪除團隊?","Members":"成員","no members":"尚無成員","Projects (members chosen from the team)":"專案(成員從團隊中選取)","project id":"專案 id","name (optional)":"名稱(選填)","+ Project":"+ 專案",
 "Dashboard":"儀表板","Search":"搜尋","Browse":"瀏覽","Graph":"圖譜","Agents":"代理","Add memory":"新增記憶","Tools":"工具",
 "Acting as":"目前身分","admin (all)":"管理者(全部)","Total memories":"記憶總數","Links":"關聯",
 "Memories":"記憶","Pinned":"釘選","Expired":"已過期","Archived":"已歸檔",
@@ -675,7 +676,7 @@ const I18N = {
 "✎ Edit":"✎ 編輯","👍 Helpful":"👍 有幫助","👎 Misleading":"👎 誤導","🔗 Links":"🔗 關聯","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 複製 ID","🗑 Delete":"🗑 刪除","why?":"為什麼?","Save":"儲存","Cancel":"取消","No links yet.":"尚無關聯。","Loading…":"載入中……","Ready.":"就緒。","🔒 private":"🔒 私有"
 },
 "zh-CN": {
-"Teams":"团队","Maintenance":"维护","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"运维工具:健康扫描、清除孤儿记忆(隶属无成员的群组、无人可见)、重建搜索索引、回收磁盘。","memories are now orphaned — clean them in Tools → Maintenance.":"条记忆已成孤儿——请到 工具 → 维护 清理。","Scan health":"健康扫描","Delete orphan memories":"删除孤儿记忆","Rebuild index":"重建索引","Vacuum":"压缩回收","Working…":"处理中…","Delete all orphan memories?":"删除所有孤儿记忆?","Health":"健康","Orphans":"孤儿","Reindex":"重建索引","Create a team":"创建团队","Create team":"创建团队","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"团队是一组节点成员;下面的每个项目从团队成员中选取。团队记忆所有团队成员可见,项目记忆仅该项目成员可见。","team id (e.g. apollo)":"团队 id(如:apollo)","display name (optional)":"显示名称(可选)","No teams yet. Create one above.":"尚无团队,请在上方创建。","select node…":"选择节点…","+ Add":"+ 加入","delete team":"删除团队","Delete team?":"删除团队?","Members":"成员","no members":"尚无成员","Projects (members chosen from the team)":"项目(成员从团队中选取)","project id":"项目 id","name (optional)":"名称(可选)","+ Project":"+ 项目",
+"Teams":"团队","Maintenance":"维护","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"运维工具:健康扫描、清除孤儿记忆(隶属无成员的群组、无人可见)、重建搜索索引、回收磁盘。","memories are now orphaned — clean them in Tools → Maintenance.":"条记忆已成孤儿——请到 工具 → 维护 清理。","Scan health":"健康扫描","Delete orphan memories":"删除孤儿记忆","Rebuild index":"重建索引","Vacuum":"压缩回收","Working…":"处理中…","Delete all orphan memories?":"删除所有孤儿记忆?","Health":"健康","Orphans":"孤儿","Reindex":"重建索引","Create a team":"创建团队","Create team":"创建团队","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"团队是一组节点成员;下面的每个项目从团队成员中选取。团队记忆所有团队成员可见,项目记忆仅该项目成员可见。","team id (e.g. apollo)":"团队 id(如:apollo)","display name (optional)":"显示名称(可选)","No teams yet. Create one above.":"尚无团队,请在上方创建。","select node…":"选择节点…","+ Add":"+ 加入","delete team":"删除团队","rename team":"重命名","New team id":"新的团队 id","That team id already exists.":"该团队 id 已存在。","This moves everything scoped to the id:":"以下隶属此 id 的项目都会一并移动:","member(s)":"位成员","project(s)":"个项目","memory visibility grant(s)":"条记忆可见性授权","archived":"条已归档","Memory text that mentions the old id is history and is left unchanged.":"记忆正文提到旧 id 的部分属于历史记录,不会被改写。","A rename is local state: it does not propagate as a deletion, so peers may keep the old team id as an inert orphan.":"重命名属于本机状态:它不会以删除的形式传播,因此对等节点可能保留旧团队 id 成为无作用的孤儿。","Renamed team":"已重命名团队","Delete team?":"删除团队?","Members":"成员","no members":"尚无成员","Projects (members chosen from the team)":"项目(成员从团队中选取)","project id":"项目 id","name (optional)":"名称(可选)","+ Project":"+ 项目",
 "Dashboard":"仪表板","Search":"搜索","Browse":"浏览","Graph":"图谱","Agents":"代理","Add memory":"新增记忆","Tools":"工具",
 "Acting as":"当前身份","admin (all)":"管理员(全部)","Total memories":"记忆总数","Links":"关联",
 "Memories":"记忆","Pinned":"置顶","Expired":"已过期","Archived":"已归档",
@@ -702,7 +703,7 @@ const I18N = {
 "✎ Edit":"✎ 编辑","👍 Helpful":"👍 有帮助","👎 Misleading":"👎 误导","🔗 Links":"🔗 关联","⇢ Share":"⇢ 分享","⧉ Copy id":"⧉ 复制 ID","🗑 Delete":"🗑 删除","why?":"为什么?","Save":"保存","Cancel":"取消","No links yet.":"暂无关联。","Loading…":"加载中……","Ready.":"就绪。","🔒 private":"🔒 私有"
 },
 "ja": {
-"Teams":"チーム","Maintenance":"メンテナンス","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"運用ツール:ヘルス確認、孤立記憶(メンバー不在のグループ所属で誰にも見えない)の削除、検索インデックス再構築、ディスク回収。","memories are now orphaned — clean them in Tools → Maintenance.":"件の記憶が孤立しました。ツール → メンテナンス で整理してください。","Scan health":"ヘルス確認","Delete orphan memories":"孤立記憶を削除","Rebuild index":"インデックス再構築","Vacuum":"最適化","Working…":"処理中…","Delete all orphan memories?":"孤立記憶をすべて削除?","Health":"ヘルス","Orphans":"孤立","Reindex":"再構築","Create a team":"チームを作成","Create team":"チームを作成","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"チームはノードメンバーの集合です。配下の各プロジェクトはチームメンバーから選びます。チーム記憶は全メンバーに、プロジェクト記憶はそのプロジェクトのメンバーだけに見えます。","team id (e.g. apollo)":"チームID(例:apollo)","display name (optional)":"表示名(任意)","No teams yet. Create one above.":"チームがありません。上で作成してください。","select node…":"ノードを選択…","+ Add":"+ 追加","delete team":"チーム削除","Delete team?":"チームを削除?","Members":"メンバー","no members":"メンバーなし","Projects (members chosen from the team)":"プロジェクト(メンバーはチームから選択)","project id":"プロジェクトID","name (optional)":"名前(任意)","+ Project":"+ プロジェクト",
+"Teams":"チーム","Maintenance":"メンテナンス","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"運用ツール:ヘルス確認、孤立記憶(メンバー不在のグループ所属で誰にも見えない)の削除、検索インデックス再構築、ディスク回収。","memories are now orphaned — clean them in Tools → Maintenance.":"件の記憶が孤立しました。ツール → メンテナンス で整理してください。","Scan health":"ヘルス確認","Delete orphan memories":"孤立記憶を削除","Rebuild index":"インデックス再構築","Vacuum":"最適化","Working…":"処理中…","Delete all orphan memories?":"孤立記憶をすべて削除?","Health":"ヘルス","Orphans":"孤立","Reindex":"再構築","Create a team":"チームを作成","Create team":"チームを作成","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"チームはノードメンバーの集合です。配下の各プロジェクトはチームメンバーから選びます。チーム記憶は全メンバーに、プロジェクト記憶はそのプロジェクトのメンバーだけに見えます。","team id (e.g. apollo)":"チームID(例:apollo)","display name (optional)":"表示名(任意)","No teams yet. Create one above.":"チームがありません。上で作成してください。","select node…":"ノードを選択…","+ Add":"+ 追加","delete team":"チーム削除","rename team":"名称変更","New team id":"新しいチームID","That team id already exists.":"そのチームIDは既に存在します。","This moves everything scoped to the id:":"このIDに属するもの全てが移動します:","member(s)":"名のメンバー","project(s)":"件のプロジェクト","memory visibility grant(s)":"件の記憶の可視性付与","archived":"件はアーカイブ済み","Memory text that mentions the old id is history and is left unchanged.":"記憶の本文にある旧IDの記述は履歴であり、書き換えません。","A rename is local state: it does not propagate as a deletion, so peers may keep the old team id as an inert orphan.":"名称変更はローカルな状態です。削除として伝播しないため、ピアには旧チームIDが無効な孤児として残る場合があります。","Renamed team":"チーム名を変更しました","Delete team?":"チームを削除?","Members":"メンバー","no members":"メンバーなし","Projects (members chosen from the team)":"プロジェクト(メンバーはチームから選択)","project id":"プロジェクトID","name (optional)":"名前(任意)","+ Project":"+ プロジェクト",
 "Dashboard":"ダッシュボード","Search":"検索","Browse":"一覧","Graph":"グラフ","Agents":"エージェント","Add memory":"記憶を追加","Tools":"ツール",
 "Acting as":"操作中の身元","admin (all)":"管理者(すべて)","Total memories":"記憶総数","Links":"リンク",
 "Memories":"記憶","Pinned":"ピン留め","Expired":"期限切れ","Archived":"アーカイブ済み",
@@ -729,7 +730,7 @@ const I18N = {
 "✎ Edit":"✎ 編集","👍 Helpful":"👍 役立った","👎 Misleading":"👎 誤解を招く","🔗 Links":"🔗 リンク","⇢ Share":"⇢ 共有","⧉ Copy id":"⧉ IDコピー","🗑 Delete":"🗑 削除","why?":"理由は?","Save":"保存","Cancel":"キャンセル","No links yet.":"リンクはまだありません。","Loading…":"読み込み中……","Ready.":"準備完了。","🔒 private":"🔒 プライベート"
 },
 "ko": {
-"Teams":"팀","Maintenance":"유지보수","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"운영 도구: 상태 점검, 고아 기억(멤버 없는 그룹 소속 · 아무도 못 봄) 정리, 검색 색인 재생성, 디스크 회수.","memories are now orphaned — clean them in Tools → Maintenance.":"개의 기억이 고아가 되었습니다 — 도구 → 유지보수 에서 정리하세요.","Scan health":"상태 점검","Delete orphan memories":"고아 기억 삭제","Rebuild index":"색인 재생성","Vacuum":"압축 정리","Working…":"처리 중…","Delete all orphan memories?":"모든 고아 기억을 삭제할까요?","Health":"상태","Orphans":"고아","Reindex":"재색인","Create a team":"팀 만들기","Create team":"팀 만들기","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"팀은 노드 멤버의 집합입니다. 하위 각 프로젝트는 팀 멤버 중에서 선택합니다. 팀 기억은 모든 팀 멤버에게, 프로젝트 기억은 해당 프로젝트 멤버에게만 보입니다.","team id (e.g. apollo)":"팀 id(예: apollo)","display name (optional)":"표시 이름(선택)","No teams yet. Create one above.":"팀이 없습니다. 위에서 만드세요.","select node…":"노드 선택…","+ Add":"+ 추가","delete team":"팀 삭제","Delete team?":"팀을 삭제할까요?","Members":"멤버","no members":"멤버 없음","Projects (members chosen from the team)":"프로젝트(멤버는 팀에서 선택)","project id":"프로젝트 id","name (optional)":"이름(선택)","+ Project":"+ 프로젝트",
+"Teams":"팀","Maintenance":"유지보수","Ops utilities: scan health, clean orphaned memories (scoped to a group with no members — visible to nobody), rebuild the search index, and reclaim disk.":"운영 도구: 상태 점검, 고아 기억(멤버 없는 그룹 소속 · 아무도 못 봄) 정리, 검색 색인 재생성, 디스크 회수.","memories are now orphaned — clean them in Tools → Maintenance.":"개의 기억이 고아가 되었습니다 — 도구 → 유지보수 에서 정리하세요.","Scan health":"상태 점검","Delete orphan memories":"고아 기억 삭제","Rebuild index":"색인 재생성","Vacuum":"압축 정리","Working…":"처리 중…","Delete all orphan memories?":"모든 고아 기억을 삭제할까요?","Health":"상태","Orphans":"고아","Reindex":"재색인","Create a team":"팀 만들기","Create team":"팀 만들기","A team is a set of node members; each project under it draws members from the team. Team memory reaches all team members; project memory reaches only that project's members.":"팀은 노드 멤버의 집합입니다. 하위 각 프로젝트는 팀 멤버 중에서 선택합니다. 팀 기억은 모든 팀 멤버에게, 프로젝트 기억은 해당 프로젝트 멤버에게만 보입니다.","team id (e.g. apollo)":"팀 id(예: apollo)","display name (optional)":"표시 이름(선택)","No teams yet. Create one above.":"팀이 없습니다. 위에서 만드세요.","select node…":"노드 선택…","+ Add":"+ 추가","delete team":"팀 삭제","rename team":"이름 변경","New team id":"새 팀 id","That team id already exists.":"해당 팀 id가 이미 있습니다.","This moves everything scoped to the id:":"이 id에 속한 모든 것이 함께 이동합니다:","member(s)":"명의 멤버","project(s)":"개의 프로젝트","memory visibility grant(s)":"건의 기억 가시성 권한","archived":"건은 보관됨","Memory text that mentions the old id is history and is left unchanged.":"기억 본문에 있는 옛 id 언급은 기록이므로 바꾸지 않습니다.","A rename is local state: it does not propagate as a deletion, so peers may keep the old team id as an inert orphan.":"이름 변경은 로컬 상태입니다. 삭제로 전파되지 않으므로 피어에는 옛 팀 id가 무효한 고아로 남을 수 있습니다.","Renamed team":"팀 이름을 변경했습니다","Delete team?":"팀을 삭제할까요?","Members":"멤버","no members":"멤버 없음","Projects (members chosen from the team)":"프로젝트(멤버는 팀에서 선택)","project id":"프로젝트 id","name (optional)":"이름(선택)","+ Project":"+ 프로젝트",
 "Dashboard":"대시보드","Search":"검색","Browse":"둘러보기","Graph":"그래프","Agents":"에이전트","Add memory":"기억 추가","Tools":"도구",
 "Acting as":"현재 신원","admin (all)":"관리자(전체)","Total memories":"기억 총수","Links":"연결",
 "Memories":"기억","Pinned":"고정됨","Expired":"만료됨","Archived":"보관됨",
@@ -1386,6 +1387,41 @@ function renderTeam(team, allAgents, displayNames) {
   const title = el("span", "owner"); title.appendChild(el("b", null, "\u{1F465} " + team.id));
   if (team.name && team.name !== team.id) title.appendChild(document.createTextNode(" · " + team.name));
   head.appendChild(title);
+  const ren = el("button", "ghost", t("rename team"));
+  ren.style.cssText = "font-size:11px;padding:2px 10px;margin-right:6px";
+  ren.addEventListener("click", async () => {
+    // A team id is the token inside every team:<id> grant, the parent key of
+    // its projects, and the source.team_id the legacy bare grant resolves
+    // through. Show what travels with it before renaming, never after.
+    const next = (prompt(t("New team id") + ":", team.id) || "").trim();
+    if (!next || next === team.id) return;
+    try {
+      const pre = await api("/api/teams/" + encodeURIComponent(team.id)
+        + "/rename-preview?new_id=" + encodeURIComponent(next));
+      if (pre.target_exists) { toast(t("That team id already exists.") + " " + next, "err"); return; }
+      const grants = pre.explicit_grants + pre.bare_grants;
+      let msg = team.id + " \u2192 " + next + "\n\n" + t("This moves everything scoped to the id:") + "\n"
+        + "\u2022 " + pre.members + " " + t("member(s)") + "\n"
+        + "\u2022 " + pre.projects.length + " " + t("project(s)")
+        + (pre.projects.length ? " (" + pre.projects.join(", ") + ")" : "") + "\n"
+        + "\u2022 " + grants + " " + t("memory visibility grant(s)")
+        + (pre.archived_grants ? " + " + pre.archived_grants + " " + t("archived") : "");
+      if (pre.content_mentions) {
+        msg += "\n\n" + t("Memory text that mentions the old id is history and is left unchanged.");
+      }
+      if (pre.sync_peers && pre.sync_peers.length) {
+        msg += "\n\n\u26A0 " + t("A rename is local state: it does not propagate as a deletion, so peers may keep the old team id as an inert orphan.");
+      }
+      if (!confirm(msg)) return;
+      await api("/api/teams/" + encodeURIComponent(team.id) + "/rename", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ new_id: next }),
+      });
+      toast(t("Renamed team") + ": " + team.id + " \u2192 " + next, "ok");
+      refreshTeams();
+    } catch (e) { toast(e.message, "err"); }
+  });
+  head.appendChild(ren);
   const del = el("button", "ghost", t("delete team")); del.style.cssText = "font-size:11px;padding:2px 10px";
   del.addEventListener("click", async () => {
     if (!confirm(t("Delete team?") + " " + team.id)) return;

@@ -154,6 +154,13 @@ class TeamRequest(BaseModel):
     name: str = ""
 
 
+class TeamRenameRequest(BaseModel):
+    new_id: str = Field(min_length=1)
+    # None keeps the current display name (or follows the id if it mirrored it);
+    # a string sets it explicitly.
+    name: str | None = None
+
+
 class ProjectRequest(BaseModel):
     id: str = Field(min_length=1)
     team_id: str = Field(min_length=1)
@@ -698,6 +705,25 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         if not removed:
             raise HTTPException(status_code=404, detail=f"team not found: {team_id}")
         return {"removed": team_id}
+
+    @app.get("/api/teams/{team_id}/rename-preview")
+    def teams_rename_preview(team_id: str, new_id: str = Query(min_length=1)) -> dict[str, Any]:
+        """What a rename would move. The console shows this before asking to
+        confirm, so an operator never renames a team blind to the memory
+        grants, projects, and memberships that travel with the id."""
+        with lock:
+            return client.store.team_rename_preview(team_id, new_id)
+
+    @app.post("/api/teams/{team_id}/rename")
+    def teams_rename(team_id: str, request: TeamRenameRequest) -> dict[str, Any]:
+        with lock:
+            try:
+                return client.rename_team(team_id, request.new_id, name=request.name)
+            except KeyError as exc:
+                raise HTTPException(status_code=404,
+                                    detail=f"team not found: {team_id}") from exc
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.get("/api/org/audit")
     def org_audit(limit: int = Query(default=100, ge=1, le=500)) -> dict[str, Any]:

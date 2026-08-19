@@ -152,10 +152,16 @@ def build_parser() -> argparse.ArgumentParser:
     node.add_argument("--set-port", type=int, default=None, help="Set the Web UI port")
 
     team = sub.add_parser("team", help="Manage teams and their node members")
-    team.add_argument("action", choices=["list", "create", "delete", "add-member", "remove-member", "invite"])
+    team.add_argument("action", choices=["list", "create", "rename", "delete",
+                                        "add-member", "remove-member", "invite"])
     team.add_argument("team_id", nargs="?", default=None)
-    team.add_argument("agent_id", nargs="?", default=None)
-    team.add_argument("--name", default="", help="Display name (create)")
+    team.add_argument("agent_id", nargs="?", default=None,
+                      help="add-member/remove-member: the agent; rename: the NEW team id")
+    team.add_argument("--name", default="", help="Display name (create, rename)")
+    team.add_argument("--yes", action="store_true",
+                      help="rename: skip the confirmation prompt")
+    team.add_argument("--dry-run", action="store_true",
+                      help="rename: report what would move, change nothing")
     team.add_argument("--ttl", type=int, default=600,
                       help="invite: pairing-code lifetime in seconds (default 600)")
 
@@ -1488,6 +1494,49 @@ def main(argv: list[str] | None = None) -> int:
                 if not args.team_id:
                     print("team create requires a team id"); return 2
                 print(json.dumps(s.create_team(args.team_id, name=args.name), ensure_ascii=False))
+            elif args.action == "rename":
+                if not (args.team_id and args.agent_id):
+                    print("team rename requires <old_team_id> <new_team_id>"); return 2
+                old_id, new_id = args.team_id, args.agent_id
+                pre = client.team_rename_preview(old_id, new_id)
+                if not pre["exists"]:
+                    print(f"error: team not found: {old_id}"); return 2
+                if pre["target_exists"]:
+                    print(f"error: team id already exists: {new_id} "
+                          f"(rename never merges two teams)"); return 2
+                print(f"rename {old_id} -> {new_id} will move:")
+                print(f"  {pre['members']} member(s)")
+                print(f"  {len(pre['projects'])} project(s)"
+                      + (f": {', '.join(pre['projects'])}" if pre["projects"] else "")
+                      + f" ({pre['project_members']} project membership rows)")
+                print(f"  {pre['explicit_grants']} memory visibility grant(s) "
+                      f"team:{old_id} -> team:{new_id}"
+                      + (f", plus {pre['archived_grants']} archived"
+                         if pre["archived_grants"] else ""))
+                if pre["bare_grants"]:
+                    print(f"  {pre['bare_grants']} memory/ies using the legacy bare "
+                          f"'team' grant (their source.team_id is repointed)")
+                if pre["content_mentions"]:
+                    print(f"  note: {pre['content_mentions']} memory/ies mention "
+                          f"'{old_id}' in their text — prose is history and is left as-is")
+                if pre["sync_peers"]:
+                    print(f"  WARNING: a rename is local state and does not propagate as a "
+                          f"deletion. These peers may keep team:{old_id} as an inert orphan: "
+                          f"{', '.join(pre['sync_peers'])}")
+                if args.dry_run:
+                    print("dry run — nothing changed")
+                    return 0
+                if not args.yes:
+                    reply = input("proceed? [y/N]: ")
+                    if reply.strip().lower() not in ("y", "yes"):
+                        print("aborted"); return 1
+                try:
+                    result = client.rename_team(old_id, new_id,
+                                               name=args.name or None)
+                except (ValueError, KeyError) as exc:
+                    print(f"error: {exc}"); return 2
+                print(json.dumps(result, ensure_ascii=False))
+                print(json.dumps(s.get_team(new_id), ensure_ascii=False))
             elif args.action == "delete":
                 print("deleted" if s.delete_team(args.team_id) else "not found")
             elif args.action in ("add-member", "remove-member"):
