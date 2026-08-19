@@ -322,3 +322,191 @@ def test_teams_projects_api(tmp_path):
     assert set(team["members"]) == {"alice", "bob"}
     proj = web.get("/api/projects?team=apollo").json()["projects"][0]
     assert proj["members"] == ["alice"]
+
+
+# ---------- team rename (v1.8.3) ----------
+
+def test_team_rename_moves_every_reference_the_id_carries(tmp_path):
+    """A team id is not just a row key: it is the token inside every
+    `team:<id>` grant, the parent key of its projects, and the `source.team_id`
+    the legacy bare `team` grant resolves through. Renaming must move all of
+    them atomically or the id's memory becomes unreachable."""
+    c = _fixture(tmp_path)
+    s = c.store
+    team_mem = c.add("team scoped", owner="alice", visibility=["team:apollo"])
+    proj_mem = c.add("project scoped", owner="alice", visibility=["project:apollo-web"])
+    bare = c.add("bare grant", owner="alice", visibility=["team"],
+                 source={"team_id": "apollo"})
+
+    created_before = s.get_team("apollo")["created_at"]
+    pre = s.team_rename_preview("apollo", "artemis")
+    assert pre["exists"] and not pre["target_exists"]
+    assert pre["members"] == 3
+    assert pre["projects"] == ["apollo-web"]
+    assert pre["explicit_grants"] == 1
+    assert pre["bare_grants"] == 1
+
+    counts = c.rename_team("apollo", "artemis")
+    assert counts["members"] == 3
+    assert counts["projects"] == 1
+    assert counts["explicit_grants"] == 1
+    assert counts["bare_grants"] == 1
+
+    assert s.get_team("apollo") is None
+    team = s.get_team("artemis")
+    assert team["members"] == ["alice", "bob", "carol"]
+    assert team["projects"] == ["apollo-web"]
+    # created_at is carried over: a rename is not a re-creation.
+    assert team["created_at"] == created_before
+    # Every scope still resolves for a member — the real regression risk.
+    assert c.get_visible(team_mem.id, requester_agent_id="bob") is not None
+    assert c.get_visible(proj_mem.id, requester_agent_id="bob") is not None
+    assert c.get_visible(bare.id, requester_agent_id="bob") is not None
+    # ...and still does NOT resolve for a non-member.
+    s.register_agent("dave", kind="hermes")
+    assert c.get_visible(team_mem.id, requester_agent_id="dave") is None
+    c.close()
+
+
+def test_team_rename_bumps_the_acl_clock_not_the_content_clock(tmp_path):
+    """Sync converges visibility on `acl_updated_at`. A rename that left it
+    alone would lose the new grant to a peer's older copy; bumping the content
+    clock instead would falsely mark the memory as edited."""
+    c = _fixture(tmp_path)
+    m = c.add("team scoped", owner="alice", visibility=["team:apollo"])
+    before = c.store.conn.execute(
+        "SELECT updated_at, acl_updated_at FROM memories WHERE id = ?", (m.id,)).fetchone()
+    c.rename_team("apollo", "artemis")
+    after = c.store.conn.execute(
+        "SELECT updated_at, acl_updated_at FROM memories WHERE id = ?", (m.id,)).fetchone()
+    assert after["updated_at"] == before["updated_at"]
+    assert after["acl_updated_at"] >= before["acl_updated_at"]
+    c.close()
+
+
+def test_team_rename_refuses_to_merge_or_invent(tmp_path):
+    c = _fixture(tmp_path)
+    c.store.create_team("artemis", name="Artemis")
+    with pytest.raises(ValueError, match="already exists"):
+        c.rename_team("apollo", "artemis")
+    with pytest.raises(KeyError):
+        c.rename_team("nosuch", "whatever")
+    with pytest.raises(ValueError, match="identical"):
+        c.rename_team("apollo", "apollo")
+    with pytest.raises(ValueError):
+        c.rename_team("apollo", "   ")
+    # the failed attempts changed nothing
+    assert c.store.get_team("apollo") is not None
+    c.close()
+
+
+def test_team_rename_display_name_policy(tmp_path):
+    """A name that merely mirrored the id follows the rename; a name the
+    operator actually chose is preserved; an explicit name always wins."""
+    c = MemoryClient(home=tmp_path)
+    s = c.store
+    s.create_team("mirror", name="mirror")
+    s.create_team("labelled", name="Real Label")
+    assert c.rename_team("mirror", "renamed")["name"] == "renamed"
+    assert c.rename_team("labelled", "relabelled")["name"] == "Real Label"
+    s.create_team("explicit", name="explicit")
+    assert c.rename_team("explicit", "third", name="Chosen")["name"] == "Chosen"
+    c.close()
+
+
+def test_team_rename_does_not_tombstone_the_old_id(tmp_path):
+    """Applying a team tombstone cascade-deletes that team's projects and
+    strips their `project:<id>` grants from memories — damage the renamed
+    records cannot undo. A rename must therefore never emit one, and must warn
+    when peers exist instead."""
+    c = _fixture(tmp_path)
+    c.rename_team("apollo", "artemis")
+    assert not [t for t in c.store.list_org_tombstones() if t[1] == "apollo"]
+    c.store.add_peer("http://peer:8000", policy="shared")
+    c.store.create_team("second", name="second")
+    result = c.rename_team("second", "third")
+    assert "sync_warning" in result and "http://peer:8000" in result["sync_warning"]
+    c.close()
+
+
+def test_team_rename_is_audited(tmp_path):
+    c = _fixture(tmp_path)
+    c.rename_team("apollo", "artemis", actor="operator")
+    entry = [r for r in c.store.org_audit_log(limit=10) if r["action"] == "rename_team"]
+    assert entry and entry[0]["detail"] == "apollo -> artemis"
+    assert entry[0]["actor"] == "operator"
+    # History is never rewritten: the pre-rename entries still name the old id.
+    assert any("apollo" in r["detail"] for r in c.store.org_audit_log(limit=50)
+               if r["action"] == "create_team")
+    c.close()
+
+
+def test_team_rename_api(tmp_path):
+    c = _fixture(tmp_path)
+    c.add("team scoped", owner="alice", visibility=["team:apollo"])
+    c.close()
+    app = create_app(home=tmp_path, token=None)
+    tc = TestClient(app)
+    pre = tc.get("/api/teams/apollo/rename-preview", params={"new_id": "artemis"})
+    assert pre.status_code == 200
+    assert pre.json()["explicit_grants"] == 1
+    assert pre.json()["projects"] == ["apollo-web"]
+    r = tc.post("/api/teams/apollo/rename", json={"new_id": "artemis"})
+    assert r.status_code == 200 and r.json()["members"] == 3
+    assert [t["id"] for t in tc.get("/api/teams").json()["teams"]] == ["artemis"]
+    assert tc.post("/api/teams/nosuch/rename", json={"new_id": "x"}).status_code == 404
+    tc.post("/api/teams", json={"id": "taken", "name": "taken"})
+    assert tc.post("/api/teams/artemis/rename", json={"new_id": "taken"}).status_code == 400
+
+
+def _mirror(store, agent_id):
+    import json as _json
+    row = store.conn.execute("SELECT teams FROM agents WHERE id = ?", (agent_id,)).fetchone()
+    return sorted(_json.loads(row[0] or "[]")) if row else None
+
+
+def test_agents_teams_mirror_tracks_every_membership_path(tmp_path):
+    """`agents.teams` mirrors team_members. A stale mirror is a trap rather
+    than cosmetic: `register_agent` reconciles membership to the list it is
+    handed and drops any team absent from it, and the console's agent editor
+    round-trips exactly this column — so a mirror left behind by any one
+    mutation path would move an agent back to a team that may not exist,
+    taking its project memberships with it."""
+    c = _fixture(tmp_path)
+    s = c.store
+    s.create_team("unrelated", name="unrelated")
+    s.add_team_member("unrelated", "alice")
+    assert _mirror(s, "alice") == ["apollo", "unrelated"]      # add_team_member
+    s.remove_team_member("unrelated", "alice")
+    assert _mirror(s, "alice") == ["apollo"]                   # remove_team_member
+    c.rename_team("apollo", "artemis")
+    assert _mirror(s, "alice") == ["artemis"]                  # rename_team
+    s.create_team("doomed"); s.add_team_member("doomed", "alice")
+    s.delete_team("doomed")
+    assert _mirror(s, "alice") == ["artemis"]                  # delete_team
+    # Round-tripping the mirror is now a no-op rather than a regression.
+    s.register_agent("alice", kind="hermes", teams=_mirror(s, "alice"))
+    assert s.teams_for("alice") == ["artemis"]
+    assert "alice" in s.get_project("apollo-web")["members"]
+    c.close()
+
+
+def test_reassign_owner_keeps_the_mirror_with_the_surviving_identity(tmp_path):
+    c = _fixture(tmp_path)
+    s = c.store
+    s.reassign_owner("carol", "carol-2")
+    assert _mirror(s, "carol-2") == ["apollo"]
+    assert s.conn.execute("SELECT COUNT(*) FROM agents WHERE id='carol'").fetchone()[0] == 0
+    c.close()
+
+
+def test_agy_is_a_registrable_agent_kind(tmp_path):
+    """Antigravity (CLI and IDE) is a first-class integration, so it gets its
+    own kind rather than hiding under `custom`."""
+    c = MemoryClient(home=tmp_path)
+    assert "agy" in c.store.AGENT_KINDS
+    c.store.register_agent("agy-cli", display_name="Antigravity CLI", kind="agy")
+    assert c.store.get_agent("agy-cli")["kind"] == "agy"
+    with pytest.raises(ValueError, match="kind must be one of"):
+        c.store.register_agent("nope", kind="not-a-kind")
+    c.close()

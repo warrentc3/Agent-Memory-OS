@@ -593,7 +593,7 @@ class MemoryStore:
         placeholders = ",".join("?" for _ in ids)
         return self._archive_where(f"id IN ({placeholders})", ids, reason="snapshot_rotation")
 
-    AGENT_KINDS = {"claude-code", "codex", "openclaw", "hermes", "custom"}
+    AGENT_KINDS = {"claude-code", "codex", "openclaw", "hermes", "agy", "custom"}
 
     def register_agent(
         self,
@@ -1010,6 +1010,149 @@ class MemoryStore:
             (team_id,),
         )
 
+    def team_rename_preview(self, old_id: str, new_id: str) -> dict[str, object]:
+        """Report what a `rename_team` would move, without changing anything.
+
+        A team id is not just a row key: it is the token inside every
+        `team:<id>` visibility grant, the parent key of every project, and the
+        `source.team_id` that the legacy bare `team` grant resolves through. An
+        operator renaming a team deserves to see all of that first, so this is
+        the pre-flight the CLI and console call before asking to proceed.
+
+        `content_mentions` is informational only — prose that happens to name
+        the team is history and is never rewritten.
+        """
+        old_id = (old_id or "").strip()
+        new_id = (new_id or "").strip()
+        grant_old = json.dumps(f"team:{old_id}", ensure_ascii=False)
+        q = self.conn.execute
+        return {
+            "old_id": old_id,
+            "new_id": new_id,
+            "exists": q("SELECT 1 FROM teams WHERE id = ?", (old_id,)).fetchone() is not None,
+            "target_exists": q("SELECT 1 FROM teams WHERE id = ?", (new_id,)).fetchone() is not None,
+            "members": int(q("SELECT COUNT(*) FROM team_members WHERE team_id = ?",
+                             (old_id,)).fetchone()[0]),
+            "projects": [r[0] for r in q("SELECT id FROM projects WHERE team_id = ? ORDER BY id",
+                                         (old_id,)).fetchall()],
+            "project_members": int(q(
+                "SELECT COUNT(*) FROM project_members WHERE project_id IN "
+                "(SELECT id FROM projects WHERE team_id = ?)", (old_id,)).fetchone()[0]),
+            "explicit_grants": int(q(
+                "SELECT COUNT(*) FROM memories WHERE instr(visibility, ?) > 0",
+                (grant_old,)).fetchone()[0]),
+            "archived_grants": int(q(
+                "SELECT COUNT(*) FROM memories_archive WHERE instr(visibility, ?) > 0",
+                (grant_old,)).fetchone()[0]),
+            "bare_grants": int(q(
+                "SELECT COUNT(*) FROM memories WHERE json_extract(source, '$.team_id') = ? "
+                "AND EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = 'team')",
+                (old_id,)).fetchone()[0]),
+            "content_mentions": int(q(
+                "SELECT COUNT(*) FROM memories WHERE content LIKE ?",
+                (f"%{old_id}%",)).fetchone()[0]),
+            "sync_peers": [p["url"] for p in self.list_peers()],
+        }
+
+    def rename_team(self, old_id: str, new_id: str, *, name: str | None = None,
+                    actor: str = "local") -> dict[str, object]:
+        """Rename a team id to a NEW (non-existent) id, moving every reference.
+
+        Atomic. Moves, in one transaction: the team row (keeping its
+        `created_at`), team memberships, the `team_id` of every project under
+        it, the `team:<old>` grant in live and archived memory visibility, and
+        the `source.team_id` key that the legacy bare `team` grant resolves
+        through. Bumps `acl_updated_at` on live memories whose grant changed —
+        the ACL clock is what sync converges visibility on, so a rename that
+        left it alone would lose to a peer's older copy.
+
+        Display name: an explicit `name` wins; otherwise a name that merely
+        mirrored the old id follows the rename, and a name the operator
+        actually chose is preserved.
+
+        Deliberately does NOT emit an org tombstone for the old id. A team
+        tombstone means "this team is gone" to a peer, and applying one
+        cascade-deletes that team's projects and strips their `project:<id>`
+        grants from memories (see `_apply_org_tombstone`) — grants the incoming
+        renamed records cannot restore, because project records carry no memory
+        ACLs. A rename is therefore local state: peers keep the old team as an
+        inert orphan (nothing references it once the grants move) and the
+        result reports them so the operator can reconcile deliberately.
+        """
+        old_id = (old_id or "").strip()
+        new_id = (new_id or "").strip()
+        if not old_id or not new_id:
+            raise ValueError("rename_team requires non-empty ids")
+        if old_id == new_id:
+            raise ValueError("old and new team ids are identical")
+        row = self.conn.execute("SELECT name, created_at FROM teams WHERE id = ?",
+                                (old_id,)).fetchone()
+        if row is None:
+            raise KeyError(f"team not found: {old_id}")
+        if self.conn.execute("SELECT 1 FROM teams WHERE id = ?", (new_id,)).fetchone():
+            raise ValueError(f"team id already exists: {new_id}")
+
+        if name is not None:
+            new_name = name
+        elif (row["name"] or "") == old_id:
+            new_name = new_id
+        else:
+            new_name = row["name"]
+
+        grant_old = json.dumps(f"team:{old_id}", ensure_ascii=False)
+        grant_new = json.dumps(f"team:{new_id}", ensure_ascii=False)
+        counts: dict[str, object] = {"old_id": old_id, "new_id": new_id, "name": new_name}
+        now = utc_now()
+        with self.conn:  # one transaction — all or nothing
+            self.conn.execute(
+                "UPDATE teams SET id = ?, name = ?, updated_at = ? WHERE id = ?",
+                (new_id, new_name, now, old_id),
+            )
+            counts["members"] = self.conn.execute(
+                "UPDATE team_members SET team_id = ? WHERE team_id = ?", (new_id, old_id)
+            ).rowcount
+            counts["projects"] = self.conn.execute(
+                "UPDATE projects SET team_id = ?, updated_at = ? WHERE team_id = ?",
+                (new_id, now, old_id),
+            ).rowcount
+            counts["explicit_grants"] = self.conn.execute(
+                "UPDATE memories SET visibility = replace(visibility, ?, ?), acl_updated_at = ? "
+                "WHERE instr(visibility, ?) > 0",
+                (grant_old, grant_new, now, grant_old),
+            ).rowcount
+            # Archived rows carry visibility but have no ACL clock to bump.
+            counts["archived_grants"] = self.conn.execute(
+                "UPDATE memories_archive SET visibility = replace(visibility, ?, ?) "
+                "WHERE instr(visibility, ?) > 0",
+                (grant_old, grant_new, grant_old),
+            ).rowcount
+            # Repoint the key the legacy bare `team` grant resolves through, so
+            # those memories stay readable by the same team after the rename.
+            counts["bare_grants"] = self.conn.execute(
+                "UPDATE memories SET source = json_set(source, '$.team_id', ?), "
+                "acl_updated_at = ? "
+                "WHERE json_extract(source, '$.team_id') = ? "
+                "AND EXISTS (SELECT 1 FROM json_each(memories.visibility) WHERE value = 'team')",
+                (new_id, now, old_id),
+            ).rowcount
+            counts["agent_team_mirrors"] = int(self.conn.execute(
+                "SELECT COUNT(*) FROM agents "
+                "WHERE EXISTS (SELECT 1 FROM json_each(agents.teams) WHERE value = ?)",
+                (old_id,),
+            ).fetchone()[0])
+            self._org_audit("rename_team", f"{old_id} -> {new_id}", actor)
+        # The `agents.teams` mirror is rebuilt from team_members by
+        # _invalidate_membership_caches below, so the rename does not patch it
+        # here — one rebuild path, not two that could disagree.
+        self._invalidate_membership_caches()
+        peers = [p["url"] for p in self.list_peers()]
+        if peers:
+            counts["sync_warning"] = (
+                "a rename does not propagate as a deletion; these peers may keep "
+                f"team:{old_id} as an inert orphan: {', '.join(peers)}"
+            )
+        return counts
+
     def add_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
         if self.get_team(team_id) is None:
             raise KeyError(f"team not found: {team_id}")
@@ -1146,6 +1289,35 @@ class MemoryStore:
     def _invalidate_membership_caches(self) -> None:
         self._teams_cache = {}
         self._projects_cache = {}
+        self._sync_agent_team_mirrors()
+
+    def _sync_agent_team_mirrors(self) -> None:
+        """Recompute `agents.teams` from the authoritative `team_members`.
+
+        The column is a denormalized convenience, but a stale one is a trap:
+        `register_agent` RECONCILES membership to the list it is handed and
+        drops any team absent from it, so a caller that round-trips this column
+        (the console's agent editor does) would move an agent back to whatever
+        the mirror still said — including a team id that no longer exists,
+        taking its project memberships along.
+
+        Rebuilding every row in one statement rather than patching each
+        mutation site is deliberate: membership changes are rare and the table
+        is one row per agent, so correctness-by-construction is worth more here
+        than a targeted update that a future code path could forget to call.
+        """
+        self.conn.execute(
+            """
+            UPDATE agents SET teams = COALESCE(
+                (SELECT json_group_array(team_id) FROM
+                    (SELECT team_id FROM team_members
+                     WHERE agent_id = agents.id ORDER BY team_id)),
+                '[]')
+            """
+        )
+        # Every caller invalidates AFTER committing its own work, so this owns
+        # the commit for the mirror it just rewrote.
+        self.conn.commit()
 
     # ---------- org versioning, audit & tombstones (federation) ----------
 

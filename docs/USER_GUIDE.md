@@ -12,7 +12,7 @@ Complete reference for the v1.x line. For a five-minute start, see the
 |---|---|
 | **Memory** | One durable fact/preference/procedure/decision/warning/note, owned by an agent, with `scope`, `visibility`, `importance`, `confidence`, decay policy, optional expiry. |
 | **Owner & visibility (ACL)** | `visibility: []` = owner-only (private). `["global"]` = everyone. `["agent:<id>"]` = one agent. `["team:<id>"]` = a team/project. ACL is a **hard gate** applied before ranking on every read path. |
-| **Agent** | A registered identity (`kind`: claude-code / codex / openclaw / hermes / custom) with team memberships. Team members automatically see `team:<id>` memories. |
+| **Agent** | A registered identity (`kind`: claude-code / codex / openclaw / hermes / agy / custom) with team memberships. Team members automatically see `team:<id>` memories. |
 | **Team = project** | A team id doubles as a project id. One agent may belong to many teams (multi-project). |
 | **Links & resonance** | Authoritative association edges (`related_to`, `caused_by`, `supersedes`, `derived_from`, `co_recalled`). Search expands through them: related memories surface even without keyword overlap, ACL-safe. |
 | **Reinforcement** | Helpful co-recall strengthens memories and links (Hebbian); `helpful=False` weakens them and speeds forgetting. |
@@ -65,6 +65,7 @@ Global flag: `--home <dir>`.
 | `retention [--half-lives N]` | Archive expired (+ optionally idle ≥N half-lives); rotates session snapshots; retunes decay from feedback. `--half-lives 0` = expired only. |
 | `path show\|install` | Diagnose/fix "command not found": add the pip scripts dir to your shell PATH. |
 | `agent rename <old> <new> [--yes]` | Migrate an agent identity to a **new** id everywhere (ownership, `agent:` grants, memberships, profiles). Previews the memory count and confirms first; refuses an existing target — use `owner reassign` to merge. Reminds you to repoint any running service/MCP still on the old id. |
+| `team rename <old> <new> [--name N] [--dry-run] [--yes]` | Rename a team id, moving everything the id carries: memberships, its projects' parent key, `team:<id>` grants in live and archived memory, and the `source.team_id` behind the legacy bare `team` grant. Previews all of it and confirms first; refuses an existing target (a rename never merges two teams). Local state only — it does not propagate as a deletion, so peers may keep the old id as an inert orphan. |
 | `owner list` | Every owner holding memories on this host, with live/archived counts and whether it is a registered agent. Surfaces owners the Browse tab hides (ACL-filtered by "Acting as"). |
 | `owner reassign <old> <new> [--yes] [--no-register]` | Fold one owner's memories into another (merge-capable — the target **may already exist**). Previews the count and confirms first. Registers the destination as an agent so the moved memories stay recognized (`--no-register` opts out, with a warning). The fix for "memories landed under `default` instead of my agent id." |
 | `owner delete <owner> [--yes]` | Permanently forget every memory owned by `<owner>` (live + archive + links + audit/recall logs + tombstones). Prompts to confirm unless `--yes`. |

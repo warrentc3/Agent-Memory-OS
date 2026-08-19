@@ -262,6 +262,15 @@ class MemoryClient:
         self.cache.clear()  # deleting a scope revokes its memory — drop stale recalls
         return result
 
+    def team_rename_preview(self, old_id: str, new_id: str) -> dict[str, object]:
+        return self.store.team_rename_preview(old_id, new_id)
+
+    def rename_team(self, old_id: str, new_id: str, *, name: str | None = None,
+                    actor: str = "local") -> dict[str, object]:
+        result = self.store.rename_team(old_id, new_id, name=name, actor=actor)
+        self.cache.clear()  # cached recalls carry the old grant token
+        return result
+
     def add_team_member(self, team_id: str, agent_id: str, *, actor: str = "local") -> None:
         self.store.add_team_member(team_id, agent_id, actor=actor)
         self.cache.clear()  # membership change alters what agents can see

@@ -4,6 +4,37 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.9.0] — 2026-08-19
+
+- **Team rename, in the CLI and the console.** A team id is not just a row key:
+  it is the token inside every `team:<id>` visibility grant, the parent key of
+  every project under it, and the `source.team_id` that the legacy bare `team`
+  grant resolves through. Renaming one by hand meant touching four places and
+  hoping. `agent-memory team rename <old> <new>` (with `--dry-run` and a
+  confirmation prompt) and the Teams tab's rename button now move all of it in
+  one transaction — memberships, projects, live and archived grants, and the
+  bare-grant key — bumping `acl_updated_at` (the clock sync converges
+  visibility on) without touching the content clock, and writing an
+  `org_audit` entry. Both surfaces preview what travels with the id first.
+  A rename deliberately emits no org tombstone: applying one cascade-deletes
+  that team's projects and strips their `project:<id>` grants on the receiving
+  node, which the renamed records cannot restore — so a rename is local state,
+  and the result warns when peers exist. Memory text that mentions the old id
+  is history and is left unchanged.
+- **`agy` is a first-class agent kind.** Antigravity (CLI and IDE) had to
+  register as `custom`, which left it unlabelled in the console. It now has its
+  own kind, badge, and dropdown entry alongside claude-code / codex / openclaw /
+  hermes.
+- **Fix: `agents.teams` no longer drifts from actual membership.** That column
+  mirrors `team_members`, and a stale mirror is a trap rather than a cosmetic
+  wart: `register_agent` reconciles membership to the list it is handed and
+  drops any team absent from it, and the console's agent editor round-trips the
+  column — so a mirror left behind by `add_team_member`, `remove_team_member`,
+  `delete_team`, or a team rename could move an agent back to a team that no
+  longer exists, taking its project memberships with it. The mirror is now
+  rebuilt from the authoritative join table on every membership change, in one
+  statement, so no future mutation path can forget to maintain it.
+
 ## [1.8.2] — 2026-08-07
 
 - **Hermes and MCP worker-thread safety.** Hermes creates providers on the gateway thread and performs hooks on worker threads; MCP Python SDK v2 likewise runs synchronous tools in AnyIO worker threads. Both integrations now enable cross-thread SQLite handoff and serialize all access to their shared connection, with regression coverage for handoff and concurrent-call safety.
