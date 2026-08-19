@@ -1,0 +1,50 @@
+import sqlite3
+from collections.abc import Callable
+
+from . import (
+    v001_decay_columns,
+    v002_fix_fts_triggers,
+    v003_archive_table,
+    v004_session_recall_log,
+    v005_memory_audit,
+    v006_feedback_counts,
+    v007_sync_peers,
+    v008_agents_registry,
+    v009_federation_trust,
+    v010_archive_links,
+    v011_decay_base,
+    v012_peer_name,
+    v013_teams_projects,
+    v014_org_federation,
+    v015_acl_clock,
+    v016_pairing_invites,
+    v017_fleet_admins,
+    v018_session_recall_owner,
+    v019_mark_legacy_context,
+    v020_canonicalize_expiry_timestamps,
+)
+
+Migration = tuple[int, str, Callable[[sqlite3.Connection], None]]
+
+MIGRATIONS: list[Migration] = [
+    (1, "decay and reinforcement columns", v001_decay_columns.migrate),
+    (2, "repair FTS update/delete triggers", v002_fix_fts_triggers.migrate),
+    (3, "cold archive table", v003_archive_table.migrate),
+    (4, "session recall delivery log", v004_session_recall_log.migrate),
+    (5, "memory sharing audit trail", v005_memory_audit.migrate),
+    (6, "recall feedback counters", v006_feedback_counts.migrate),
+    (7, "federated sync peer registry", v007_sync_peers.migrate),
+    (8, "agent registry with team memberships", v008_agents_registry.migrate),
+    (9, "federation trust: peer policy + tombstones", v009_federation_trust.migrate),
+    (10, "archive association edges for lossless restore", v010_archive_links.migrate),
+    (11, "configured decay base half-life", v011_decay_base.migrate),
+    (12, "peer display name for sync identification", v012_peer_name.migrate),
+    (13, "first-class teams and projects with membership", v013_teams_projects.migrate),
+    (14, "federate org structure: versioning + tombstones + audit", v014_org_federation.migrate),
+    (15, "acl clock so share/revoke propagate over sync", v015_acl_clock.migrate),
+    (16, "one-time pairing invites for team join", v016_pairing_invites.migrate),
+    (17, "fleet admin trust anchors + signature replay guard", v017_fleet_admins.migrate),
+    (18, "requester-scoped session recall delivery log", v018_session_recall_owner.migrate),
+    (19, "mark pre-requester context as legacy unscoped", v019_mark_legacy_context.migrate),
+    (20, "canonicalize legacy expiry timestamps", v020_canonicalize_expiry_timestamps.migrate),
+]
