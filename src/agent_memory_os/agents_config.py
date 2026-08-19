@@ -6,7 +6,7 @@ instead of clicking through the console:
     # ~/.agent-memory/agents.toml
     [agents.cc-main]
     display_name = "Claude Code"
-    kind = "claude-code"                 # claude-code|codex|openclaw|hermes|custom
+    kind = "claude-code"                 # claude-code|codex|openclaw|hermes|agy|custom
     teams = ["apollo", "shared-infra"]   # multiple teams = multiple projects
 
     [agents.hermes-neo]
