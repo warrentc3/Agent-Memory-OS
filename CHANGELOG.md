@@ -6,6 +6,7 @@ tagged on GitHub/GitLab.
 
 ## [Unreleased]
 
+- **Fix: fleet-proxy body decoding failures return HTTP 400.** Invalid UTF-8, malformed JSON, and JSON exceeding the parser's nesting limit are rejected locally before signing or forwarding. Valid decodable JSON and empty request bodies keep their existing forwarding behavior.
 - Centralize operational defaults in `constants.py` and isolate the embedded Web UI logo in `assets.py`, preserving values, existing aliases, and generated output. Keep schema defaults version-owned and reject unresolved Web UI template placeholders.
 
 ## [1.10.0] — 2026-09-17
