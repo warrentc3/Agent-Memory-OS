@@ -7,6 +7,7 @@ tagged on GitHub/GitLab.
 ## [Unreleased]
 
 - **Fix API authentication under mounted path prefixes.** Token and fleet capability checks now classify the router's effective path, preserving the existing token tiers and pairing exception under path prefixes. Fleet signatures continue to cover the original request path and query.
+- **Fix: team-member revocations take effect on direct, list, and graph reads after another connection commits.** These client methods and their Web API routes now refresh cached membership state before applying ACL checks.
 
 ## [1.9.0] — 2026-08-19
 
