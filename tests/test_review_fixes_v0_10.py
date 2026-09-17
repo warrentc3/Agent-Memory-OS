@@ -166,3 +166,25 @@ def test_import_bundle_rolls_back_on_corrupt_line(tmp_path):
 
     # The valid line before the corrupt one must have been rolled back.
     assert client.get("mem_imported_1") is None
+
+
+def test_resonance_search_applies_the_visibility_acl(tmp_path):
+    """resonance_search took no requester at all, so `_append_acl_filter`
+    returned early and the hard gate was absent — not stale, missing. The
+    expansion step cannot re-widen it: `resonance_cluster` may name ids outside
+    the seed set, but only ids present in the gated seed map are returned."""
+    client = MemoryClient(home=tmp_path)
+    for agent in ("alice", "carol"):
+        client.store.register_agent(agent, kind="hermes")
+    secret = client.add("alice private zebra-token", owner="alice", visibility=[])
+    shared = client.add("shared zebra-token note", owner="alice", visibility=["global"])
+
+    gated = client.resonance_search("zebra-token", requester_agent_id="carol")
+    ids = {r.record.id for r in gated}
+    assert secret.id not in ids, "another owner's private memory leaked"
+    assert shared.id in ids, "the global memory should still be reachable"
+
+    # Omitting the requester is the documented owner/admin view, as for search().
+    admin = client.resonance_search("zebra-token")
+    assert secret.id in {r.record.id for r in admin}
+    client.close()

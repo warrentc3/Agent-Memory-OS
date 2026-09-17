@@ -463,6 +463,9 @@ class MemoryStore:
         requester_team_id: str | None = None,
         limit: int = 20,
         offset: int = 0,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[MemoryRecord]:
         """List memories by recency for browsing (inventory view, no scoring)."""
         where = ["1=1"]
@@ -481,6 +484,14 @@ class MemoryStore:
             params,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            alias="",
+        )
+        self._append_time_filter(
+            where,
+            params,
+            since=since,
+            until=until,
+            field=time_field,
             alias="",
         )
         params.extend([max(1, limit), max(0, offset)])
@@ -519,6 +530,9 @@ class MemoryStore:
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
         limit: int = 4,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[MemoryRecord]:
         """Proactive recall source: the most important live records of a type."""
         where = [
@@ -531,6 +545,14 @@ class MemoryStore:
             params,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            alias="",
+        )
+        self._append_time_filter(
+            where,
+            params,
+            since=since,
+            until=until,
+            field=time_field,
             alias="",
         )
         params.append(max(1, limit))
@@ -2487,6 +2509,9 @@ class MemoryStore:
         requester_team_id: str | None = None,
         limit: int = 10,
         profile: RecallProfile | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[SearchResult]:
         """Search memories via dual-track retrieval plus resonance expansion.
 
@@ -2507,6 +2532,9 @@ class MemoryStore:
             requester_team_id=requester_team_id,
             limit=limit,
             now=now,
+            since=since,
+            until=until,
+            time_field=time_field,
         )
         results: dict[str, SearchResult] = {}
         raw_text_scores: dict[str, float] = {}
@@ -2530,6 +2558,9 @@ class MemoryStore:
             requester_team_id=requester_team_id,
             limit=max(1, limit // 4),
             now=now,
+            since=since,
+            until=until,
+            time_field=time_field,
         )
         for row in authority_rows:
             source = json.loads(row["source"] or "{}")
@@ -2557,6 +2588,9 @@ class MemoryStore:
             requester_team_id=requester_team_id,
             limit=limit,
             now=now,
+            since=since,
+            until=until,
+            time_field=time_field,
         )
         for row, candidate in semantic_rows:
             result = self._score_row(
@@ -2578,6 +2612,9 @@ class MemoryStore:
                 requester_team_id=requester_team_id,
                 now=now,
                 now_dt=now_dt,
+                since=since,
+                until=until,
+                time_field=time_field,
             )
             for result in resonance_results:
                 previous = results.get(result.record.id)
@@ -2594,6 +2631,9 @@ class MemoryStore:
                 requester_agent_id=requester_agent_id,
                 requester_team_id=requester_team_id,
                 limit=limit,
+                since=since,
+                until=until,
+                time_field=time_field,
             )
         if profile is not None:
             for result in final_results:
@@ -2785,6 +2825,9 @@ class MemoryStore:
         requester_team_id: str | None,
         now: str,
         now_dt: datetime,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[SearchResult]:
         """Expand seed hits through memory_links with ACL-safe traversal.
 
@@ -2860,6 +2903,9 @@ class MemoryStore:
                 requester_agent_id=requester_agent_id,
                 requester_team_id=requester_team_id,
                 now=now,
+                since=since,
+                until=until,
+                time_field=time_field,
             )
 
             visited.update(ids)
@@ -2894,6 +2940,9 @@ class MemoryStore:
         requester_team_id: str | None,
         limit: int,
         now: str,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[sqlite3.Row]:
         fts_query = self._fts_query(query)
         where = [
@@ -2912,6 +2961,14 @@ class MemoryStore:
             params,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            alias="m.",
+        )
+        self._append_time_filter(
+            where,
+            params,
+            since=since,
+            until=until,
+            field=time_field,
             alias="m.",
         )
         params.append(max(limit * 5, limit))
@@ -2936,6 +2993,9 @@ class MemoryStore:
         requester_team_id: str | None,
         limit: int,
         now: str,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[sqlite3.Row]:
         where = [
             "(expires_at IS NULL OR julianday(expires_at) > julianday(?))",
@@ -2953,6 +3013,14 @@ class MemoryStore:
             params,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            alias="",
+        )
+        self._append_time_filter(
+            where,
+            params,
+            since=since,
+            until=until,
+            field=time_field,
             alias="",
         )
         params.append(max(limit, 1))
@@ -2977,6 +3045,9 @@ class MemoryStore:
         requester_team_id: str | None,
         limit: int,
         now: str,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[tuple[sqlite3.Row, Candidate]]:
         """Rejoin untrusted semantic candidates through SQLite and hard gates."""
         if not self.candidate_providers:
@@ -3037,6 +3108,9 @@ class MemoryStore:
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
             now=now,
+            since=since,
+            until=until,
+            time_field=time_field,
         )
         return [(row, candidates_by_id[row["id"]]) for row in rows]
 
@@ -3049,6 +3123,9 @@ class MemoryStore:
         requester_agent_id: str | None,
         requester_team_id: str | None,
         now: str,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[sqlite3.Row]:
         """Rejoin untrusted candidate ids through the ACL/expiry hard gates.
 
@@ -3075,6 +3152,14 @@ class MemoryStore:
             params,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            alias="",
+        )
+        self._append_time_filter(
+            where,
+            params,
+            since=since,
+            until=until,
+            field=time_field,
             alias="",
         )
         return self.conn.execute(
@@ -3178,6 +3263,133 @@ class MemoryStore:
             params.append(f"project:{project_id}")
         where.append("(" + " OR ".join(acl_clauses) + ")")
 
+    def timeline(
+        self,
+        *,
+        around: str | None = None,
+        anchor_id: str | None = None,
+        window_seconds: float = 3600.0,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        time_field: str = "created_at",
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        """Memories recorded near a moment in time, nearest first.
+
+        This is the temporal counterpart to `memory_links`: links capture
+        associations someone asserted, while a timeline surfaces the ones that
+        simply happened together. Debugging sessions, incidents and decisions
+        arrive in bursts, so "what else was I recording when I learned this"
+        recovers context that no explicit link records.
+
+        Anchor on a memory (`anchor_id`, which also reads its own stamp through
+        the ACL gate, so you cannot use an invisible memory as a probe) or on a
+        bare timestamp (`around`). Results carry `offset_seconds`, signed, so a
+        caller can tell what came before the anchor from what came after.
+        """
+        if not around and not anchor_id:
+            raise ValueError("timeline requires around=<stamp> or anchor_id=<id>")
+        if window_seconds <= 0:
+            raise ValueError("window_seconds must be positive")
+        if time_field not in self.TIME_FIELDS:
+            raise ValueError(f"time field must be one of {list(self.TIME_FIELDS)}")
+
+        if anchor_id:
+            anchor = self.get_visible(
+                anchor_id,
+                requester_agent_id=requester_agent_id,
+                requester_team_id=requester_team_id,
+            )
+            if anchor is None:
+                # Indistinguishable from "does not exist" on purpose: an
+                # anchor the requester cannot see must not be probeable.
+                return []
+            around = getattr(anchor, time_field, None) or anchor.created_at
+
+        centre = datetime.fromisoformat(str(around).replace("Z", "+00:00"))
+        if centre.tzinfo is None:
+            centre = centre.replace(tzinfo=timezone.utc)
+        delta = timedelta(seconds=window_seconds)
+        since = (centre - delta).astimezone(timezone.utc).isoformat(timespec="seconds")
+        until = (centre + delta).astimezone(timezone.utc).isoformat(timespec="seconds")
+
+        where: list[str] = ["(expires_at IS NULL OR julianday(expires_at) > julianday(?))"]
+        params: list[object] = [utc_now()]
+        self._append_acl_filter(
+            where,
+            params,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            alias="",
+        )
+        self._append_time_filter(
+            where, params, since=since, until=until, field=time_field, alias=""
+        )
+        if anchor_id:
+            where.append("id != ?")
+            params.append(anchor_id)
+        rows = self.conn.execute(
+            f"SELECT * FROM memories WHERE {' AND '.join(where)} "
+            f"ORDER BY abs(julianday({time_field}) - julianday(?)) LIMIT ?",
+            params + [centre.isoformat(timespec="seconds"), max(1, limit)],
+        ).fetchall()
+
+        out: list[dict[str, object]] = []
+        for row in rows:
+            stamp = row[time_field]
+            moment = datetime.fromisoformat(str(stamp).replace("Z", "+00:00"))
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            out.append({
+                "record": self._row_to_record(row),
+                "offset_seconds": (moment - centre).total_seconds(),
+                "at": stamp,
+            })
+        return out
+
+    TIME_FIELDS = ("created_at", "updated_at", "last_accessed_at")
+
+    def _append_time_filter(
+        self,
+        where: list[str],
+        params: list[object],
+        *,
+        since: str | None,
+        until: str | None,
+        field: str = "created_at",
+        alias: str = "",
+    ) -> None:
+        """Restrict a recall query to a time window.
+
+        Recency already tilts *ranking* through the freshness factor, but that
+        can only reorder what a query already matched — it cannot answer "what
+        did I learn that week". This narrows the candidate set instead, and it
+        is deliberately a sibling of `_append_acl_filter`, called at the same
+        sites: a time window must compose with the ACL gate, never replace it.
+
+        `field` picks which clock the window applies to, because they mean
+        different things: `created_at` is when the memory was formed (the
+        default — "when did I learn this"), `updated_at` when it last changed,
+        `last_accessed_at` when it was last recalled.
+
+        Bounds are half-open [since, until) so adjacent windows tile without
+        double-counting a record on the boundary. Comparison is lexical, which
+        is correct because every stamp is written by `utc_now()` in a single
+        zero-padded UTC format; a caller-supplied local-offset stamp would
+        compare wrongly, so callers normalize before reaching here.
+        """
+        if field not in self.TIME_FIELDS:
+            raise ValueError(f"time field must be one of {list(self.TIME_FIELDS)}")
+        column = f"{alias}{field}"
+        if since:
+            # last_accessed_at is NULL until first recall; a NULL can never be
+            # "after" a bound, so those rows correctly drop out of the window.
+            where.append(f"{column} IS NOT NULL AND {column} >= ?")
+            params.append(since)
+        if until:
+            where.append(f"{column} IS NOT NULL AND {column} < ?")
+            params.append(until)
+
     # Team memberships are cached for one search's worth of ACL clauses. A
     # membership change made through THIS store invalidates immediately; a
     # change from another process/connection (WAL multi-writer) is picked up
@@ -3238,6 +3450,9 @@ class MemoryStore:
         requester_agent_id: str | None,
         requester_team_id: str | None,
         limit: int,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[SearchResult]:
         where = ["(expires_at IS NULL OR julianday(expires_at) > julianday(?))"]
         params: list[object] = [utc_now()]
@@ -3252,6 +3467,14 @@ class MemoryStore:
             params,
             requester_agent_id=requester_agent_id,
             requester_team_id=requester_team_id,
+            alias="",
+        )
+        self._append_time_filter(
+            where,
+            params,
+            since=since,
+            until=until,
+            field=time_field,
             alias="",
         )
         params.append(max(limit, 1))

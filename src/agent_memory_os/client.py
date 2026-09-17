@@ -621,11 +621,18 @@ class MemoryClient:
         requester_team_id: str | None = None,
         limit: int = 10,
         profile: RecallProfile | None = None,
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> list[SearchResult]:
         self._refresh_external_state()
         active_profile = self._resolve_profile(profile, requester_agent_id)
         profile_key = active_profile.signature() if active_profile else None
-        key = ("search", query, owner, scope, requester_agent_id, requester_team_id, limit, profile_key)
+        # The time window is part of the identity of a recall: without it here,
+        # a windowed search would be served an unwindowed cached result (and
+        # vice versa) for the same query.
+        key = ("search", query, owner, scope, requester_agent_id, requester_team_id, limit,
+               profile_key, since, until, time_field)
         cached = self.cache.get(key)
         if cached is not None:
             return cached  # type: ignore[return-value]
@@ -637,9 +644,35 @@ class MemoryClient:
             requester_team_id=requester_team_id,
             limit=limit,
             profile=active_profile,
+            since=since,
+            until=until,
+            time_field=time_field,
         )
         self.cache.set(key, results)
         return results
+
+    def timeline(
+        self,
+        *,
+        around: str | None = None,
+        anchor_id: str | None = None,
+        window_seconds: float = 3600.0,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        time_field: str = "created_at",
+        limit: int = 20,
+    ) -> list[dict[str, object]]:
+        """Memories recorded near a moment in time (see MemoryStore.timeline)."""
+        self._refresh_external_state()
+        return self.store.timeline(
+            around=around,
+            anchor_id=anchor_id,
+            window_seconds=window_seconds,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+            time_field=time_field,
+            limit=limit,
+        )
 
     def context_pack(
         self,
@@ -828,15 +861,31 @@ class MemoryClient:
         *,
         limit: int = 5,
         resonance_hops: int = 2,
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
     ) -> list[SearchResult]:
         """
         Enhanced retrieval using Memory Resonance logic.
         1. Perform standard semantic search to find seed chunks.
         2. Expand cluster using resonance weights.
         3. Merge and rank results based on final resonance scores.
+
+        The requester is threaded into the seed search, which is what applies
+        the visibility ACL. Omitting it means the unrestricted owner/admin view
+        — the same contract as `search` — NOT "no gate": before this took a
+        requester at all there was no way to ask for a gated resonance search,
+        so every caller got the admin view whether it wanted one or not.
+        The expansion cannot widen that: `resonance_cluster` may name ids the
+        seed set never contained, and the loop below keeps only ids present in
+        `id_map`, so nothing outside the gated seeds can be returned.
         """
-        # 1. Get seed chunks via semantic search
-        seeds = self.search(query, limit=limit * 2)
+        # 1. Get seed chunks via semantic search — this is the ACL gate.
+        seeds = self.search(
+            query,
+            limit=limit * 2,
+            requester_agent_id=requester_agent_id,
+            requester_team_id=requester_team_id,
+        )
         if not seeds:
             return []
         
