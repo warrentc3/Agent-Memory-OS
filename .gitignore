@@ -35,6 +35,7 @@ shadow_recall*.jsonl
 
 # Local harness and operating-system data
 .claude/launch.json
+.claude/worktrees/
 .DS_Store
 
 # Repository dependency-resolution policy; this is not transient Python data.

@@ -4,10 +4,41 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [Unreleased]
+## [1.9.1] — 2026-09-17
 
-- **Fix API authentication under mounted path prefixes.** Token and fleet capability checks now classify the router's effective path, preserving the existing token tiers and pairing exception under path prefixes. Fleet signatures continue to cover the original request path and query.
-- **Fix: team-member revocations take effect on direct, list, and graph reads after another connection commits.** These client methods and their Web API routes now refresh cached membership state before applying ACL checks.
+**Security release. Upgrade immediately if you serve the console or API behind
+a path prefix.**
+
+- **SECURITY — unauthenticated API access under a mounted path prefix
+  (affects 1.9.0 and earlier).** The auth middleware gated on
+  `request.url.path`, which carries the mount prefix, so `startswith("/api/")`
+  was false and the entire check — bearer tiers, fleet signature verification,
+  nonce consumption — was skipped rather than failing closed. Any deployment
+  behind a path prefix (a reverse proxy at `/amos`, `uvicorn --root-path`, or
+  the app mounted under another ASGI app) served **every** `/api/` route to
+  unauthenticated clients, reads and writes alike, including
+  `DELETE /api/owners/{id}/memories` and `POST /api/maintenance/update-run`.
+  A direct, unmounted deployment — the default, and what `agent-memory-web`
+  runs — was never affected.
+
+  The gate now classifies the router's effective path
+  (`starlette._utils.get_route_path`), which is the same string the router
+  matches, so any spelling that skips the gate also matches no route. This
+  also fixes a fleet privilege escalation under a prefix: the `manage` vs
+  `read-private` capability split is decided by path, so a `manage`-only fleet
+  key could read private memory content from a prefixed node. Health and
+  metrics endpoints stay unauthenticated, and now answer correctly under a
+  prefix beginning with `/api`. Fleet signatures continue to cover the
+  original request path and query. Thanks to @warrentc3 for finding and
+  fixing it (#17).
+
+- **Fix: team-member revocations take effect on direct, list, and graph reads
+  after another connection commits.** `get_visible`, `list_recent`, and the
+  graph snapshot could serve memory to a just-revoked member for up to the
+  30-second membership-cache TTL when the revocation was committed by a
+  different connection; these paths now refresh cached membership before
+  applying the ACL check. Thanks to @warrentc3 (#16). Note the console's own
+  membership routes still bypass the recall cache — tracked in #21.
 
 ## [1.9.0] — 2026-08-19
 
