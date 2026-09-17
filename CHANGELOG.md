@@ -4,7 +4,7 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [Unreleased]
+## [1.10.0] — 2026-09-17
 
 - **Recall by time, and temporal context.** Every memory carried timestamps,
   but they only ever tilted *ranking* through the freshness factor — which can
