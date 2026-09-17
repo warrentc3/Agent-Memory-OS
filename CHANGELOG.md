@@ -4,6 +4,47 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [1.10.0] — 2026-09-17
+
+- **Recall by time, and temporal context.** Every memory carried timestamps,
+  but they only ever tilted *ranking* through the freshness factor — which can
+  reorder what a query already matched and can never answer "what did I learn
+  that week". Two additions close that:
+
+  `search` (SDK, CLI `--since/--until`, `GET /api/search`, and the
+  `memory_search` MCP tool) now takes a time window that narrows candidates
+  *before* ranking. `--time-field` picks which clock it applies to, because
+  they answer different questions: `created_at` is when the memory was formed
+  (the default), `updated_at` when it last changed, `last_accessed_at` when it
+  was last recalled. Bounds accept an ISO-8601 instant or a relative age like
+  `7d` / `36h` / `2w`, and are half-open `[since, until)` so adjacent windows
+  tile without double-counting a record on the boundary.
+
+  `timeline` (SDK, CLI `agent-memory timeline`, `GET /api/timeline`, and the
+  `memory_timeline` MCP tool) returns what was recorded around a moment,
+  anchored on a memory or a bare timestamp. Explicit links capture associations
+  someone asserted; a timeline surfaces the ones that simply happened together
+  — debugging sessions, incidents and decisions arrive in bursts, so anchoring
+  on a memory recovers context no link records. Entries carry a signed
+  `offset_seconds`, so before and after are distinguishable.
+
+  The window composes with the visibility ACL rather than replacing it, and is
+  applied at every one of `search`'s retrieval tracks (FTS, authority, link
+  expansion, semantic rejoin, fallback) — a track missing it would return
+  out-of-window rows. An anchor the requester cannot see returns empty rather
+  than an error, so it cannot be used to probe for ids. No migration: this is a
+  query-layer change, and existing databases gain it on upgrade.
+
+- **Fix: `resonance_search` applied no visibility ACL at all.** It accepted no
+  requester, so `_append_acl_filter` returned early and the hard gate was
+  absent — not stale, missing — returning other owners' private memories to any
+  caller. It now takes `requester_agent_id`/`requester_team_id` and threads
+  them into the seed search, which is the gate; the expansion step cannot widen
+  that, since only ids present in the gated seed set are returned. Omitting the
+  requester remains the documented owner/admin view, the same contract as
+  `search`. Not reachable from the web API, MCP server, or CLI, so there was no
+  remote exposure (#20).
+
 ## [1.9.1] — 2026-09-17
 
 **Security release. Upgrade immediately if you serve the console or API behind

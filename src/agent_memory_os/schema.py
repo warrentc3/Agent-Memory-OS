@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import InitVar, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 import json
+import re
 import uuid
 
 from .scoring import VALID_DECAY_POLICIES
@@ -39,6 +40,47 @@ def normalize_iso_timestamp(value: str | None, *, field_name: str) -> str | None
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+_RELATIVE_UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}
+
+
+def resolve_time_bound(value: str | None, *, now: datetime | None = None) -> str | None:
+    """Turn a human time bound into a stamp comparable with stored timestamps.
+
+    Accepts an absolute ISO-8601 instant, or a relative age like `7d`, `36h`,
+    `90m`, `2w` meaning "that long ago" — the shape an operator actually types
+    when asking what they learned last week. `None` and `""` pass through as
+    "unbounded" so callers can forward an absent flag untouched.
+
+    The result is normalized to the same UTC isoformat the store writes, since
+    the window filter compares lexically: a bound carrying a local offset would
+    compare wrongly against `+00:00` stamps even though it names the right
+    instant.
+    """
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    match = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([smhdw])", text.lower())
+    if match:
+        seconds = float(match.group(1)) * _RELATIVE_UNITS[match.group(2)]
+        moment = (now or datetime.now(timezone.utc)) - timedelta(seconds=seconds)
+        return moment.astimezone(timezone.utc).isoformat(timespec="seconds")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(
+            f"time bound must be an ISO-8601 instant or a relative age "
+            f"like 7d/36h/90m/2w, got {value!r}"
+        ) from exc
+    if parsed.tzinfo is None:
+        # A bare local-looking stamp is read as UTC rather than guessed at:
+        # silently applying the host's zone would shift the window by hours
+        # depending on where the operator happened to be.
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).isoformat(timespec="seconds")
 
 
 def utc_now_micro() -> str:

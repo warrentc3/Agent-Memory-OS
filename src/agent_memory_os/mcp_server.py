@@ -15,6 +15,7 @@ legacy administrative/default compatibility behavior and is not isolated.
 from typing import Annotated, Literal
 
 from .client import MemoryClient
+from .schema import resolve_time_bound
 
 
 def _share_to_visibility(share: str | None, *, teams: list[str], projects: list[str]) -> list[str]:
@@ -160,6 +161,8 @@ def create_server():  # pragma: no cover - optional integration scaffold
         query: Annotated[str, Field(description="Natural-language search query. Matches by keyword AND by association (linked memories surface even without shared words).")],
         owner: Annotated[str | None, Field(description="Optional filter to a single owner id. Leave unset to search everything this agent may see.")] = None,
         limit: Annotated[int, Field(description="Maximum number of results to return, best-first.", ge=1, le=100)] = 10,
+        since: Annotated[str | None, Field(description="Only memories recorded at or after this time. An ISO-8601 instant, or a relative age like '7d', '36h', '90m', '2w' meaning that long ago. Use this when the user asks what happened in a period ('what did we decide last week').")] = None,
+        until: Annotated[str | None, Field(description="Only memories recorded strictly before this time; same formats as `since`. Combine with `since` to select a window.")] = None,
     ) -> list[dict]:
         """Recall memories relevant to a query, ranked best-first.
 
@@ -168,10 +171,52 @@ def create_server():  # pragma: no cover - optional integration scaffold
         allowed to see are returned — private, its own, its teams'/projects', and
         global. Each result has `id`, `score` (relevance), `content`, `scope`, and
         `type`. Returns an empty list if nothing relevant is visible.
+
+        `since`/`until` narrow the candidates to a time window before ranking,
+        which is how you answer "what did I learn last week" — recency alone
+        only reorders what a query already matched.
         """
         return [
             {"id": r.record.id, "score": r.score, "content": r.record.content, "scope": r.record.scope, "type": r.record.type}
-            for r in client.search(query, owner=owner, limit=limit, requester_agent_id=agent_id)
+            for r in client.search(
+                query, owner=owner, limit=limit, requester_agent_id=agent_id,
+                since=resolve_time_bound(since), until=resolve_time_bound(until),
+            )
+        ]
+
+    @mcp.tool()
+    @_serialized_tool
+    def memory_timeline(
+        anchor_id: Annotated[str | None, Field(description="Memory id to centre the window on. Its own timestamp becomes the centre. Use this to ask 'what else was I recording when I learned this'.")] = None,
+        around: Annotated[str | None, Field(description="Centre the window on this time instead of a memory. An ISO-8601 instant, or a relative age like '3d' meaning three days ago.")] = None,
+        window_minutes: Annotated[int, Field(description="Half-width of the window in minutes: results span this long before and after the centre.", ge=1, le=20160)] = 60,
+        limit: Annotated[int, Field(description="Maximum number of memories to return, nearest in time first.", ge=1, le=100)] = 20,
+    ) -> list[dict]:
+        """Recall what was recorded around a moment in time.
+
+        Explicit links capture associations someone asserted; this surfaces the
+        ones that simply happened together. Debugging sessions, incidents and
+        decisions arrive in bursts, so anchoring on a memory recovers the
+        context around it that no link records.
+
+        Give exactly one of `anchor_id` or `around`. Results are
+        access-controlled the same way as search, and each carries
+        `offset_seconds` (negative = before the centre, positive = after) so you
+        can reconstruct the order of events. An anchor this agent cannot see
+        returns an empty list.
+        """
+        entries = client.timeline(
+            anchor_id=anchor_id,
+            around=resolve_time_bound(around),
+            window_seconds=window_minutes * 60,
+            requester_agent_id=agent_id,
+            limit=limit,
+        )
+        return [
+            {"id": e["record"].id, "at": e["at"],
+             "offset_seconds": e["offset_seconds"],
+             "content": e["record"].content, "type": e["record"].type}
+            for e in entries
         ]
 
     @mcp.tool()

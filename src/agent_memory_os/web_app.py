@@ -31,6 +31,7 @@ from .schema import (
     PUBLIC_MEMORY_TYPES,
     SearchResult,
     VALID_LINK_RELATIONS,
+    resolve_time_bound,
 )
 from .tokens import load_token
 from .web_ui import PAGE
@@ -1401,17 +1402,67 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
         requester_agent_id: str | None = None,
         requester_team_id: str | None = None,
         limit: int = Query(default=10, ge=1, le=100),
+        since: str | None = None,
+        until: str | None = None,
+        time_field: str = "created_at",
     ) -> dict[str, Any]:
+        try:
+            window = (resolve_time_bound(since), resolve_time_bound(until))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         with lock:
-            results = client.search(
-                q,
-                owner=owner or None,
-                scope=scope or None,
-                requester_agent_id=requester_agent_id or None,
-                requester_team_id=requester_team_id or None,
-                limit=limit,
-            )
+            try:
+                results = client.search(
+                    q,
+                    owner=owner or None,
+                    scope=scope or None,
+                    requester_agent_id=requester_agent_id or None,
+                    requester_team_id=requester_team_id or None,
+                    limit=limit,
+                    since=window[0],
+                    until=window[1],
+                    time_field=time_field,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"query": q, "results": [_search_result_payload(result) for result in results]}
+
+    @app.get("/api/timeline")
+    def timeline(
+        anchor_id: str | None = None,
+        around: str | None = None,
+        window_minutes: int = Query(default=60, ge=1, le=20160),
+        requester_agent_id: str | None = None,
+        requester_team_id: str | None = None,
+        time_field: str = "created_at",
+        limit: int = Query(default=20, ge=1, le=100),
+    ) -> dict[str, Any]:
+        """Memories recorded around a moment — the temporal counterpart
+        to the links graph. Access-controlled exactly like search, and an
+        anchor the requester cannot see returns empty rather than 404, so
+        it cannot be used to probe for ids."""
+        try:
+            centre = resolve_time_bound(around)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        with lock:
+            try:
+                entries = client.timeline(
+                    anchor_id=anchor_id or None,
+                    around=centre,
+                    window_seconds=window_minutes * 60,
+                    requester_agent_id=requester_agent_id or None,
+                    requester_team_id=requester_team_id or None,
+                    time_field=time_field,
+                    limit=limit,
+                )
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {"entries": [
+            {"at": entry["at"], "offset_seconds": entry["offset_seconds"],
+             "memory": _record_payload(entry["record"])}
+            for entry in entries
+        ]}
 
     @app.get("/api/context-pack")
     def context_pack(

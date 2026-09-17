@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from .client import MemoryClient
+from .schema import resolve_time_bound
 from .golden_recall import evaluate_golden_queries, load_golden_query_cases
 from .hermes_importer import import_hermes_memory_files
 from .importers import SUPPORTED as IMPORT_SOURCES
@@ -32,7 +33,32 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--owner")
     search.add_argument("--scope")
     search.add_argument("--limit", type=int, default=10)
+    search.add_argument("--since", default=None,
+                        help="Only memories at/after this time — ISO instant or a "
+                             "relative age like 7d/36h/90m/2w")
+    search.add_argument("--until", default=None,
+                        help="Only memories before this time (exclusive); same formats")
+    search.add_argument("--time-field", default="created_at",
+                        choices=["created_at", "updated_at", "last_accessed_at"],
+                        help="Which clock the window applies to (default: when it was learned)")
     search.add_argument("--json", action="store_true")
+
+    timeline = sub.add_parser(
+        "timeline",
+        help="Memories recorded around a moment in time (temporal context)",
+        description=(
+            "Links record associations someone asserted; a timeline surfaces the "
+            "ones that simply happened together. Anchor on a memory id or a time."
+        ),
+    )
+    timeline.add_argument("anchor", nargs="?", default=None,
+                          help="Memory id to centre on, or a time (ISO, or 7d/36h ago)")
+    timeline.add_argument("--window", default="1h",
+                          help="Half-width of the window around the anchor (default 1h)")
+    timeline.add_argument("--limit", type=int, default=20)
+    timeline.add_argument("--time-field", default="created_at",
+                          choices=["created_at", "updated_at", "last_accessed_at"])
+    timeline.add_argument("--json", action="store_true")
 
     pack = sub.add_parser("pack", help="Build a prompt-ready context pack")
     pack.add_argument("query")
@@ -1684,8 +1710,52 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(rec.id)
             return 0
+        if args.command == "timeline":
+            if not args.anchor:
+                print("timeline requires a memory id or a time"); return 2
+            try:
+                window = resolve_time_bound(args.window)
+            except ValueError as exc:
+                print(f"error: {exc}"); return 2
+            # `--window` is an age ("1h ago"); convert it to a half-width.
+            from datetime import datetime, timezone
+            span = abs((datetime.now(timezone.utc)
+                        - datetime.fromisoformat(window)).total_seconds()) or 3600.0
+            kwargs = {"window_seconds": span, "limit": args.limit,
+                      "time_field": args.time_field}
+            if args.anchor.startswith("mem_"):
+                kwargs["anchor_id"] = args.anchor
+            else:
+                try:
+                    kwargs["around"] = resolve_time_bound(args.anchor)
+                except ValueError as exc:
+                    print(f"error: {exc}"); return 2
+            entries = client.timeline(**kwargs)
+            if args.json:
+                print(json.dumps([
+                    {"id": e["record"].id, "at": e["at"],
+                     "offset_seconds": e["offset_seconds"],
+                     "content": e["record"].content}
+                    for e in entries
+                ], ensure_ascii=False, indent=2))
+            else:
+                for e in entries:
+                    sign = "+" if e["offset_seconds"] >= 0 else "-"
+                    mins = abs(e["offset_seconds"]) / 60
+                    print(f"{sign}{mins:8.1f}m\t{e['record'].id}\t{e['record'].content}")
+                if not entries:
+                    print("(nothing else recorded in that window)")
+            return 0
         if args.command == "search":
-            results = client.search(args.query, owner=args.owner, scope=args.scope, limit=args.limit)
+            try:
+                since = resolve_time_bound(args.since)
+                until = resolve_time_bound(args.until)
+            except ValueError as exc:
+                print(f"error: {exc}"); return 2
+            results = client.search(
+                args.query, owner=args.owner, scope=args.scope, limit=args.limit,
+                since=since, until=until, time_field=args.time_field,
+            )
             if args.json:
                 print(json.dumps([
                     {"id": r.record.id, "score": r.score, "content": r.record.content, "scope": r.record.scope, "type": r.record.type}
