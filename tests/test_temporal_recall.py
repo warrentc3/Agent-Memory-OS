@@ -248,6 +248,7 @@ def test_unparseable_time_bound_is_rejected_not_guessed():
 def test_mcp_exposes_the_window_and_the_timeline(tmp_path, monkeypatch):
     """The MCP tools are how the agents actually reach this, so the params have
     to survive tool registration — a schema mismatch fails only at call time."""
+    pytest.importorskip("mcp")  # optional extra; the release build omits it
     from agent_memory_os import mcp_server
 
     monkeypatch.setenv("AGENT_MEMORY_HOME", str(tmp_path))
