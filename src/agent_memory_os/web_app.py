@@ -842,7 +842,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     def team_add_member(team_id: str, request: MemberRequest) -> dict[str, Any]:
         with lock:
             try:
-                client.store.add_team_member(team_id, request.agent_id, actor="web")
+                client.add_team_member(team_id, request.agent_id, actor="web")
                 return client.store.get_team(team_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -850,7 +850,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     @app.delete("/api/teams/{team_id}/members")
     def team_remove_member(team_id: str, agent_id: str = Query(min_length=1)) -> dict[str, Any]:
         with lock:
-            client.store.remove_team_member(team_id, agent_id, actor="web")
+            client.remove_team_member(team_id, agent_id, actor="web")
             return client.store.get_team(team_id) or {"removed": agent_id}
 
     # ---------- projects ----------
@@ -880,7 +880,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     def project_add_member(project_id: str, request: MemberRequest) -> dict[str, Any]:
         with lock:
             try:
-                client.store.add_project_member(project_id, request.agent_id, actor="web")
+                client.add_project_member(project_id, request.agent_id, actor="web")
                 return client.store.get_project(project_id)
             except KeyError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -890,7 +890,7 @@ def create_app(home: str | Path | None = None, *, token: str | None = None,
     @app.delete("/api/projects/{project_id}/members")
     def project_remove_member(project_id: str, agent_id: str = Query(min_length=1)) -> dict[str, Any]:
         with lock:
-            client.store.remove_project_member(project_id, agent_id, actor="web")
+            client.remove_project_member(project_id, agent_id, actor="web")
             return client.store.get_project(project_id) or {"removed": agent_id}
 
     @app.get("/api/peers")

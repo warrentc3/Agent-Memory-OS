@@ -199,3 +199,54 @@ def test_web_reads_refresh_after_cross_process_membership_revoke(
         assert visible_ids() == expected
         writer.remove_team_member("apollo", "bob")
         assert {first.id, second.id}.isdisjoint(visible_ids())
+
+
+@pytest.mark.parametrize("scope", ["team", "project"])
+@pytest.mark.parametrize("operation", ["add", "remove"])
+def test_web_membership_routes_invalidate_cached_search(tmp_path, scope, operation):
+    """A same-connection web mutation must invalidate both cached hits and misses."""
+    seed = _team_setup(tmp_path)
+    try:
+        seed.store.register_agent("carol")
+        if scope == "project":
+            seed.add_team_member("apollo", "carol")
+            seed.create_project("apollo-web", "apollo")
+            for agent in ("alice", "bob"):
+                seed.add_project_member("apollo-web", agent)
+        scope_id = "apollo" if scope == "team" else "apollo-web"
+        memory = seed.add(
+            "Membership-route recall sentinel.", owner="alice",
+            visibility=[f"{scope}:{scope_id}"],
+        )
+        private = seed.add("Private recall sentinel.", owner="alice", visibility=[])
+    finally:
+        seed.close()
+
+    agent = "carol" if operation == "add" else "bob"
+    with TestClient(create_app(home=tmp_path, token="FULL")) as web:
+        headers = {"Authorization": "Bearer FULL"}
+
+        def recall_ids(requester):
+            response = web.get(
+                "/api/search",
+                params={"q": "recall sentinel", "requester_agent_id": requester},
+                headers=headers,
+            )
+            assert response.status_code == 200, response.text
+            return {hit["id"] for hit in response.json()["results"]}
+
+        before = recall_ids(agent)
+        assert (memory.id in before) == (operation == "remove")
+        assert private.id not in before
+
+        route = f"/api/{scope}s/{scope_id}/members"
+        if operation == "add":
+            changed = web.post(route, json={"agent_id": agent}, headers=headers)
+        else:
+            changed = web.delete(route, params={"agent_id": agent}, headers=headers)
+        assert changed.status_code == 200, changed.text
+
+        after = recall_ids(agent)
+        assert (memory.id in after) == (operation == "add")
+        assert private.id not in after
+        assert memory.id in recall_ids("alice")
