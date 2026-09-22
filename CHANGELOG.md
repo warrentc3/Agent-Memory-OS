@@ -4,6 +4,10 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
+## [Unreleased]
+
+- Centralize operational defaults in `constants.py` and isolate the embedded Web UI logo in `assets.py`, preserving values, existing aliases, and generated output. Keep schema defaults version-owned and reject unresolved Web UI template placeholders.
+
 ## [1.10.0] — 2026-09-17
 
 - **Recall by time, and temporal context.** Every memory carried timestamps,
