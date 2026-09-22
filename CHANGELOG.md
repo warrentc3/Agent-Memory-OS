@@ -6,6 +6,7 @@ tagged on GitHub/GitLab.
 
 ## [Unreleased]
 
+- Fix cached console search results after adding or removing team/project members through the Web API. Membership routes now invalidate the same client's recall cache, so grants and revocations take effect on the next search.
 - **Fix: fleet-proxy body decoding failures return HTTP 400.** Invalid UTF-8, malformed JSON, and JSON exceeding the parser's nesting limit are rejected locally before signing or forwarding. Valid decodable JSON and empty request bodies keep their existing forwarding behavior.
 - Centralize operational defaults in `constants.py` and isolate the embedded Web UI logo in `assets.py`, preserving values, existing aliases, and generated output. Keep schema defaults version-owned and reject unresolved Web UI template placeholders.
 
