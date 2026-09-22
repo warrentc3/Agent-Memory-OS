@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -54,7 +55,9 @@ def signed_call(
 ) -> tuple[int, Any]:
     """One signed fleet request; (status_code, parsed JSON or raw text)."""
     body = json.dumps(payload).encode("utf-8") if payload is not None else b""
-    headers = crypto.fleet_sign_headers(keypair, method, target, body)
+    # The transport prefixes target with the peer URL's path; sign that same path.
+    signed_target = urllib.parse.urlsplit(url).path.rstrip("/") + target
+    headers = crypto.fleet_sign_headers(keypair, method, signed_target, body)
     if body:
         headers["Content-Type"] = "application/json"
     status, text = _http_request(url, method, target, body, headers, timeout=timeout)

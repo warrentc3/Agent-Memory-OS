@@ -1,16 +1,26 @@
 """Auth uses the routed path; fleet signatures still bind the request target."""
 
+import io
+import urllib.error
+import urllib.request
+from contextlib import contextmanager
+from email.message import Message
+from types import SimpleNamespace
+
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from agent_memory_os import MemoryClient, crypto, tokens
+from agent_memory_os import MemoryClient, crypto, fleet, tokens
 from agent_memory_os.web_app import create_app
 
 PRIVATE_NOTE = "Mount-prefix private memory."
 
 
-@pytest.fixture(params=["", "/amos", "/api/amos"], ids=["direct", "mounted", "api-prefix"])
+@pytest.fixture(
+    params=["", "/amos", "/api/amos", "/outer/amos"],
+    ids=["direct", "mounted", "api-prefix", "nested"],
+)
 def auth_node(tmp_path, request, monkeypatch):
     for name in (
         "AGENT_MEMORY_WEB_TOKEN",
@@ -159,3 +169,59 @@ def test_fleet_signature_still_binds_full_target_and_rejects_replay(auth_node, t
         missing_prefix = http.get(target, headers=unprefixed_headers)
         assert missing_prefix.status_code == 403
         assert "invalid signature" in missing_prefix.json()["detail"]
+
+
+@pytest.fixture
+def fleet_transport(auth_node, monkeypatch):
+    """Exercise fleet's real URL construction and signing against the ASGI gate."""
+    http, prefix = auth_node
+
+    @contextmanager
+    def urlopen(request, **kwargs):
+        response = http.request(
+            request.method, request.full_url,
+            headers=dict(request.header_items()), content=request.data,
+        )
+        if response.status_code >= 400:
+            raise urllib.error.HTTPError(
+                request.full_url, response.status_code, response.reason_phrase,
+                Message(), io.BytesIO(response.content),
+            )
+        yield SimpleNamespace(status=response.status_code, read=lambda: response.content)
+
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return http, prefix
+
+
+@pytest.mark.parametrize("trailing_slash", [False, True])
+def test_fleet_signed_call_reaches_mounted_peer(fleet_transport, tmp_path, trailing_slash):
+    _, prefix = fleet_transport
+    keypair = _grant_fleet_key(tmp_path, ["manage", "read-private"])
+    peer_url = f"http://testserver{prefix}" + ("/" if trailing_slash else "")
+
+    status, result = fleet.signed_call(
+        keypair, peer_url, "GET", "/api/memories?limit=1&owner=alice",
+    )
+    assert status == 200, result
+    assert [record["content"] for record in result["memories"]] == [PRIVATE_NOTE]
+
+    content = "Memory written through the fleet transport."
+    status, result = fleet.signed_call(
+        keypair, peer_url, "POST", "/api/memories",
+        payload={"content": content, "owner": "alice", "visibility": []},
+    )
+    assert status == 200, result
+    assert result["content"] == content
+
+
+def test_fleet_signed_call_preserves_mounted_capability_gate(fleet_transport, tmp_path):
+    _, prefix = fleet_transport
+    keypair = _grant_fleet_key(tmp_path, ["manage"])
+    peer_url = f"http://testserver{prefix}"
+
+    status, result = fleet.signed_call(keypair, peer_url, "GET", "/api/stats")
+    assert status == 200, result
+    status, result = fleet.signed_call(keypair, peer_url, "GET", "/api/memories")
+    assert status == 403, result
+    assert "read-private" in result["detail"]
+    assert PRIVATE_NOTE not in str(result)
