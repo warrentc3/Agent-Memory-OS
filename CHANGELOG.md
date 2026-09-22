@@ -4,7 +4,7 @@ All notable changes, newest first. Releases are published to
 [PyPI](https://pypi.org/project/agent-memory-os/) via Trusted Publishing and
 tagged on GitHub/GitLab.
 
-## [Unreleased]
+## [1.10.1] — 2026-09-22
 
 - Fix cached console search results after adding or removing team/project members through the Web API. Membership routes now invalidate the same client's recall cache, so grants and revocations take effect on the next search.
 - Fix fleet requests to peers served under a path prefix by including the peer's base path in the signed request target. Mounted peers can verify fleet reads and writes while retaining full-path, query, body, and capability checks.
